@@ -41,7 +41,7 @@ justpdf/
 ### 0.1 프로젝트 셋업
 - [x] workspace 구성 (Cargo.toml workspace)
 - [ ] CI 셋업 (GitHub Actions: build, test, clippy, fmt)
-- [ ] 테스트 PDF 수집 (공개 PDF 테스트 스위트)
+- [x] 테스트 PDF 수집 (공개 PDF 테스트 스위트)
 - [ ] 벤치마크 프레임워크 (criterion)
 
 ### 0.2 PDF 토크나이저/렉서
@@ -82,7 +82,7 @@ justpdf/
 - [x] 증분 업데이트된 PDF → 최신 xref 체인 따라가기
 - [x] FlateDecode 스트림 → 원본 데이터 복원
 - [x] ASCIIHexDecode, ASCII85Decode 왕복 테스트
-- [ ] 필터 체인 (FlateDecode + ASCIIHexDecode) 순차 디코딩
+- [x] 필터 체인 (FlateDecode + ASCIIHexDecode) 순차 디코딩
 - [x] Indirect Reference 해석 → 실제 객체 반환
 
 **Negative Tests:**

@@ -8,6 +8,7 @@ use crate::tokenizer::Tokenizer;
 use crate::xref::{self, Xref, XrefEntry};
 
 /// A parsed PDF document.
+#[derive(Debug)]
 pub struct PdfDocument {
     /// PDF version, e.g. (1, 7) for PDF 1.7.
     pub version: (u8, u8),

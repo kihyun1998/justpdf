@@ -209,4 +209,107 @@ mod tests {
         let filters = get_filters(&dict);
         assert_eq!(filters.len(), 2);
     }
+
+    #[test]
+    fn test_filter_chain_flate_then_ascii_hex() {
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
+        let original = b"Hello, filter chain!";
+
+        // Step 1: FlateDecode compress
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // Step 2: ASCIIHex encode the compressed bytes
+        let mut hex_encoded: Vec<u8> = Vec::new();
+        for &b in &compressed {
+            hex_encoded.extend_from_slice(format!("{b:02X}").as_bytes());
+        }
+        hex_encoded.push(b'>');
+
+        // Dict: Filter [ASCIIHexDecode FlateDecode] — applied in order
+        let mut dict = PdfDict::new();
+        dict.insert(
+            b"Filter".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Name(b"ASCIIHexDecode".to_vec()),
+                PdfObject::Name(b"FlateDecode".to_vec()),
+            ]),
+        );
+
+        let result = decode_stream(&hex_encoded, &dict).unwrap();
+        assert_eq!(result, original);
+    }
+
+    #[test]
+    fn test_filter_chain_ascii85_then_flate() {
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
+        let original = b"ASCII85 + Flate chain test data 1234567890";
+
+        // Step 1: FlateDecode compress
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // Step 2: ASCII85 encode
+        let ascii85_encoded = ascii85_encode(&compressed);
+
+        // Dict: Filter [ASCII85Decode FlateDecode]
+        let mut dict = PdfDict::new();
+        dict.insert(
+            b"Filter".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Name(b"ASCII85Decode".to_vec()),
+                PdfObject::Name(b"FlateDecode".to_vec()),
+            ]),
+        );
+
+        let result = decode_stream(&ascii85_encoded, &dict).unwrap();
+        assert_eq!(result, original);
+    }
+
+    /// Simple ASCII85 encoder for testing.
+    fn ascii85_encode(data: &[u8]) -> Vec<u8> {
+        let mut result = Vec::new();
+        for chunk in data.chunks(4) {
+            if chunk.len() == 4 {
+                let val = (chunk[0] as u32) << 24
+                    | (chunk[1] as u32) << 16
+                    | (chunk[2] as u32) << 8
+                    | chunk[3] as u32;
+                if val == 0 {
+                    result.push(b'z');
+                } else {
+                    let mut digits = [0u8; 5];
+                    let mut v = val;
+                    for d in digits.iter_mut().rev() {
+                        *d = (v % 85) as u8 + b'!';
+                        v /= 85;
+                    }
+                    result.extend_from_slice(&digits);
+                }
+            } else {
+                // Partial last group
+                let mut val = 0u32;
+                for (i, &b) in chunk.iter().enumerate() {
+                    val |= (b as u32) << (24 - i * 8);
+                }
+                let mut digits = [0u8; 5];
+                let mut v = val;
+                for d in digits.iter_mut().rev() {
+                    *d = (v % 85) as u8 + b'!';
+                    v /= 85;
+                }
+                result.extend_from_slice(&digits[..chunk.len() + 1]);
+            }
+        }
+        result.extend_from_slice(b"~>");
+        result
+    }
 }

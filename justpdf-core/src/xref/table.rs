@@ -20,6 +20,7 @@ pub enum XrefEntry {
 }
 
 /// The complete cross-reference table with merged trailer.
+#[derive(Debug)]
 pub struct Xref {
     pub entries: HashMap<u32, XrefEntry>,
     pub trailer: PdfDict,
