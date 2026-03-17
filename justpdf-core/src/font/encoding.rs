@@ -58,8 +58,7 @@ fn decode_utf16be(bytes: &[u8]) -> String {
             let low = ((bytes[i] as u16) << 8) | bytes[i + 1] as u16;
             if (0xDC00..=0xDFFF).contains(&low) {
                 i += 2;
-                let cp =
-                    0x10000 + ((code as u32 - 0xD800) << 10) + (low as u32 - 0xDC00);
+                let cp = 0x10000 + ((code as u32 - 0xD800) << 10) + (low as u32 - 0xDC00);
                 if let Some(c) = char::from_u32(cp) {
                     chars.push(c);
                 }

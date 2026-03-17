@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use justpdf_core::page;
 use justpdf_core::PdfDocument;
+use justpdf_core::page;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -33,11 +33,7 @@ fn main() {
     };
 
     for p in &pages {
-        print!(
-            "Page {}: MediaBox {}",
-            p.index + 1,
-            p.media_box,
-        );
+        print!("Page {}: MediaBox {}", p.index + 1, p.media_box,);
         if let Some(crop) = &p.crop_box {
             print!(", CropBox {crop}");
         }

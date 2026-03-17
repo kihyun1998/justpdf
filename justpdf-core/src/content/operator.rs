@@ -92,15 +92,13 @@ fn format_operand(op: &Operand) -> String {
         Operand::Bool(v) => v.to_string(),
         Operand::Null => "null".into(),
         Operand::Name(n) => format!("/{}", std::str::from_utf8(n).unwrap_or("?")),
-        Operand::String(s) => {
-            match std::str::from_utf8(s) {
-                Ok(text) => format!("({text})"),
-                Err(_) => {
-                    let hex: String = s.iter().map(|b| format!("{b:02X}")).collect();
-                    format!("<{hex}>")
-                }
+        Operand::String(s) => match std::str::from_utf8(s) {
+            Ok(text) => format!("({text})"),
+            Err(_) => {
+                let hex: String = s.iter().map(|b| format!("{b:02X}")).collect();
+                format!("<{hex}>")
             }
-        }
+        },
         Operand::Array(items) => {
             let inner: Vec<String> = items.iter().map(format_operand).collect();
             format!("[{}]", inner.join(" "))
