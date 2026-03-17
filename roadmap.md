@@ -39,61 +39,61 @@ justpdf/
 > 목표: 프로젝트 골격 완성, 가장 단순한 PDF를 열고 읽을 수 있는 상태
 
 ### 0.1 프로젝트 셋업
-- [ ] workspace 구성 (Cargo.toml workspace)
+- [x] workspace 구성 (Cargo.toml workspace)
 - [ ] CI 셋업 (GitHub Actions: build, test, clippy, fmt)
 - [ ] 테스트 PDF 수집 (공개 PDF 테스트 스위트)
 - [ ] 벤치마크 프레임워크 (criterion)
 
 ### 0.2 PDF 토크나이저/렉서
-- [ ] PDF 바이트 스트림 읽기
-- [ ] 토큰 타입: Number, String (literal/hex), Name, Keyword, Array, Dict
-- [ ] 주석(comment) 스킵
-- [ ] 스트림 위치 추적
+- [x] PDF 바이트 스트림 읽기
+- [x] 토큰 타입: Number, String (literal/hex), Name, Keyword, Array, Dict
+- [x] 주석(comment) 스킵
+- [x] 스트림 위치 추적
 
 ### 0.3 PDF 객체 모델
-- [ ] 기본 타입: Null, Bool, Integer, Real, Name, String, Array, Dict, Stream
-- [ ] Indirect Reference (obj num + gen num)
-- [ ] 객체 비교, 복제
-- [ ] Rust enum 기반 타입 안전한 모델
+- [x] 기본 타입: Null, Bool, Integer, Real, Name, String, Array, Dict, Stream
+- [x] Indirect Reference (obj num + gen num)
+- [x] 객체 비교, 복제
+- [x] Rust enum 기반 타입 안전한 모델
 
 ### 0.4 Cross-Reference 파서
-- [ ] xref 테이블 파싱 (전통 포맷)
-- [ ] xref 스트림 파싱 (PDF 1.5+)
-- [ ] trailer 딕셔너리 파싱
-- [ ] 다중 xref (증분 업데이트) 체인 따라가기
-- [ ] `%%EOF` 마커로부터 역방향 xref 탐색
+- [x] xref 테이블 파싱 (전통 포맷)
+- [x] xref 스트림 파싱 (PDF 1.5+)
+- [x] trailer 딕셔너리 파싱
+- [x] 다중 xref (증분 업데이트) 체인 따라가기
+- [x] `%%EOF` 마커로부터 역방향 xref 탐색
 
 ### 0.5 기본 스트림 디코딩
-- [ ] FlateDecode (zlib/deflate)
-- [ ] ASCIIHexDecode
-- [ ] ASCII85Decode
-- [ ] 필터 체인 (다중 필터 순차 적용)
-- [ ] Predictor 지원 (PNG, TIFF)
+- [x] FlateDecode (zlib/deflate)
+- [x] ASCIIHexDecode
+- [x] ASCII85Decode
+- [x] 필터 체인 (다중 필터 순차 적용)
+- [x] Predictor 지원 (PNG, TIFF)
 
 ### 0.T 테스트 요구사항
 
 **Positive Tests:**
-- [ ] 유효한 PDF 파일 열기 → 버전 번호 파싱 성공
-- [ ] 각 객체 타입 (Null, Bool, Int, Real, Name, String, Array, Dict) 파싱 검증
-- [ ] hex string `<48656C6C6F>` → "Hello" 변환 확인
-- [ ] literal string 이스케이프 `(Hello\nWorld)` 파싱
-- [ ] xref 테이블 파싱 → 객체 오프셋 정확성 검증
-- [ ] xref 스트림 (PDF 1.5+) 파싱 → 객체 위치 일치 확인
-- [ ] 증분 업데이트된 PDF → 최신 xref 체인 따라가기
-- [ ] FlateDecode 스트림 → 원본 데이터 복원
-- [ ] ASCIIHexDecode, ASCII85Decode 왕복 테스트
+- [x] 유효한 PDF 파일 열기 → 버전 번호 파싱 성공
+- [x] 각 객체 타입 (Null, Bool, Int, Real, Name, String, Array, Dict) 파싱 검증
+- [x] hex string `<48656C6C6F>` → "Hello" 변환 확인
+- [x] literal string 이스케이프 `(Hello\nWorld)` 파싱
+- [x] xref 테이블 파싱 → 객체 오프셋 정확성 검증
+- [x] xref 스트림 (PDF 1.5+) 파싱 → 객체 위치 일치 확인
+- [x] 증분 업데이트된 PDF → 최신 xref 체인 따라가기
+- [x] FlateDecode 스트림 → 원본 데이터 복원
+- [x] ASCIIHexDecode, ASCII85Decode 왕복 테스트
 - [ ] 필터 체인 (FlateDecode + ASCIIHexDecode) 순차 디코딩
-- [ ] Indirect Reference 해석 → 실제 객체 반환
+- [x] Indirect Reference 해석 → 실제 객체 반환
 
 **Negative Tests:**
-- [ ] 존재하지 않는 파일 → `Error` 반환 (패닉 아님)
-- [ ] PDF 헤더 없는 파일 (`.txt` 등) → 명확한 에러 메시지
-- [ ] 잘린(truncated) PDF → 파싱 에러
-- [ ] xref 오프셋이 파일 크기 초과 → 에러 처리
-- [ ] 존재하지 않는 객체 번호 참조 → `None` 또는 에러
-- [ ] 손상된 FlateDecode 스트림 → 디코딩 에러 (패닉 아님)
-- [ ] 빈 파일 (0 bytes) → 에러
-- [ ] 순환 참조 (obj A → obj B → obj A) → 무한루프 방지
+- [x] 존재하지 않는 파일 → `Error` 반환 (패닉 아님)
+- [x] PDF 헤더 없는 파일 (`.txt` 등) → 명확한 에러 메시지
+- [x] 잘린(truncated) PDF → 파싱 에러
+- [x] xref 오프셋이 파일 크기 초과 → 에러 처리
+- [x] 존재하지 않는 객체 번호 참조 → `None` 또는 에러
+- [x] 손상된 FlateDecode 스트림 → 디코딩 에러 (패닉 아님)
+- [x] 빈 파일 (0 bytes) → 에러
+- [x] 순환 참조 (obj A → obj B → obj A) → 무한루프 방지
 
 ### 0.E 완료 확인 (직접 실행)
 ```bash
