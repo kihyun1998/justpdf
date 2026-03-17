@@ -1,6 +1,8 @@
+pub mod cmap;
 mod encoding;
 mod standard14;
 
+pub use cmap::ToUnicodeCMap;
 pub use encoding::{Encoding, decode_text};
 pub use standard14::{is_standard14, standard14_widths};
 
@@ -208,10 +210,7 @@ mod tests {
         let mut dict = PdfDict::new();
         dict.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
         dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Type1".to_vec()));
-        dict.insert(
-            b"BaseFont".to_vec(),
-            PdfObject::Name(b"Helvetica".to_vec()),
-        );
+        dict.insert(b"BaseFont".to_vec(), PdfObject::Name(b"Helvetica".to_vec()));
         dict.insert(
             b"Encoding".to_vec(),
             PdfObject::Name(b"WinAnsiEncoding".to_vec()),

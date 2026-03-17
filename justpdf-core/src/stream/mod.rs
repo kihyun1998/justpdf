@@ -1,7 +1,9 @@
 mod ascii85;
 mod ascii_hex;
+pub mod dct;
 mod flate;
 mod predictor;
+mod run_length;
 
 use crate::error::{JustPdfError, Result};
 use crate::object::{PdfDict, PdfObject};
@@ -45,6 +47,24 @@ fn decode_single(data: &[u8], filter: &[u8], params: Option<&PdfDict>) -> Result
             } else {
                 Ok(decoded)
             }
+        }
+        b"RunLengthDecode" | b"RL" => run_length::decode(data),
+        b"DCTDecode" | b"DCT" => {
+            // JPEG decode → raw pixels; but for stream decoding we just
+            // return the raw JPEG bytes (the image module handles actual decoding)
+            Ok(data.to_vec())
+        }
+        b"JPXDecode" => {
+            // JPEG2000: not yet implemented, pass through raw bytes
+            Ok(data.to_vec())
+        }
+        b"JBIG2Decode" => {
+            // JBIG2: not yet implemented, pass through raw bytes
+            Ok(data.to_vec())
+        }
+        b"CCITTFaxDecode" | b"CCF" => {
+            // CCITT Fax: not yet implemented, pass through raw bytes
+            Ok(data.to_vec())
         }
         _ => Err(JustPdfError::StreamDecode {
             filter: String::from_utf8_lossy(filter).into_owned(),

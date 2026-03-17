@@ -114,7 +114,7 @@ impl ColorSpace {
         let (wp, bp, gamma) = parse_cal_params(dict);
         let matrix = dict
             .and_then(|d| d.get_array(b"Matrix"))
-            .map(|a| parse_f64_array_9(a))
+            .map(parse_f64_array_9)
             .unwrap_or([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
         Self::CalRGB {
             white_point: wp,
@@ -129,7 +129,7 @@ impl ColorSpace {
         let (wp, bp, _) = parse_cal_params(dict);
         let range = dict
             .and_then(|d| d.get_array(b"Range"))
-            .map(|a| parse_f64_array_4(a))
+            .map(parse_f64_array_4)
             .unwrap_or([-100.0, 100.0, -100.0, 100.0]);
         Self::Lab {
             white_point: wp,
@@ -141,7 +141,7 @@ impl ColorSpace {
     fn parse_indexed(arr: &[PdfObject]) -> Self {
         let base = arr
             .get(1)
-            .map(|o| ColorSpace::from_pdf_object(o))
+            .map(ColorSpace::from_pdf_object)
             .unwrap_or(Self::DeviceRGB);
         let hival = arr.get(2).and_then(|o| o.as_i64()).unwrap_or(255) as u32;
         let lookup = match arr.get(3) {
@@ -162,7 +162,7 @@ impl ColorSpace {
         };
         let alternate = arr
             .get(2)
-            .map(|o| ColorSpace::from_pdf_object(o))
+            .map(ColorSpace::from_pdf_object)
             .unwrap_or(Self::DeviceGray);
         Self::Separation {
             name,
@@ -183,7 +183,7 @@ impl ColorSpace {
         };
         let alternate = arr
             .get(2)
-            .map(|o| ColorSpace::from_pdf_object(o))
+            .map(ColorSpace::from_pdf_object)
             .unwrap_or(Self::DeviceCMYK);
         Self::DeviceN {
             names,
@@ -272,15 +272,15 @@ fn parse_cal_params(dict: Option<&PdfDict>) -> ([f64; 3], [f64; 3], [f64; 3]) {
 
     let wp = dict
         .get_array(b"WhitePoint")
-        .map(|a| parse_f64_array_3(a))
+        .map(parse_f64_array_3)
         .unwrap_or([0.9505, 1.0, 1.089]);
     let bp = dict
         .get_array(b"BlackPoint")
-        .map(|a| parse_f64_array_3(a))
+        .map(parse_f64_array_3)
         .unwrap_or([0.0; 3]);
     let gamma = dict
         .get_array(b"Gamma")
-        .map(|a| parse_f64_array_3(a))
+        .map(parse_f64_array_3)
         .unwrap_or([1.0; 3]);
 
     (wp, bp, gamma)

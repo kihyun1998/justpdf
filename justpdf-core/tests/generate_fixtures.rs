@@ -49,7 +49,11 @@ fn build_minimal() -> Vec<u8> {
         b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n",
     );
 
-    write_xref_and_trailer(&mut pdf, &[(0, true), (obj1, false), (obj2, false), (obj3, false)], 1);
+    write_xref_and_trailer(
+        &mut pdf,
+        &[(0, true), (obj1, false), (obj2, false), (obj3, false)],
+        1,
+    );
     pdf
 }
 
@@ -62,9 +66,7 @@ fn build_two_pages() -> Vec<u8> {
     pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
 
     let obj2 = pdf.len();
-    pdf.extend_from_slice(
-        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n",
-    );
+    pdf.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n");
 
     let obj3 = pdf.len();
     pdf.extend_from_slice(
@@ -78,7 +80,13 @@ fn build_two_pages() -> Vec<u8> {
 
     write_xref_and_trailer(
         &mut pdf,
-        &[(0, true), (obj1, false), (obj2, false), (obj3, false), (obj4, false)],
+        &[
+            (0, true),
+            (obj1, false),
+            (obj2, false),
+            (obj3, false),
+            (obj4, false),
+        ],
         1,
     );
     pdf
@@ -102,7 +110,9 @@ fn build_with_text() -> Vec<u8> {
     pdf.extend_from_slice(b"\nendstream\nendobj\n");
 
     let obj5 = pdf.len();
-    pdf.extend_from_slice(b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
+    pdf.extend_from_slice(
+        b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+    );
 
     let obj3 = pdf.len();
     pdf.extend_from_slice(
@@ -126,8 +136,8 @@ fn build_with_text() -> Vec<u8> {
 
 /// Page with FlateDecode compressed content stream.
 fn build_compressed_stream() -> Vec<u8> {
-    use flate2::write::ZlibEncoder;
     use flate2::Compression;
+    use flate2::write::ZlibEncoder;
 
     let mut pdf = Vec::new();
     pdf.extend_from_slice(b"%PDF-1.4\n");
@@ -155,7 +165,9 @@ fn build_compressed_stream() -> Vec<u8> {
     pdf.extend_from_slice(b"\nendstream\nendobj\n");
 
     let obj5 = pdf.len();
-    pdf.extend_from_slice(b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
+    pdf.extend_from_slice(
+        b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+    );
 
     let obj3 = pdf.len();
     pdf.extend_from_slice(
@@ -207,7 +219,9 @@ fn build_ascii_hex_stream() -> Vec<u8> {
     pdf.extend_from_slice(b"\nendstream\nendobj\n");
 
     let obj5 = pdf.len();
-    pdf.extend_from_slice(b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>\nendobj\n");
+    pdf.extend_from_slice(
+        b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>\nendobj\n",
+    );
 
     let obj3 = pdf.len();
     pdf.extend_from_slice(
@@ -258,19 +272,14 @@ fn build_incremental() -> Vec<u8> {
 
     // Incremental update: add Info dict (obj 4)
     let obj4 = pdf.len();
-    pdf.extend_from_slice(
-        b"4 0 obj\n<< /Title (Test Document) /Author (justpdf) >>\nendobj\n",
-    );
+    pdf.extend_from_slice(b"4 0 obj\n<< /Title (Test Document) /Author (justpdf) >>\nendobj\n");
 
     // Second xref + trailer with /Prev
     let xref2_offset = pdf.len();
     pdf.extend_from_slice(b"xref\n4 1\n");
     pdf.extend_from_slice(format!("{:010} 00000 n \n", obj4).as_bytes());
     pdf.extend_from_slice(
-        format!(
-            "trailer\n<< /Size 5 /Root 1 0 R /Info 4 0 R /Prev {xref1_offset} >>\n"
-        )
-        .as_bytes(),
+        format!("trailer\n<< /Size 5 /Root 1 0 R /Info 4 0 R /Prev {xref1_offset} >>\n").as_bytes(),
     );
     pdf.extend_from_slice(format!("startxref\n{xref2_offset}\n%%EOF\n").as_bytes());
 
@@ -291,7 +300,7 @@ fn build_corrupted_xref() -> Vec<u8> {
     let mut pdf = Vec::new();
     pdf.extend_from_slice(b"%PDF-1.4\n");
 
-    let obj1 = pdf.len();
+    let _obj1 = pdf.len();
     pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
 
     let obj2 = pdf.len();

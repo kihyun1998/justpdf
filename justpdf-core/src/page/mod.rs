@@ -73,12 +73,10 @@ pub fn collect_pages(doc: &mut PdfDocument) -> Result<Vec<PageInfo>> {
         .clone();
 
     let catalog = doc.resolve(&catalog_ref)?.clone();
-    let catalog_dict = catalog
-        .as_dict()
-        .ok_or(JustPdfError::InvalidObject {
-            offset: 0,
-            detail: "catalog is not a dict".into(),
-        })?;
+    let catalog_dict = catalog.as_dict().ok_or(JustPdfError::InvalidObject {
+        offset: 0,
+        detail: "catalog is not a dict".into(),
+    })?;
 
     let pages_ref = catalog_dict
         .get_ref(b"Pages")
@@ -138,15 +136,15 @@ impl InheritedAttrs {
     fn with_overrides(&self, dict: &PdfDict) -> Self {
         let mut child = self.clone();
 
-        if let Some(arr) = dict.get_array(b"MediaBox") {
-            if let Some(rect) = Rect::from_pdf_array(arr) {
-                child.media_box = Some(rect);
-            }
+        if let Some(arr) = dict.get_array(b"MediaBox")
+            && let Some(rect) = Rect::from_pdf_array(arr)
+        {
+            child.media_box = Some(rect);
         }
-        if let Some(arr) = dict.get_array(b"CropBox") {
-            if let Some(rect) = Rect::from_pdf_array(arr) {
-                child.crop_box = Some(rect);
-            }
+        if let Some(arr) = dict.get_array(b"CropBox")
+            && let Some(rect) = Rect::from_pdf_array(arr)
+        {
+            child.crop_box = Some(rect);
         }
         if let Some(r) = dict.get_i64(b"Rotate") {
             child.rotate = Some(r);
@@ -188,7 +186,10 @@ fn walk_page_tree(
                 }
             }
         }
-        b"Page" | _ if dict.contains_key(b"MediaBox") || inherited.media_box.is_some() => {
+        _ if node_type == b"Page"
+            || dict.contains_key(b"MediaBox")
+            || inherited.media_box.is_some() =>
+        {
             let updated = inherited.with_overrides(dict);
 
             let media_box = updated.media_box.unwrap_or(Rect {
@@ -210,7 +211,9 @@ fn walk_page_tree(
                 art_box: dict.get_array(b"ArtBox").and_then(Rect::from_pdf_array),
                 rotate: updated.rotate.unwrap_or(0),
                 contents_ref: dict.get(b"Contents").cloned(),
-                resources_ref: updated.resources.or_else(|| dict.get(b"Resources").cloned()),
+                resources_ref: updated
+                    .resources
+                    .or_else(|| dict.get(b"Resources").cloned()),
             };
 
             pages.push(page_info);

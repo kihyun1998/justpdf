@@ -104,12 +104,10 @@ impl<'a> ContentParser<'a> {
                             let (dict_operands, image_data) = self.read_inline_image()?;
                             return Ok(Some(ContentOp {
                                 operator: b"BI".to_vec(),
-                                operands: vec![
-                                    Operand::InlineImage {
-                                        dict: dict_operands,
-                                        data: image_data,
-                                    },
-                                ],
+                                operands: vec![Operand::InlineImage {
+                                    dict: dict_operands,
+                                    data: image_data,
+                                }],
                             }));
                         }
                         _ => {
@@ -132,7 +130,8 @@ impl<'a> ContentParser<'a> {
         let start = self.pos;
         let mut has_dot = false;
 
-        if self.pos < self.data.len() && (self.data[self.pos] == b'+' || self.data[self.pos] == b'-')
+        if self.pos < self.data.len()
+            && (self.data[self.pos] == b'+' || self.data[self.pos] == b'-')
         {
             self.pos += 1;
         }
@@ -390,6 +389,7 @@ impl<'a> ContentParser<'a> {
 
     /// Read an inline image: after BI, read key/value pairs until ID,
     /// then read raw image data until EI.
+    #[allow(clippy::type_complexity)]
     fn read_inline_image(&mut self) -> Result<(Vec<(Vec<u8>, Operand)>, Vec<u8>)> {
         // Read dict entries until "ID"
         let mut dict = Vec::new();
