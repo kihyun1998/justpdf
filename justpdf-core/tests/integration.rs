@@ -1,6 +1,10 @@
 use std::path::Path;
 
 use justpdf_core::{IndirectRef, JustPdfError, PdfDocument, PdfObject};
+use justpdf_core::page::collect_pages;
+use justpdf_core::text;
+use justpdf_core::text::search;
+use justpdf_core::text::format::{self, OutputFormat};
 
 fn fixture(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -125,6 +129,179 @@ fn test_incremental_update() {
         catalog.as_dict().unwrap().get_name(b"Type"),
         Some(b"Catalog".as_slice())
     );
+}
+
+// ============================================================
+// Text extraction tests
+// ============================================================
+
+#[test]
+fn test_extract_text_hello_world() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = collect_pages(&mut doc).unwrap();
+    assert_eq!(pages.len(), 1);
+
+    let page_text = text::extract_page_text(&mut doc, &pages[0]).unwrap();
+
+    // Should have extracted characters
+    assert!(!page_text.chars.is_empty());
+
+    // Check plain text contains "Hello World"
+    let plain = page_text.plain_text();
+    assert!(
+        plain.contains("Hello World"),
+        "Expected 'Hello World' in: {plain:?}"
+    );
+
+    // Check character positions: first char at (72, 720), font 24pt
+    let first_char = &page_text.chars[0];
+    assert_eq!(first_char.unicode, "H");
+    assert!((first_char.x - 72.0).abs() < 0.1);
+    assert!((first_char.y - 720.0).abs() < 0.1);
+    assert!((first_char.font_size - 24.0).abs() < 0.1);
+}
+
+#[test]
+fn test_extract_text_compressed() {
+    let mut doc = PdfDocument::open(&fixture("compressed_stream.pdf")).unwrap();
+    let pages = collect_pages(&mut doc).unwrap();
+    assert_eq!(pages.len(), 1);
+
+    let page_text = text::extract_page_text(&mut doc, &pages[0]).unwrap();
+    let plain = page_text.plain_text();
+    assert!(
+        plain.contains("Compressed content stream"),
+        "Expected 'Compressed content stream' in: {plain:?}"
+    );
+}
+
+#[test]
+fn test_extract_text_all_pages() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let result = text::extract_all_text_string(&mut doc).unwrap();
+    assert!(result.contains("Hello World"));
+}
+
+#[test]
+fn test_extract_text_empty_page() {
+    let mut doc = PdfDocument::open(&fixture("minimal.pdf")).unwrap();
+    let pages = collect_pages(&mut doc).unwrap();
+    assert_eq!(pages.len(), 1);
+
+    let page_text = text::extract_page_text(&mut doc, &pages[0]).unwrap();
+    assert!(page_text.chars.is_empty());
+    assert_eq!(page_text.plain_text(), "");
+}
+
+#[test]
+fn test_extract_text_word_grouping() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = collect_pages(&mut doc).unwrap();
+    let page_text = text::extract_page_text(&mut doc, &pages[0]).unwrap();
+
+    // "Hello World" → should have 2 words
+    assert!(!page_text.lines.is_empty());
+    let first_line = &page_text.lines[0];
+    assert_eq!(first_line.words.len(), 2);
+    assert_eq!(first_line.words[0].text, "Hello");
+    assert_eq!(first_line.words[1].text, "World");
+}
+
+// ============================================================
+// Text search tests
+// ============================================================
+
+#[test]
+fn test_search_exact_in_pdf() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&mut doc).unwrap();
+    let results = search::search_exact(&pages, "Hello");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].page_index, 0);
+    assert_eq!(results[0].matched_text, "Hello");
+    assert!(results[0].quad.x0 >= 72.0);
+}
+
+#[test]
+fn test_search_case_insensitive_in_pdf() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&mut doc).unwrap();
+    let results = search::search_case_insensitive(&pages, "hello world");
+    assert_eq!(results.len(), 1);
+}
+
+#[test]
+fn test_search_no_match_in_pdf() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&mut doc).unwrap();
+    let results = search::search_exact(&pages, "nonexistent");
+    assert!(results.is_empty());
+}
+
+#[test]
+fn test_search_regex_in_pdf() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&mut doc).unwrap();
+    let results = search::search_regex(&pages, "H\\w+").unwrap();
+    assert!(!results.is_empty());
+    assert!(results[0].matched_text.starts_with('H'));
+}
+
+#[test]
+fn test_search_empty_page() {
+    let mut doc = PdfDocument::open(&fixture("minimal.pdf")).unwrap();
+    let pages = text::extract_all_text(&mut doc).unwrap();
+    let results = search::search_exact(&pages, "anything");
+    assert!(results.is_empty());
+}
+
+// ============================================================
+// Text format tests
+// ============================================================
+
+#[test]
+fn test_format_plain_text() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&mut doc).unwrap();
+    let plain = format::format_page(&pages[0], OutputFormat::PlainText);
+    assert!(plain.contains("Hello World"));
+}
+
+#[test]
+fn test_format_html() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&mut doc).unwrap();
+    let html = format::format_page(&pages[0], OutputFormat::Html);
+    assert!(html.contains("<div class=\"page\">"));
+    assert!(html.contains("Hello World"));
+    assert!(html.contains("</div>"));
+}
+
+#[test]
+fn test_format_json() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&mut doc).unwrap();
+    let json = format::format_page(&pages[0], OutputFormat::Json);
+    assert!(json.contains("\"page_index\": 0"));
+    assert!(json.contains("Hello"));
+    assert!(json.contains("\"blocks\""));
+}
+
+#[test]
+fn test_format_markdown() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&mut doc).unwrap();
+    let md = format::format_page(&pages[0], OutputFormat::Markdown);
+    assert!(md.contains("Hello World"));
+}
+
+#[test]
+fn test_format_multi_page() {
+    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&mut doc).unwrap();
+    let html = format::format_pages(&pages, OutputFormat::Html);
+    assert!(html.contains("<!DOCTYPE html>"));
+    assert!(html.contains("Page 1"));
 }
 
 // ============================================================

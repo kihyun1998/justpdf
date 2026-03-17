@@ -7,6 +7,7 @@ pub mod object;
 pub mod page;
 pub mod parser;
 pub mod stream;
+pub mod text;
 pub mod tokenizer;
 pub mod xref;
 
