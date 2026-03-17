@@ -124,94 +124,94 @@ cargo test -p justpdf-core
 > 목표: 대부분의 PDF를 파싱하고 페이지 콘텐츠를 해석할 수 있는 상태
 
 ### 1.1 페이지 트리
-- [ ] Page Tree 순회 (Pages → Page)
-- [ ] 페이지 수 계산
-- [ ] 상속 속성 해석 (Resources, MediaBox, Rotate 등)
-- [ ] Page Box: MediaBox, CropBox, BleedBox, TrimBox, ArtBox
+- [x] Page Tree 순회 (Pages → Page)
+- [x] 페이지 수 계산
+- [x] 상속 속성 해석 (Resources, MediaBox, Rotate 등)
+- [x] Page Box: MediaBox, CropBox, BleedBox, TrimBox, ArtBox
 
 ### 1.2 리소스 딕셔너리
-- [ ] Font 리소스 로딩
-- [ ] XObject 리소스 (Image, Form)
-- [ ] ColorSpace 리소스
-- [ ] ExtGState 리소스
-- [ ] Pattern 리소스
-- [ ] Shading 리소스
-- [ ] Properties (Optional Content)
+- [x] Font 리소스 로딩
+- [x] XObject 리소스 (Image, Form)
+- [x] ColorSpace 리소스
+- [x] ExtGState 리소스
+- [ ] Pattern 리소스 *(Phase 2로 이동)*
+- [ ] Shading 리소스 *(Phase 2로 이동)*
+- [ ] Properties (Optional Content) *(Phase 7로 이동)*
 
 ### 1.3 컨텐츠 스트림 인터프리터
-- [ ] Graphics State 관리 (CTM, color, line style, text state)
-- [ ] 경로 연산자: m, l, c, v, y, h, re
-- [ ] 경로 페인팅: S, s, f, F, f*, B, B*, b, b*, n
-- [ ] 클리핑: W, W*
-- [ ] 텍스트 연산자: BT/ET, Tf, Td, TD, Tm, T*, Tj, TJ, ', "
-- [ ] 이미지 연산자: Do (XObject), BI/ID/EI (인라인 이미지)
-- [ ] 색상 연산자: CS/cs, SC/sc/SCN/scn, G/g, RG/rg, K/k
-- [ ] Graphics State 연산자: q/Q, cm, w, J, j, M, d, ri, i, gs
-- [ ] Marked Content: BMC/BDC/EMC, MP/DP
-- [ ] Shading: sh
-- [ ] Type3 폰트 연산자: d0, d1
+- [x] Graphics State 관리 (CTM, color, line style, text state)
+- [x] 경로 연산자: m, l, c, v, y, h, re
+- [x] 경로 페인팅: S, s, f, F, f*, B, B*, b, b*, n
+- [x] 클리핑: W, W*
+- [x] 텍스트 연산자: BT/ET, Tf, Td, TD, Tm, T*, Tj, TJ, ', "
+- [x] 이미지 연산자: Do (XObject), BI/ID/EI (인라인 이미지)
+- [x] 색상 연산자: CS/cs, SC/sc/SCN/scn, G/g, RG/rg, K/k
+- [x] Graphics State 연산자: q/Q, cm, w, J, j, M, d, ri, i, gs
+- [x] Marked Content: BMC/BDC/EMC, MP/DP
+- [x] Shading: sh
+- [x] Type3 폰트 연산자: d0, d1
 
 ### 1.4 추가 스트림 필터
-- [ ] LZWDecode
-- [ ] RunLengthDecode
-- [ ] CCITTFaxDecode (Group 3, Group 4)
-- [ ] DCTDecode (JPEG)
-- [ ] JPXDecode (JPEG2000) - openjpeg 또는 Rust 구현
-- [ ] JBIG2Decode
-- [ ] Crypt 필터
+- [x] LZWDecode
+- [x] RunLengthDecode
+- [ ] CCITTFaxDecode (Group 3, Group 4) *(Phase 2로 이동)*
+- [x] DCTDecode (JPEG)
+- [ ] JPXDecode (JPEG2000) *(Phase 2로 이동)*
+- [ ] JBIG2Decode *(Phase 2로 이동)*
+- [ ] Crypt 필터 *(Phase 6으로 이동)*
 
 ### 1.5 폰트 기본
-- [ ] Type1 폰트 (Standard 14 내장)
-- [ ] TrueType 폰트 로딩
-- [ ] CIDFont (Type0) 기본
-- [ ] CMap 파싱 (사전 정의 + 임베디드)
-- [ ] ToUnicode 매핑
-- [ ] 글리프 너비 / 메트릭스
-- [ ] 인코딩: WinAnsi, MacRoman, StandardEncoding, PDFDocEncoding
+- [x] Type1 폰트 (Standard 14 내장)
+- [ ] TrueType 폰트 로딩 (글리프 아웃라인) *(Phase 2로 이동)*
+- [x] CIDFont (Type0) 기본 (너비 구조)
+- [x] CMap 파싱 (ToUnicode CMap)
+- [x] ToUnicode 매핑
+- [x] 글리프 너비 / 메트릭스
+- [x] 인코딩: WinAnsi, MacRoman, StandardEncoding, PDFDocEncoding
 
 ### 1.6 이미지 디코딩
-- [ ] JPEG (DCTDecode)
-- [ ] PNG-style (FlateDecode + Predictor)
-- [ ] JPEG2000 (JPXDecode)
-- [ ] JBIG2
-- [ ] CCITT Fax
-- [ ] 인라인 이미지
-- [ ] 이미지 마스크, 소프트 마스크, SMask
+- [x] JPEG (DCTDecode)
+- [x] PNG-style (FlateDecode + Predictor)
+- [ ] JPEG2000 (JPXDecode) *(Phase 2로 이동)*
+- [ ] JBIG2 *(Phase 2로 이동)*
+- [ ] CCITT Fax *(Phase 2로 이동)*
+- [x] 인라인 이미지
+- [ ] 이미지 마스크, 소프트 마스크, SMask *(Phase 2로 이동)*
 
 ### 1.7 색공간
-- [ ] DeviceGray, DeviceRGB, DeviceCMYK
-- [ ] CalGray, CalRGB
-- [ ] Lab
-- [ ] Indexed
-- [ ] Separation, DeviceN (기본)
-- [ ] 색 변환 (Gray↔RGB↔CMYK)
+- [x] DeviceGray, DeviceRGB, DeviceCMYK
+- [x] CalGray, CalRGB
+- [x] Lab
+- [x] Indexed
+- [x] Separation, DeviceN (기본)
+- [x] 색 변환 (Gray↔RGB↔CMYK)
 
 ### 1.T 테스트 요구사항
 
 **Positive Tests:**
-- [ ] 페이지 수 정확히 반환 (다양한 PDF로 검증)
-- [ ] 상속된 MediaBox 정확히 해석 (부모 Pages에만 MediaBox 있는 경우)
-- [ ] 각 Page Box (Media/Crop/Bleed/Trim/Art) 값 읽기
-- [ ] 컨텐츠 스트림 연산자 파싱 — 알려진 연산자 시퀀스와 비교
-- [ ] Graphics State push/pop (q/Q) 균형 검증
-- [ ] 텍스트 연산자 (BT/ET, Tj, TJ) → 텍스트 문자열 추출
-- [ ] Standard 14 폰트 이름 인식 → 메트릭스 로딩
-- [ ] TrueType 임베디드 폰트 → 글리프 너비 정확성
-- [ ] ToUnicode CMap → 유니코드 문자열 변환
-- [ ] CJK 폰트 (사전 정의 CMap) → 한글/중국어/일본어 텍스트
-- [ ] JPEG 이미지 디코딩 → 올바른 크기/채널 수
-- [ ] 인라인 이미지 (BI/ID/EI) 파싱
-- [ ] DeviceRGB → DeviceCMYK 색 변환 왕복 테스트
-- [ ] Indexed 색공간 → 팔레트에서 실제 색상 조회
+- [x] 페이지 수 정확히 반환 (다양한 PDF로 검증)
+- [x] 상속된 MediaBox 정확히 해석 (부모 Pages에만 MediaBox 있는 경우)
+- [x] 각 Page Box (Media/Crop/Bleed/Trim/Art) 값 읽기
+- [x] 컨텐츠 스트림 연산자 파싱 — 알려진 연산자 시퀀스와 비교
+- [x] Graphics State push/pop (q/Q) 균형 검증
+- [x] 텍스트 연산자 (BT/ET, Tj, TJ) → 텍스트 문자열 추출
+- [x] Standard 14 폰트 이름 인식 → 메트릭스 로딩
+- [ ] TrueType 임베디드 폰트 → 글리프 너비 정확성 *(Phase 2)*
+- [x] ToUnicode CMap → 유니코드 문자열 변환
+- [ ] CJK 폰트 (사전 정의 CMap) → 한글/중국어/일본어 텍스트 *(Phase 3)*
+- [x] JPEG 이미지 디코딩 → 올바른 크기/채널 수
+- [x] 인라인 이미지 (BI/ID/EI) 파싱
+- [x] DeviceRGB → DeviceCMYK 색 변환 왕복 테스트
+- [x] Indexed 색공간 → 팔레트에서 실제 색상 조회
 
 **Negative Tests:**
-- [ ] 페이지 번호 범위 초과 (page 999 on 5-page PDF) → 에러
-- [ ] 누락된 리소스 (Font 참조했는데 없음) → 에러 또는 폴백
-- [ ] 알 수 없는 연산자 → 무시하고 계속 파싱 (크래시 아님)
-- [ ] 손상된 컨텐츠 스트림 (갑자기 끊김) → 에러 처리
-- [ ] ToUnicode 없는 커스텀 인코딩 폰트 → 빈 문자열 또는 폴백
-- [ ] 지원하지 않는 이미지 필터 → 명확한 에러
-- [ ] 깊이 중첩된 Form XObject (재귀) → 무한루프 방지
+- [x] 페이지 번호 범위 초과 (page 999 on 5-page PDF) → 에러
+- [x] 누락된 리소스 (Font 참조했는데 없음) → 에러 또는 폴백
+- [x] 알 수 없는 연산자 → 무시하고 계속 파싱 (크래시 아님)
+- [x] 손상된 컨텐츠 스트림 (갑자기 끊김) → 에러 처리
+- [x] ToUnicode 없는 커스텀 인코딩 폰트 → 빈 문자열 또는 폴백
+- [x] 지원하지 않는 이미지 필터 → 명확한 에러
+- [x] 깊이 중첩된 Form XObject (재귀) → 무한루프 방지
 
 ### 1.E 완료 확인 (직접 실행)
 ```bash
@@ -247,6 +247,18 @@ cargo test -p justpdf-core
 ## Phase 2: 렌더링 엔진
 
 > 목표: PDF 페이지를 픽셀로 렌더링 (PNG/이미지 출력)
+
+### 2.0 Phase 1에서 이월된 항목
+- [ ] CCITTFaxDecode (Group 3, Group 4) 스트림 필터
+- [ ] JPXDecode (JPEG2000) 스트림 필터
+- [ ] JBIG2Decode 스트림 필터
+- [ ] TrueType 폰트 로딩 (글리프 아웃라인 파싱)
+- [ ] JPEG2000 이미지 디코딩
+- [ ] JBIG2 이미지 디코딩
+- [ ] CCITT Fax 이미지 디코딩
+- [ ] 이미지 마스크, 소프트 마스크, SMask
+- [ ] Pattern 리소스 로딩
+- [ ] Shading 리소스 로딩
 
 ### 2.1 Device 추상화
 - [ ] Device trait 정의 (fill_path, stroke_path, fill_text, fill_image, ...)
@@ -349,6 +361,9 @@ cargo test -p justpdf-render
 ## Phase 3: 텍스트 추출
 
 > 목표: PDF에서 텍스트를 정확하게 추출하고 검색할 수 있는 상태
+
+### 3.0 Phase 1에서 이월된 항목
+- [ ] CJK 폰트 (사전 정의 CMap) → 한글/중국어/일본어 텍스트
 
 ### 3.1 Text Device
 - [ ] 문자 단위 추출 (위치, 크기, 폰트, 색상, Unicode)
@@ -632,6 +647,9 @@ cargo test -p justpdf-annot
 
 > 목표: PDF 암호화/복호화, 디지털 서명 지원
 
+### 6.0 Phase 1에서 이월된 항목
+- [ ] Crypt 스트림 필터
+
 ### 6.1 복호화 (읽기)
 - [ ] RC4-40, RC4-128
 - [ ] AES-128
@@ -717,6 +735,9 @@ cargo test -p justpdf-sign
 ## Phase 7: 고급 PDF 기능
 
 > 목표: 프로덕션 수준의 PDF 처리를 위한 고급 기능
+
+### 7.0 Phase 1에서 이월된 항목
+- [ ] Properties (Optional Content) 리소스 로딩
 
 ### 7.1 북마크/아웃라인
 - [ ] 아웃라인 트리 읽기 (제목, 목적지, 스타일)
