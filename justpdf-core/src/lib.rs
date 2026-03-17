@@ -1,5 +1,9 @@
+pub mod color;
+pub mod content;
 pub mod error;
+pub mod font;
 pub mod object;
+pub mod page;
 pub mod parser;
 pub mod stream;
 pub mod tokenizer;
