@@ -589,8 +589,8 @@ cargo test -p justpdf-writer
 
 ### 5.4 Redaction
 - [x] Redact 어노테이션 생성
-- [ ] Redaction 적용 (텍스트/이미지/벡터 제거)
-- [ ] 옵션: black box, 이미지 제거 방식, 라인아트 처리
+- [x] Redaction 적용 (텍스트/이미지/벡터 제거)
+- [x] 옵션: black box, 이미지 제거 방식, 라인아트 처리
 
 ### 5.T 테스트 요구사항
 
@@ -606,7 +606,7 @@ cargo test -p justpdf-writer
 - [x] Checkbox 토글 → 상태 변경 확인
 - [x] ComboBox 선택 변경 → 값 확인
 - [x] 폼 Flatten → 필드 사라지고 텍스트만 남음
-- [ ] Redaction 적용 → 해당 영역 텍스트 추출 시 빈 결과
+- [x] Redaction 적용 → 해당 영역 텍스트 추출 시 빈 결과
 
 **Negative Tests:**
 - [x] 어노테이션 없는 PDF → 빈 리스트 반환 (에러 아님)

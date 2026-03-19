@@ -868,3 +868,38 @@ fn test_flatten_form() {
     let acroform2 = form::parse_acroform(&mut doc2).unwrap();
     assert!(acroform2.is_none());
 }
+
+#[test]
+fn test_redaction_apply() {
+    // Create a PDF with text, add redact annotation, apply redaction
+    let bytes = create_simple_pdf(); // has "Hello World" at (72, 720)
+    let mut doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
+    let pages = collect_pages(&mut doc).unwrap();
+    let page_obj_num = pages[0].page_ref.obj_num;
+
+    // Add a Redact annotation covering the text area
+    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let rect = Rect { llx: 50.0, lly: 710.0, urx: 200.0, ury: 730.0 };
+    let builder = AnnotationBuilder::redact(rect)
+        .interior_color(AnnotColor::Rgb(0.0, 0.0, 0.0));
+    annot::add_annotation(&mut modifier, page_obj_num, builder).unwrap();
+    let with_redact = modifier.build().unwrap();
+
+    // Now apply redaction
+    let mut doc2 = PdfDocument::from_bytes(with_redact.clone()).unwrap();
+    let mut modifier2 = DocumentModifier::from_document(&mut doc2).unwrap();
+    let mut doc_for_apply = PdfDocument::from_bytes(with_redact).unwrap();
+    annot::redact::apply_redactions(&mut modifier2, &mut doc_for_apply, 0).unwrap();
+
+    let result_bytes = modifier2.build().unwrap();
+
+    // Verify: redact annotation should be removed
+    let mut doc3 = PdfDocument::from_bytes(result_bytes).unwrap();
+    let pages3 = collect_pages(&mut doc3).unwrap();
+    let annots = annot::get_annotations(&mut doc3, &pages3[0]).unwrap();
+    // No redact annotations remaining
+    assert!(
+        annots.iter().all(|a| a.annot_type != AnnotationType::Redact),
+        "redact annotations should be removed"
+    );
+}

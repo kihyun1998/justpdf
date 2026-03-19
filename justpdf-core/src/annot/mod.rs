@@ -1,6 +1,7 @@
 pub mod appearance;
 pub mod builder;
 pub mod parse;
+pub mod redact;
 pub mod types;
 
 pub use builder::{add_annotation, delete_annotation, AnnotationBuilder};
