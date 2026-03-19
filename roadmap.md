@@ -156,8 +156,8 @@ cargo test -p justpdf-core
 - [x] RunLengthDecode
 - [x] CCITTFaxDecode (Group 3, Group 4) *(Phase 2에서 구현)*
 - [x] DCTDecode (JPEG)
-- ~~JPXDecode (JPEG2000)~~ *(Pure Rust 구현 비현실적 → Phase 7 고급 기능으로 이동, feature flag C 바인딩 검토)*
-- ~~JBIG2Decode~~ *(Pure Rust 구현 비현실적 → Phase 7로 이동)*
+- [x] JPXDecode (JPEG2000) *(justjp2 crate 연동)*
+- [x] JBIG2Decode *(justbig2 crate 연동)*
 - ~~Crypt 필터~~ *(Phase 6 보안에서 구현)*
 
 ### 1.5 폰트 기본
@@ -172,8 +172,8 @@ cargo test -p justpdf-core
 ### 1.6 이미지 디코딩
 - [x] JPEG (DCTDecode)
 - [x] PNG-style (FlateDecode + Predictor)
-- ~~JPEG2000 (JPXDecode)~~ *(Phase 7로 이동)*
-- ~~JBIG2~~ *(Phase 7로 이동)*
+- [x] JPEG2000 (JPXDecode) *(justjp2 crate 연동)*
+- [x] JBIG2 *(justbig2 crate 연동)*
 - [x] CCITT Fax *(Phase 2에서 구현)*
 - [x] 인라인 이미지
 - [x] 이미지 마스크, 소프트 마스크, SMask *(Phase 2에서 구현)*
@@ -250,11 +250,11 @@ cargo test -p justpdf-core
 
 ### 2.0 Phase 1에서 이월된 항목
 - [x] CCITTFaxDecode (Group 3, Group 4) 스트림 필터
-- ~~JPXDecode (JPEG2000) 스트림 필터~~ *(Phase 7로 이동)*
-- ~~JBIG2Decode 스트림 필터~~ *(Phase 7로 이동)*
+- [x] JPXDecode (JPEG2000) 스트림 필터 *(justjp2 crate 연동)*
+- [x] JBIG2Decode 스트림 필터 *(justbig2 crate 연동)*
 - [x] TrueType 폰트 로딩 (글리프 아웃라인 파싱, ttf-parser 기반)
-- ~~JPEG2000 이미지 디코딩~~ *(Phase 7로 이동)*
-- ~~JBIG2 이미지 디코딩~~ *(Phase 7로 이동)*
+- [x] JPEG2000 이미지 디코딩 *(justjp2 crate 연동)*
+- [x] JBIG2 이미지 디코딩 *(justbig2 crate 연동)*
 - [x] CCITT Fax 이미지 디코딩
 - [x] 이미지 마스크, 소프트 마스크, SMask
 - [x] Pattern 리소스 로딩
@@ -744,8 +744,8 @@ cargo test -p justpdf-sign
 
 ### 7.0 Phase 1/2/4에서 이월된 항목
 - [ ] Properties (Optional Content) 리소스 로딩
-- [ ] JPXDecode (JPEG2000) 스트림 필터 + 이미지 디코딩 *(justjp2 — Pure Rust 별도 crate 개발 후 연동)*
-- [ ] JBIG2Decode 스트림 필터 + 이미지 디코딩 *(justbig2 — Pure Rust 별도 crate 개발 후 연동)*
+- [x] JPXDecode (JPEG2000) 스트림 필터 + 이미지 디코딩 *(justjp2 crate 연동 완료)*
+- [x] JBIG2Decode 스트림 필터 + 이미지 디코딩 *(justbig2 crate 연동 완료)*
 - [ ] 폰트 서브세팅 (TTF 테이블 재구성)
 - [ ] CJK 텍스트 쓰기 (CID 폰트 + CMap)
 - [ ] 텍스트 레이아웃 (줄바꿈, 정렬)

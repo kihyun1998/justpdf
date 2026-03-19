@@ -140,11 +140,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "justbig2"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e0b687f285d80f6ba0b8986690a46a2639adcfcdeed3f3c46631a9861365025"
+
+[[package]]
+name = "justjp2"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bc3687ecb9ffb6266b3751047266a588cd78e4fe39b7219950bc8d8b8afd15d"
+dependencies = [
+ "bitflags 2.11.0",
+ "rayon",
+]
+
+[[package]]
 name = "justpdf-core"
 version = "0.1.0"
 dependencies = [
  "flate2",
  "jpeg-decoder",
+ "justbig2",
+ "justjp2",
  "png 0.17.16",
  "thiserror",
  "ttf-parser",

@@ -125,24 +125,78 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict) -> Result<DecodedImage> {
             })
         }
         Some(b"JPXDecode") => {
-            // JPEG2000: not implemented, return raw
+            let jp2_image = justjp2::decode(raw_data).map_err(|e| JustPdfError::StreamDecode {
+                filter: "JPXDecode".into(),
+                detail: format!("JPEG2000 decode error: {e}"),
+            })?;
+            let num_comp = jp2_image.components.len() as u32;
+            if num_comp == 0 || jp2_image.components[0].data.is_empty() {
+                return Err(JustPdfError::StreamDecode {
+                    filter: "JPXDecode".into(),
+                    detail: "empty JPEG2000 image".into(),
+                });
+            }
+            let w = jp2_image.width;
+            let h = jp2_image.height;
+            let pixel_count = (w * h) as usize;
+            // Interleave components into a flat pixel buffer, clamping i32→u8
+            let mut data = Vec::with_capacity(pixel_count * num_comp as usize);
+            for i in 0..pixel_count {
+                for comp in &jp2_image.components {
+                    let val = comp.data.get(i).copied().unwrap_or(0);
+                    data.push(val.clamp(0, 255) as u8);
+                }
+            }
             Ok(DecodedImage {
-                width: info.width,
-                height: info.height,
-                components: info.num_components,
-                bpc: info.bits_per_component,
-                data: raw_data.to_vec(),
+                width: w,
+                height: h,
+                components: num_comp,
+                bpc: 8,
+                data,
                 source_format: ImageFormat::Jpeg2000,
             })
         }
-        Some(b"JBIG2Decode") => Ok(DecodedImage {
-            width: info.width,
-            height: info.height,
-            components: 1,
-            bpc: 1,
-            data: raw_data.to_vec(),
-            source_format: ImageFormat::Jbig2,
-        }),
+        Some(b"JBIG2Decode") => {
+            let pages = justbig2::decode_embedded(raw_data).map_err(|e| {
+                JustPdfError::StreamDecode {
+                    filter: "JBIG2Decode".into(),
+                    detail: format!("JBIG2 decode error: {e}"),
+                }
+            })?;
+            let page = pages.into_iter().next().ok_or_else(|| {
+                JustPdfError::StreamDecode {
+                    filter: "JBIG2Decode".into(),
+                    detail: "no pages decoded from JBIG2 stream".into(),
+                }
+            })?;
+            // JBIG2: 1BPP packed, MSB-first, stride-aligned rows
+            // Expand to 1-byte-per-pixel grayscale
+            // JBIG2 convention: 1=black→0x00, 0=white→0xFF
+            let w = page.width;
+            let h = page.height;
+            let pixel_count = (w * h) as usize;
+            let mut data = Vec::with_capacity(pixel_count);
+            for y in 0..h {
+                for x in 0..w {
+                    let byte_idx = (y * page.stride + x / 8) as usize;
+                    let bit_idx = 7 - (x % 8);
+                    let bit = if byte_idx < page.data.len() {
+                        (page.data[byte_idx] >> bit_idx) & 1
+                    } else {
+                        0
+                    };
+                    data.push(if bit != 0 { 0x00 } else { 0xFF });
+                }
+            }
+            Ok(DecodedImage {
+                width: w,
+                height: h,
+                components: 1,
+                bpc: 8,
+                data,
+                source_format: ImageFormat::Jbig2,
+            })
+        }
         Some(b"CCITTFaxDecode") | Some(b"CCF") => {
             // CCITT data is decoded by the stream decoder into 1-byte-per-pixel data
             // (0x00=white, 0xFF=black). We pass it through as 8bpc grayscale.
