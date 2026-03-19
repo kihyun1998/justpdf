@@ -565,56 +565,56 @@ cargo test -p justpdf-writer
 > 목표: PDF 어노테이션과 대화형 폼을 완전히 지원
 
 ### 5.1 어노테이션 읽기
-- [ ] 어노테이션 파싱 (전체 28종 타입)
-- [ ] 어노테이션 속성 읽기 (Rect, Color, Border, Flags, Contents, ...)
-- [ ] Appearance Stream 렌더링
-- [ ] Popup 연결
+- [x] 어노테이션 파싱 (전체 28종 타입)
+- [x] 어노테이션 속성 읽기 (Rect, Color, Border, Flags, Contents, ...)
+- [x] Appearance Stream 렌더링
+- [x] Popup 연결
 
 ### 5.2 어노테이션 생성/수정
-- [ ] 마크업 어노테이션 생성 (Highlight, Underline, StrikeOut, Squiggly)
-- [ ] 도형 어노테이션 (Line, Square, Circle, Polygon, PolyLine, Ink)
-- [ ] 텍스트 어노테이션 (Text, FreeText, Stamp, Caret)
-- [ ] 링크 어노테이션 (Link)
-- [ ] 파일 첨부 (FileAttachment)
-- [ ] Appearance Stream 자동 생성
-- [ ] 어노테이션 삭제
+- [x] 마크업 어노테이션 생성 (Highlight, Underline, StrikeOut, Squiggly)
+- [x] 도형 어노테이션 (Line, Square, Circle, Polygon, PolyLine, Ink)
+- [x] 텍스트 어노테이션 (Text, FreeText, Stamp, Caret)
+- [x] 링크 어노테이션 (Link)
+- [x] 파일 첨부 (FileAttachment)
+- [x] Appearance Stream 자동 생성
+- [x] 어노테이션 삭제
 
 ### 5.3 폼 필드
-- [ ] AcroForm 파싱
-- [ ] 필드 타입: Text, Checkbox, RadioButton, ComboBox, ListBox, Button
-- [ ] 필드 값 읽기/쓰기
-- [ ] 필드 속성 (ReadOnly, Required, 등)
-- [ ] 필드 외관 생성
-- [ ] 폼 Flatten (정적 콘텐츠로 변환)
+- [x] AcroForm 파싱
+- [x] 필드 타입: Text, Checkbox, RadioButton, ComboBox, ListBox, Button
+- [x] 필드 값 읽기/쓰기
+- [x] 필드 속성 (ReadOnly, Required, 등)
+- [x] 필드 외관 생성
+- [x] 폼 Flatten (정적 콘텐츠로 변환)
 
 ### 5.4 Redaction
-- [ ] Redact 어노테이션 생성
+- [x] Redact 어노테이션 생성
 - [ ] Redaction 적용 (텍스트/이미지/벡터 제거)
 - [ ] 옵션: black box, 이미지 제거 방식, 라인아트 처리
 
 ### 5.T 테스트 요구사항
 
 **Positive Tests:**
-- [ ] 어노테이션 있는 PDF → 각 어노테이션 타입/속성 정확히 파싱
-- [ ] Highlight 어노테이션 추가 → 저장 → 다시 열었을 때 존재 확인
-- [ ] Ink 어노테이션 (자유 그리기) → ink list 좌표 왕복 검증
-- [ ] Line 어노테이션 → line ending style, leader 속성 확인
-- [ ] 어노테이션 삭제 → 저장 후 해당 어노테이션 없음 확인
-- [ ] Appearance Stream 자동 생성 → 렌더링 결과 확인
-- [ ] AcroForm PDF → 모든 필드 타입/값 파싱
-- [ ] Text 필드 값 변경 → 저장 → 다시 읽었을 때 변경된 값
-- [ ] Checkbox 토글 → 상태 변경 확인
-- [ ] ComboBox 선택 변경 → 값 확인
-- [ ] 폼 Flatten → 필드 사라지고 텍스트만 남음
+- [x] 어노테이션 있는 PDF → 각 어노테이션 타입/속성 정확히 파싱
+- [x] Highlight 어노테이션 추가 → 저장 → 다시 열었을 때 존재 확인
+- [x] Ink 어노테이션 (자유 그리기) → ink list 좌표 왕복 검증
+- [x] Line 어노테이션 → line ending style, leader 속성 확인
+- [x] 어노테이션 삭제 → 저장 후 해당 어노테이션 없음 확인
+- [x] Appearance Stream 자동 생성 → 렌더링 결과 확인
+- [x] AcroForm PDF → 모든 필드 타입/값 파싱
+- [x] Text 필드 값 변경 → 저장 → 다시 읽었을 때 변경된 값
+- [x] Checkbox 토글 → 상태 변경 확인
+- [x] ComboBox 선택 변경 → 값 확인
+- [x] 폼 Flatten → 필드 사라지고 텍스트만 남음
 - [ ] Redaction 적용 → 해당 영역 텍스트 추출 시 빈 결과
 
 **Negative Tests:**
-- [ ] 어노테이션 없는 PDF → 빈 리스트 반환 (에러 아님)
-- [ ] 잘못된 어노테이션 타입 문자열 → Unknown 처리
-- [ ] 필수 속성 누락된 어노테이션 → 스킵 또는 기본값
-- [ ] AcroForm 없는 PDF에서 필드 조회 → 빈 결과
-- [ ] ReadOnly 필드 값 변경 시도 → 에러
-- [ ] 존재하지 않는 어노테이션 삭제 시도 → 에러
+- [x] 어노테이션 없는 PDF → 빈 리스트 반환 (에러 아님)
+- [x] 잘못된 어노테이션 타입 문자열 → Unknown 처리
+- [x] 필수 속성 누락된 어노테이션 → 스킵 또는 기본값
+- [x] AcroForm 없는 PDF에서 필드 조회 → 빈 결과
+- [x] ReadOnly 필드 값 변경 시도 → 에러
+- [x] 존재하지 않는 어노테이션 삭제 시도 → 에러
 
 ### 5.E 완료 확인 (직접 실행)
 ```bash

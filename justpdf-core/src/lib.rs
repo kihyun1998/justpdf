@@ -1,7 +1,9 @@
+pub mod annot;
 pub mod color;
 pub mod content;
 pub mod error;
 pub mod font;
+pub mod form;
 pub mod function;
 pub mod image;
 pub mod object;

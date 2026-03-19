@@ -60,19 +60,103 @@ impl<'a> RenderInterpreter<'a> {
         }
     }
 
-    /// Render a page's content streams.
+    /// Render a page's content streams, then annotation appearance streams.
     pub fn render_page(&mut self, page: &PageInfo) -> Result<()> {
         // Resolve resources and fonts (non-fatal if it fails)
         let _ = self.resolve_page_fonts(page);
 
         // Get content stream data
         let content_data = self.get_page_content(page)?;
-        if content_data.is_empty() {
-            return Ok(());
+        if !content_data.is_empty() {
+            let ops = parse_content_stream(&content_data).map_err(|e| RenderError::Core(e))?;
+            self.execute_ops(&ops, page)?;
         }
 
-        let ops = parse_content_stream(&content_data).map_err(|e| RenderError::Core(e))?;
-        self.execute_ops(&ops, page)?;
+        // Render annotation appearance streams
+        let _ = self.render_annotations(page);
+
+        Ok(())
+    }
+
+    /// Render annotation appearance streams on top of page content.
+    fn render_annotations(&mut self, page: &PageInfo) -> Result<()> {
+        // Get page dict → /Annots array
+        let page_obj = self.doc.resolve(&page.page_ref)?.clone();
+        let page_dict = match page_obj.as_dict() {
+            Some(d) => d.clone(),
+            None => return Ok(()),
+        };
+
+        let annots_arr = match page_dict.get(b"Annots") {
+            Some(PdfObject::Array(arr)) => arr.clone(),
+            Some(PdfObject::Reference(r)) => {
+                let r = r.clone();
+                match self.doc.resolve(&r)?.clone() {
+                    PdfObject::Array(arr) => arr,
+                    _ => return Ok(()),
+                }
+            }
+            _ => return Ok(()),
+        };
+
+        for item in &annots_arr {
+            let annot_dict = match item {
+                PdfObject::Reference(r) => {
+                    let r = r.clone();
+                    match self.doc.resolve(&r)?.clone() {
+                        PdfObject::Dict(d) => d,
+                        _ => continue,
+                    }
+                }
+                PdfObject::Dict(d) => d.clone(),
+                _ => continue,
+            };
+
+            // Skip hidden/no-view annotations
+            let flags = annot_dict
+                .get_i64(b"F")
+                .unwrap_or(0) as u32;
+            if flags & 0x02 != 0 || flags & 0x20 != 0 {
+                // Hidden or NoView
+                continue;
+            }
+
+            // Get appearance stream: /AP /N
+            let ap_stream = match annot_dict.get(b"AP") {
+                Some(PdfObject::Dict(ap)) => {
+                    let n_obj = match ap.get(b"N") {
+                        Some(PdfObject::Reference(r)) => {
+                            let r = r.clone();
+                            self.doc.resolve(&r)?.clone()
+                        }
+                        Some(other) => other.clone(),
+                        None => continue,
+                    };
+                    match n_obj {
+                        PdfObject::Stream { dict, data } => (dict, data),
+                        _ => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            // Require annotation rect (needed for positioning)
+            if annot_dict.get_array(b"Rect").is_none() {
+                continue;
+            }
+
+            // Save graphics state, render AP Form XObject
+            self.state_stack.push(self.state.clone());
+
+            let (ap_dict, ap_data) = ap_stream;
+            let _ = self.render_form_xobject(&ap_dict, &ap_data, page);
+
+            // Restore graphics state
+            if let Some(saved) = self.state_stack.pop() {
+                self.state = saved;
+            }
+        }
+
         Ok(())
     }
 

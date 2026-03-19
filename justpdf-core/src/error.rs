@@ -36,6 +36,12 @@ pub enum JustPdfError {
 
     #[error("trailer not found")]
     TrailerNotFound,
+
+    #[error("annotation error: {detail}")]
+    AnnotationError { detail: String },
+
+    #[error("form error: {detail}")]
+    FormError { detail: String },
 }
 
 pub type Result<T> = std::result::Result<T, JustPdfError>;

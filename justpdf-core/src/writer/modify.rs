@@ -81,6 +81,11 @@ impl DocumentModifier {
         self.writer.add_object(obj)
     }
 
+    /// Find an object by object number (public accessor).
+    pub fn find_object_pub(&self, obj_num: u32) -> Option<&PdfObject> {
+        self.find_object(obj_num)
+    }
+
     /// Delete a page by index (0-based).
     /// Modifies the Pages tree to remove the page reference.
     pub fn delete_page(&mut self, page_index: usize) -> Result<()> {
