@@ -241,6 +241,16 @@ impl PixmapDevice {
             })
     }
 
+    /// Get the raw RGBA pixel data.
+    pub fn raw_rgba(&self) -> &[u8] {
+        self.pixmap.data()
+    }
+
+    /// Get the pixmap dimensions (width, height).
+    pub fn dimensions(&self) -> (u32, u32) {
+        (self.pixmap.width(), self.pixmap.height())
+    }
+
     /// Encode the pixmap as JPEG bytes.
     pub fn encode_jpeg(&self, quality: u8) -> Result<Vec<u8>> {
         let width = self.pixmap.width();

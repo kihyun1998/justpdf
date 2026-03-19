@@ -143,14 +143,19 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict) -> Result<DecodedImage> {
             data: raw_data.to_vec(),
             source_format: ImageFormat::Jbig2,
         }),
-        Some(b"CCITTFaxDecode") | Some(b"CCF") => Ok(DecodedImage {
-            width: info.width,
-            height: info.height,
-            components: 1,
-            bpc: 1,
-            data: raw_data.to_vec(),
-            source_format: ImageFormat::CcittFax,
-        }),
+        Some(b"CCITTFaxDecode") | Some(b"CCF") => {
+            // CCITT data is decoded by the stream decoder into 1-byte-per-pixel data
+            // (0x00=white, 0xFF=black). We pass it through as 8bpc grayscale.
+            let decoded = stream::decode_stream(raw_data, dict)?;
+            Ok(DecodedImage {
+                width: info.width,
+                height: info.height,
+                components: 1,
+                bpc: 8,
+                data: decoded,
+                source_format: ImageFormat::CcittFax,
+            })
+        }
         _ => {
             // Raw or FlateDecode (already decoded by stream decoder)
             let decoded = stream::decode_stream(raw_data, dict)?;

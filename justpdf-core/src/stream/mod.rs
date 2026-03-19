@@ -1,5 +1,6 @@
 mod ascii85;
 mod ascii_hex;
+pub mod ccitt;
 pub mod dct;
 mod flate;
 mod predictor;
@@ -63,8 +64,7 @@ fn decode_single(data: &[u8], filter: &[u8], params: Option<&PdfDict>) -> Result
             Ok(data.to_vec())
         }
         b"CCITTFaxDecode" | b"CCF" => {
-            // CCITT Fax: not yet implemented, pass through raw bytes
-            Ok(data.to_vec())
+            ccitt::decode(data, params)
         }
         _ => Err(JustPdfError::StreamDecode {
             filter: String::from_utf8_lossy(filter).into_owned(),

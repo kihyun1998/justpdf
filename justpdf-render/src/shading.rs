@@ -1,3 +1,4 @@
+use justpdf_core::function::PdfFunction;
 use justpdf_core::object::{PdfDict, PdfObject};
 use tiny_skia::{
     Color, FillRule, GradientStop, LinearGradient, Mask, Paint, PathBuilder, Pixmap,
@@ -7,12 +8,14 @@ use tiny_skia::{
 use crate::graphics_state::Matrix;
 
 /// Render a shading pattern into the device.
+/// `stream_data` is the decoded binary stream for mesh shadings (Type 4/5/6/7).
 pub fn render_shading(
     pixmap: &mut Pixmap,
     shading_dict: &PdfDict,
     ctm: &Matrix,
     page_transform: &Matrix,
     clip_mask: Option<&Mask>,
+    stream_data: Option<&[u8]>,
 ) {
     let shading_type = shading_dict.get_i64(b"ShadingType").unwrap_or(0);
 
@@ -20,8 +23,8 @@ pub fn render_shading(
         1 => render_function_based(pixmap, shading_dict, ctm, page_transform, clip_mask),
         2 => render_axial(pixmap, shading_dict, ctm, page_transform, clip_mask),
         3 => render_radial(pixmap, shading_dict, ctm, page_transform, clip_mask),
-        4 | 5 => render_gouraud_mesh(pixmap, shading_dict, ctm, page_transform, clip_mask),
-        6 | 7 => render_patch_mesh(pixmap, shading_dict, ctm, page_transform, clip_mask),
+        4 | 5 => render_gouraud_mesh(pixmap, shading_dict, ctm, page_transform, clip_mask, stream_data),
+        6 | 7 => render_patch_mesh(pixmap, shading_dict, ctm, page_transform, clip_mask, stream_data),
         _ => {} // unsupported
     }
 }
@@ -56,33 +59,69 @@ fn render_function_based(
         .and_then(|o| o.as_f64())
         .unwrap_or(1.0);
 
-    // For function-based shading, we sample the function at grid points
-    // and render as a mesh of colored rectangles
     let cs_name = dict
         .get(b"ColorSpace")
         .and_then(|o| o.as_name())
         .unwrap_or(b"DeviceRGB");
 
-    // Without actually evaluating the PDF function (which requires a full
-    // function evaluator), we approximate with a gradient from the function's
-    // C0/C1 if available, or just render a fallback.
-    // A full implementation would need a PDF function evaluator.
-    let transform = ctm.concat(page_transform).to_skia();
-    let color = components_to_color(&[0.5, 0.5, 0.5], cs_name);
+    // Matrix from function domain to shading space
+    let shading_matrix = if let Some(matrix_arr) = dict.get_array(b"Matrix") {
+        if matrix_arr.len() >= 6 {
+            Matrix {
+                a: matrix_arr[0].as_f64().unwrap_or(1.0),
+                b: matrix_arr[1].as_f64().unwrap_or(0.0),
+                c: matrix_arr[2].as_f64().unwrap_or(0.0),
+                d: matrix_arr[3].as_f64().unwrap_or(1.0),
+                e: matrix_arr[4].as_f64().unwrap_or(0.0),
+                f: matrix_arr[5].as_f64().unwrap_or(0.0),
+            }
+        } else {
+            Matrix::identity()
+        }
+    } else {
+        Matrix::identity()
+    };
 
-    let mut paint = Paint::default();
-    paint.set_color(color);
-    paint.anti_alias = true;
+    // Try to resolve the function
+    let func = dict.get(b"Function").and_then(PdfFunction::parse);
 
-    let mut pb = PathBuilder::new();
-    pb.move_to(x0 as f32, y0 as f32);
-    pb.line_to(x1 as f32, y0 as f32);
-    pb.line_to(x1 as f32, y1 as f32);
-    pb.line_to(x0 as f32, y1 as f32);
-    pb.close();
+    let transform = shading_matrix.concat(ctm).concat(page_transform).to_skia();
 
-    if let Some(path) = pb.finish() {
-        pixmap.fill_path(&path, &paint, FillRule::Winding, transform, clip);
+    // Sample the function on a grid and render as colored rectangles
+    let samples = 64; // Grid resolution
+    let dx = (x1 - x0) / samples as f64;
+    let dy = (y1 - y0) / samples as f64;
+
+    for iy in 0..samples {
+        for ix in 0..samples {
+            let sx = x0 + (ix as f64 + 0.5) * dx;
+            let sy = y0 + (iy as f64 + 0.5) * dy;
+
+            let color = if let Some(ref f) = func {
+                let result = f.evaluate(&[sx, sy]);
+                components_to_color(&result, cs_name)
+            } else {
+                // No function — gray fallback
+                components_to_color(&[0.5, 0.5, 0.5], cs_name)
+            };
+
+            let mut paint = Paint::default();
+            paint.set_color(color);
+
+            let rx = x0 + ix as f64 * dx;
+            let ry = y0 + iy as f64 * dy;
+
+            let mut pb = PathBuilder::new();
+            pb.move_to(rx as f32, ry as f32);
+            pb.line_to((rx + dx) as f32, ry as f32);
+            pb.line_to((rx + dx) as f32, (ry + dy) as f32);
+            pb.line_to(rx as f32, (ry + dy) as f32);
+            pb.close();
+
+            if let Some(path) = pb.finish() {
+                pixmap.fill_path(&path, &paint, FillRule::Winding, transform, clip);
+            }
+        }
     }
 }
 
@@ -220,6 +259,7 @@ fn render_gouraud_mesh(
     ctm: &Matrix,
     page_transform: &Matrix,
     clip: Option<&Mask>,
+    stream_data: Option<&[u8]>,
 ) {
     let shading_type = dict.get_i64(b"ShadingType").unwrap_or(4);
 
@@ -229,9 +269,9 @@ fn render_gouraud_mesh(
         .unwrap_or(b"DeviceRGB");
     let n_comps = color_space_components(cs_name);
 
-    let _bits_per_coordinate = dict.get_i64(b"BitsPerCoordinate").unwrap_or(8) as u32;
-    let _bits_per_component = dict.get_i64(b"BitsPerComponent").unwrap_or(8) as u32;
-    let _bits_per_flag = if shading_type == 4 {
+    let bits_per_coordinate = dict.get_i64(b"BitsPerCoordinate").unwrap_or(8) as u32;
+    let bits_per_component = dict.get_i64(b"BitsPerComponent").unwrap_or(8) as u32;
+    let bits_per_flag = if shading_type == 4 {
         dict.get_i64(b"BitsPerFlag").unwrap_or(8) as u32
     } else {
         0
@@ -242,40 +282,91 @@ fn render_gouraud_mesh(
         .map(|a| a.iter().filter_map(|o| o.as_f64()).collect::<Vec<_>>())
         .unwrap_or_default();
 
-    // Decode array: [xmin xmax ymin ymax c1min c1max c2min c2max ...]
-    let (_x_min, _x_max) = if decode.len() >= 2 {
-        (decode[0], decode[1])
-    } else {
-        (0.0, 1.0)
-    };
-    let (_y_min, _y_max) = if decode.len() >= 4 {
-        (decode[2], decode[3])
-    } else {
-        (0.0, 1.0)
+    let data = match stream_data {
+        Some(d) if !d.is_empty() => d,
+        _ => {
+            // No stream data — fallback
+            render_mesh_fallback(pixmap, ctm, page_transform, clip, cs_name, &decode);
+            return;
+        }
     };
 
-    // Color decode ranges
-    let mut c_ranges: Vec<(f64, f64)> = Vec::new();
-    for i in 0..n_comps {
-        let idx = 4 + i * 2;
-        let cmin = decode.get(idx).copied().unwrap_or(0.0);
-        let cmax = decode.get(idx + 1).copied().unwrap_or(1.0);
-        c_ranges.push((cmin, cmax));
+    let transform = ctm.concat(page_transform).to_skia();
+
+    if shading_type == 4 {
+        // Type 4: Free-form Gouraud triangle mesh
+        let triangles = parse_gouraud_triangles(
+            data,
+            bits_per_flag,
+            bits_per_coordinate,
+            bits_per_component,
+            n_comps,
+            &decode,
+            cs_name,
+        );
+
+        for tri in &triangles {
+            rasterize_triangle(
+                pixmap,
+                (tri[0].x as f32, tri[0].y as f32, [tri[0].r, tri[0].g, tri[0].b, 255]),
+                (tri[1].x as f32, tri[1].y as f32, [tri[1].r, tri[1].g, tri[1].b, 255]),
+                (tri[2].x as f32, tri[2].y as f32, [tri[2].r, tri[2].g, tri[2].b, 255]),
+                transform,
+                clip,
+            );
+        }
+    } else {
+        // Type 5: Lattice-form Gouraud mesh
+        let vertices_per_row = dict.get_i64(b"VerticesPerRow").unwrap_or(2) as usize;
+        if vertices_per_row < 2 {
+            return;
+        }
+
+        let vertices = parse_lattice_vertices(
+            data,
+            bits_per_coordinate,
+            bits_per_component,
+            n_comps,
+            &decode,
+            cs_name,
+        );
+
+        // Build triangles from lattice grid
+        let n_rows = vertices.len() / vertices_per_row;
+        for row in 0..n_rows.saturating_sub(1) {
+            for col in 0..vertices_per_row - 1 {
+                let i0 = row * vertices_per_row + col;
+                let i1 = i0 + 1;
+                let i2 = i0 + vertices_per_row;
+                let i3 = i2 + 1;
+
+                if i3 < vertices.len() {
+                    let v0 = &vertices[i0];
+                    let v1 = &vertices[i1];
+                    let v2 = &vertices[i2];
+                    let v3 = &vertices[i3];
+
+                    // Two triangles per quad
+                    rasterize_triangle(
+                        pixmap,
+                        (v0.x as f32, v0.y as f32, [v0.r, v0.g, v0.b, 255]),
+                        (v1.x as f32, v1.y as f32, [v1.r, v1.g, v1.b, 255]),
+                        (v2.x as f32, v2.y as f32, [v2.r, v2.g, v2.b, 255]),
+                        transform,
+                        clip,
+                    );
+                    rasterize_triangle(
+                        pixmap,
+                        (v1.x as f32, v1.y as f32, [v1.r, v1.g, v1.b, 255]),
+                        (v3.x as f32, v3.y as f32, [v3.r, v3.g, v3.b, 255]),
+                        (v2.x as f32, v2.y as f32, [v2.r, v2.g, v2.b, 255]),
+                        transform,
+                        clip,
+                    );
+                }
+            }
+        }
     }
-
-    // For now, we don't have the actual stream data in the shading dict
-    // (it would need to be passed separately). The stream data contains
-    // the binary vertex data. Since we only get the dict here, we produce
-    // a fallback for mesh shadings.
-    //
-    // A full implementation would:
-    // 1. Parse the binary stream using BitsPerCoordinate, BitsPerComponent, BitsPerFlag
-    // 2. Decode vertices using the Decode array
-    // 3. Build triangles (Type 4: flag-based, Type 5: lattice rows x cols)
-    // 4. Rasterize each triangle with barycentric color interpolation
-
-    // Fallback: render the bounding box with a neutral color
-    render_mesh_fallback(pixmap, ctm, page_transform, clip, cs_name, &decode);
 }
 
 // ---------------------------------------------------------------------------
@@ -288,27 +379,53 @@ fn render_patch_mesh(
     ctm: &Matrix,
     page_transform: &Matrix,
     clip: Option<&Mask>,
+    stream_data: Option<&[u8]>,
 ) {
+    let shading_type = dict.get_i64(b"ShadingType").unwrap_or(6);
+
     let cs_name = dict
         .get(b"ColorSpace")
         .and_then(|o| o.as_name())
         .unwrap_or(b"DeviceRGB");
+    let n_comps = color_space_components(cs_name);
+
+    let bits_per_coordinate = dict.get_i64(b"BitsPerCoordinate").unwrap_or(8) as u32;
+    let bits_per_component = dict.get_i64(b"BitsPerComponent").unwrap_or(8) as u32;
+    let bits_per_flag = dict.get_i64(b"BitsPerFlag").unwrap_or(8) as u32;
 
     let decode = dict
         .get_array(b"Decode")
         .map(|a| a.iter().filter_map(|o| o.as_f64()).collect::<Vec<_>>())
         .unwrap_or_default();
 
-    // Same situation as Gouraud: we need the stream data for full parsing.
-    // Coons patches have 12 control points + 4 corner colors.
-    // Tensor-product patches have 16 control points + 4 corner colors.
-    //
-    // A full implementation would:
-    // 1. Parse binary stream for each patch
-    // 2. Subdivide Bézier patches into triangles (recursive de Casteljau)
-    // 3. Rasterize triangles with interpolated colors
+    let data = match stream_data {
+        Some(d) if !d.is_empty() => d,
+        _ => {
+            render_mesh_fallback(pixmap, ctm, page_transform, clip, cs_name, &decode);
+            return;
+        }
+    };
 
-    render_mesh_fallback(pixmap, ctm, page_transform, clip, cs_name, &decode);
+    let transform = ctm.concat(page_transform).to_skia();
+
+    // Number of control points per patch: 12 for Coons (Type 6), 16 for Tensor (Type 7)
+    let points_per_patch: usize = if shading_type == 7 { 16 } else { 12 };
+
+    let patches = parse_patch_mesh(
+        data,
+        bits_per_flag,
+        bits_per_coordinate,
+        bits_per_component,
+        n_comps,
+        points_per_patch,
+        &decode,
+        cs_name,
+    );
+
+    // Subdivide each patch into triangles and rasterize
+    for patch in &patches {
+        subdivide_and_rasterize_patch(pixmap, patch, transform, clip, 3);
+    }
 }
 
 /// Fallback renderer for mesh shadings when we don't have stream data.
@@ -546,6 +663,292 @@ pub fn parse_gouraud_triangles(
     }
 
     triangles
+}
+
+/// Parse vertices from a Type 5 (lattice-form Gouraud) mesh stream.
+/// No flag bits — vertices are read in row-major order.
+pub fn parse_lattice_vertices(
+    data: &[u8],
+    bits_per_coordinate: u32,
+    bits_per_component: u32,
+    n_components: usize,
+    decode: &[f64],
+    cs_name: &[u8],
+) -> Vec<Vertex> {
+    let mut reader = BitReader::new(data);
+    let mut vertices: Vec<Vertex> = Vec::new();
+
+    let (x_min, x_max) = (
+        decode.first().copied().unwrap_or(0.0),
+        decode.get(1).copied().unwrap_or(1.0),
+    );
+    let (y_min, y_max) = (
+        decode.get(2).copied().unwrap_or(0.0),
+        decode.get(3).copied().unwrap_or(1.0),
+    );
+
+    let coord_max = ((1u64 << bits_per_coordinate) - 1) as f64;
+    let comp_max = ((1u64 << bits_per_component) - 1) as f64;
+
+    loop {
+        let raw_x = match reader.read_bits(bits_per_coordinate) {
+            Some(v) => v,
+            None => break,
+        };
+        let raw_y = match reader.read_bits(bits_per_coordinate) {
+            Some(v) => v,
+            None => break,
+        };
+
+        let x = x_min + (raw_x as f64 / coord_max) * (x_max - x_min);
+        let y = y_min + (raw_y as f64 / coord_max) * (y_max - y_min);
+
+        let mut comps = Vec::with_capacity(n_components);
+        let mut ok = true;
+        for i in 0..n_components {
+            match reader.read_bits(bits_per_component) {
+                Some(raw_c) => {
+                    let c_min = decode.get(4 + i * 2).copied().unwrap_or(0.0);
+                    let c_max = decode.get(4 + i * 2 + 1).copied().unwrap_or(1.0);
+                    comps.push(c_min + (raw_c as f64 / comp_max) * (c_max - c_min));
+                }
+                None => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if !ok {
+            break;
+        }
+
+        let color = components_to_color(&comps, cs_name);
+        let [r, g, b, _] = color_to_rgba8(color);
+        vertices.push(Vertex { x, y, r, g, b });
+    }
+
+    vertices
+}
+
+/// A patch with 4 corner positions and colors (subdivided from Coons/Tensor control points).
+#[derive(Debug, Clone)]
+pub struct Patch {
+    /// Corner positions: [p00, p01, p10, p11] (or more control points)
+    pub corners: [(f64, f64); 4],
+    /// Corner colors: [c00, c01, c10, c11]
+    pub colors: [[u8; 4]; 4],
+}
+
+/// Parse patches from a Type 6/7 mesh stream.
+pub fn parse_patch_mesh(
+    data: &[u8],
+    bits_per_flag: u32,
+    bits_per_coordinate: u32,
+    bits_per_component: u32,
+    n_components: usize,
+    points_per_patch: usize,
+    decode: &[f64],
+    cs_name: &[u8],
+) -> Vec<Patch> {
+    let mut reader = BitReader::new(data);
+    let mut patches: Vec<Patch> = Vec::new();
+
+    let (x_min, x_max) = (
+        decode.first().copied().unwrap_or(0.0),
+        decode.get(1).copied().unwrap_or(1.0),
+    );
+    let (y_min, y_max) = (
+        decode.get(2).copied().unwrap_or(0.0),
+        decode.get(3).copied().unwrap_or(1.0),
+    );
+
+    let coord_max = ((1u64 << bits_per_coordinate) - 1).max(1) as f64;
+    let comp_max = ((1u64 << bits_per_component) - 1).max(1) as f64;
+
+    let mut prev_points: Vec<(f64, f64)> = Vec::new();
+    let mut prev_colors: Vec<[u8; 4]> = Vec::new();
+
+    loop {
+        let flag = match reader.read_bits(bits_per_flag) {
+            Some(f) => f as u8,
+            None => break,
+        };
+
+        // Determine how many new points/colors to read based on flag
+        let (n_points, n_colors) = if flag == 0 {
+            (points_per_patch, 4) // Full patch
+        } else {
+            // Continuation: reuse some points from previous patch
+            // Type 6: flag 1/2/3 reuse 4 points from previous edge, read 8 new + 2 colors
+            // Type 7: flag 1/2/3 reuse 4 points, read 12 new + 2 colors
+            if points_per_patch == 16 {
+                (12, 2)
+            } else {
+                (8, 2)
+            }
+        };
+
+        // Read control points
+        let mut points: Vec<(f64, f64)> = Vec::with_capacity(n_points);
+        let mut ok = true;
+        for _ in 0..n_points {
+            let raw_x = match reader.read_bits(bits_per_coordinate) {
+                Some(v) => v,
+                None => { ok = false; break; }
+            };
+            let raw_y = match reader.read_bits(bits_per_coordinate) {
+                Some(v) => v,
+                None => { ok = false; break; }
+            };
+            let x = x_min + (raw_x as f64 / coord_max) * (x_max - x_min);
+            let y = y_min + (raw_y as f64 / coord_max) * (y_max - y_min);
+            points.push((x, y));
+        }
+        if !ok { break; }
+
+        // Read colors
+        let mut colors: Vec<[u8; 4]> = Vec::with_capacity(n_colors);
+        for _ in 0..n_colors {
+            let mut comps = Vec::with_capacity(n_components);
+            for i in 0..n_components {
+                match reader.read_bits(bits_per_component) {
+                    Some(raw_c) => {
+                        let c_min = decode.get(4 + i * 2).copied().unwrap_or(0.0);
+                        let c_max = decode.get(4 + i * 2 + 1).copied().unwrap_or(1.0);
+                        comps.push(c_min + (raw_c as f64 / comp_max) * (c_max - c_min));
+                    }
+                    None => { ok = false; break; }
+                }
+            }
+            if !ok { break; }
+            let color = components_to_color(&comps, cs_name);
+            let [r, g, b, a] = color_to_rgba8(color);
+            colors.push([r, g, b, a]);
+        }
+        if !ok { break; }
+
+        // For simplicity, extract the 4 corner positions and colors
+        // (ignoring intermediate bezier control points — approximation)
+        let (corners, corner_colors) = if flag == 0 && points.len() >= 4 && colors.len() >= 4 {
+            // Full patch: corners are at indices 0, 3, 6, 9 for Type 6 (12 points)
+            // or 0, 3, 8, 11 for Type 7 (16 points)
+            let c0 = points[0];
+            let c1 = if points_per_patch == 16 { points[3] } else { points[3] };
+            let c2 = if points_per_patch == 16 { points[12] } else { points[9] };
+            let c3 = if points_per_patch == 16 {
+                points.get(15).copied().unwrap_or(c2)
+            } else {
+                points.get(6).copied().unwrap_or(c0)
+            };
+            (
+                [c0, c1, c2, c3],
+                [colors[0], colors[1], colors[2], colors[3]],
+            )
+        } else if !prev_points.is_empty() && points.len() >= 4 && colors.len() >= 2 {
+            // Continuation: approximate with new points
+            let c0 = points[0];
+            let c1 = points.get(3).copied().unwrap_or(c0);
+            let c2 = points.last().copied().unwrap_or(c0);
+            let c3 = points.get(points.len() / 2).copied().unwrap_or(c0);
+            let pc = if prev_colors.len() >= 4 {
+                [prev_colors[1], prev_colors[2]]
+            } else {
+                [[128, 128, 128, 255]; 2]
+            };
+            (
+                [c0, c1, c2, c3],
+                [pc[0], colors[0], pc[1], colors[1]],
+            )
+        } else {
+            continue;
+        };
+
+        prev_points = points;
+        prev_colors = Vec::from(corner_colors);
+
+        patches.push(Patch {
+            corners,
+            colors: corner_colors,
+        });
+    }
+
+    patches
+}
+
+/// Subdivide a patch into triangles and rasterize them.
+/// Uses bilinear interpolation across the 4 corners.
+fn subdivide_and_rasterize_patch(
+    pixmap: &mut Pixmap,
+    patch: &Patch,
+    transform: Transform,
+    clip: Option<&Mask>,
+    subdivisions: usize,
+) {
+    let n = subdivisions.max(1);
+    let step = 1.0 / n as f64;
+
+    for i in 0..n {
+        for j in 0..n {
+            let u0 = i as f64 * step;
+            let v0 = j as f64 * step;
+            let u1 = u0 + step;
+            let v1 = v0 + step;
+
+            let p00 = bilinear_point(&patch.corners, u0, v0);
+            let p10 = bilinear_point(&patch.corners, u1, v0);
+            let p01 = bilinear_point(&patch.corners, u0, v1);
+            let p11 = bilinear_point(&patch.corners, u1, v1);
+
+            let c00 = bilinear_color(&patch.colors, u0, v0);
+            let c10 = bilinear_color(&patch.colors, u1, v0);
+            let c01 = bilinear_color(&patch.colors, u0, v1);
+            let c11 = bilinear_color(&patch.colors, u1, v1);
+
+            // Two triangles per quad
+            rasterize_triangle(
+                pixmap,
+                (p00.0 as f32, p00.1 as f32, c00),
+                (p10.0 as f32, p10.1 as f32, c10),
+                (p01.0 as f32, p01.1 as f32, c01),
+                transform,
+                clip,
+            );
+            rasterize_triangle(
+                pixmap,
+                (p10.0 as f32, p10.1 as f32, c10),
+                (p11.0 as f32, p11.1 as f32, c11),
+                (p01.0 as f32, p01.1 as f32, c01),
+                transform,
+                clip,
+            );
+        }
+    }
+}
+
+/// Bilinear interpolation of a point on a quad defined by 4 corners.
+fn bilinear_point(corners: &[(f64, f64); 4], u: f64, v: f64) -> (f64, f64) {
+    let x = corners[0].0 * (1.0 - u) * (1.0 - v)
+        + corners[1].0 * u * (1.0 - v)
+        + corners[2].0 * (1.0 - u) * v
+        + corners[3].0 * u * v;
+    let y = corners[0].1 * (1.0 - u) * (1.0 - v)
+        + corners[1].1 * u * (1.0 - v)
+        + corners[2].1 * (1.0 - u) * v
+        + corners[3].1 * u * v;
+    (x, y)
+}
+
+/// Bilinear interpolation of color on a quad.
+fn bilinear_color(colors: &[[u8; 4]; 4], u: f64, v: f64) -> [u8; 4] {
+    let mut result = [0u8; 4];
+    for ch in 0..4 {
+        let c = colors[0][ch] as f64 * (1.0 - u) * (1.0 - v)
+            + colors[1][ch] as f64 * u * (1.0 - v)
+            + colors[2][ch] as f64 * (1.0 - u) * v
+            + colors[3][ch] as f64 * u * v;
+        result[ch] = c.clamp(0.0, 255.0) as u8;
+    }
+    result
 }
 
 fn color_to_rgba8(color: Color) -> [u8; 4] {

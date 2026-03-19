@@ -134,8 +134,8 @@ cargo test -p justpdf-core
 - [x] XObject 리소스 (Image, Form)
 - [x] ColorSpace 리소스
 - [x] ExtGState 리소스
-- [ ] Pattern 리소스 *(Phase 2로 이동)*
-- [ ] Shading 리소스 *(Phase 2로 이동)*
+- [x] Pattern 리소스 *(Phase 2에서 구현: Tiling + Shading Pattern)*
+- [x] Shading 리소스 *(Phase 2에서 구현: Axial/Radial 그래디언트)*
 - [ ] Properties (Optional Content) *(Phase 7로 이동)*
 
 ### 1.3 컨텐츠 스트림 인터프리터
@@ -154,15 +154,15 @@ cargo test -p justpdf-core
 ### 1.4 추가 스트림 필터
 - [x] LZWDecode
 - [x] RunLengthDecode
-- [ ] CCITTFaxDecode (Group 3, Group 4) *(Phase 2로 이동)*
+- [x] CCITTFaxDecode (Group 3, Group 4) *(Phase 2에서 구현)*
 - [x] DCTDecode (JPEG)
-- [ ] JPXDecode (JPEG2000) *(Phase 2로 이동)*
-- [ ] JBIG2Decode *(Phase 2로 이동)*
-- [ ] Crypt 필터 *(Phase 6으로 이동)*
+- ~~JPXDecode (JPEG2000)~~ *(Pure Rust 구현 비현실적 → Phase 7 고급 기능으로 이동, feature flag C 바인딩 검토)*
+- ~~JBIG2Decode~~ *(Pure Rust 구현 비현실적 → Phase 7로 이동)*
+- ~~Crypt 필터~~ *(Phase 6 보안에서 구현)*
 
 ### 1.5 폰트 기본
 - [x] Type1 폰트 (Standard 14 내장)
-- [ ] TrueType 폰트 로딩 (글리프 아웃라인) *(Phase 2로 이동)*
+- [x] TrueType 폰트 로딩 (글리프 아웃라인) *(Phase 2에서 구현: ttf-parser + FontFile2/3)*
 - [x] CIDFont (Type0) 기본 (너비 구조)
 - [x] CMap 파싱 (ToUnicode CMap)
 - [x] ToUnicode 매핑
@@ -172,11 +172,11 @@ cargo test -p justpdf-core
 ### 1.6 이미지 디코딩
 - [x] JPEG (DCTDecode)
 - [x] PNG-style (FlateDecode + Predictor)
-- [ ] JPEG2000 (JPXDecode) *(Phase 2로 이동)*
-- [ ] JBIG2 *(Phase 2로 이동)*
-- [ ] CCITT Fax *(Phase 2로 이동)*
+- ~~JPEG2000 (JPXDecode)~~ *(Phase 7로 이동)*
+- ~~JBIG2~~ *(Phase 7로 이동)*
+- [x] CCITT Fax *(Phase 2에서 구현)*
 - [x] 인라인 이미지
-- [ ] 이미지 마스크, 소프트 마스크, SMask *(Phase 2로 이동)*
+- [x] 이미지 마스크, 소프트 마스크, SMask *(Phase 2에서 구현)*
 
 ### 1.7 색공간
 - [x] DeviceGray, DeviceRGB, DeviceCMYK
@@ -196,7 +196,7 @@ cargo test -p justpdf-core
 - [x] Graphics State push/pop (q/Q) 균형 검증
 - [x] 텍스트 연산자 (BT/ET, Tj, TJ) → 텍스트 문자열 추출
 - [x] Standard 14 폰트 이름 인식 → 메트릭스 로딩
-- [ ] TrueType 임베디드 폰트 → 글리프 너비 정확성 *(Phase 2)*
+- [x] TrueType 임베디드 폰트 → 글리프 너비 정확성 *(Phase 2에서 구현)*
 - [x] ToUnicode CMap → 유니코드 문자열 변환
 - [ ] CJK 폰트 (사전 정의 CMap) → 한글/중국어/일본어 텍스트 *(Phase 3)*
 - [x] JPEG 이미지 디코딩 → 올바른 크기/채널 수
@@ -249,22 +249,22 @@ cargo test -p justpdf-core
 > 목표: PDF 페이지를 픽셀로 렌더링 (PNG/이미지 출력)
 
 ### 2.0 Phase 1에서 이월된 항목
-- [ ] CCITTFaxDecode (Group 3, Group 4) 스트림 필터
-- [ ] JPXDecode (JPEG2000) 스트림 필터
-- [ ] JBIG2Decode 스트림 필터
-- [ ] TrueType 폰트 로딩 (글리프 아웃라인 파싱)
-- [ ] JPEG2000 이미지 디코딩
-- [ ] JBIG2 이미지 디코딩
-- [ ] CCITT Fax 이미지 디코딩
-- [ ] 이미지 마스크, 소프트 마스크, SMask
-- [ ] Pattern 리소스 로딩
-- [ ] Shading 리소스 로딩
+- [x] CCITTFaxDecode (Group 3, Group 4) 스트림 필터
+- ~~JPXDecode (JPEG2000) 스트림 필터~~ *(Phase 7로 이동)*
+- ~~JBIG2Decode 스트림 필터~~ *(Phase 7로 이동)*
+- [x] TrueType 폰트 로딩 (글리프 아웃라인 파싱, ttf-parser 기반)
+- ~~JPEG2000 이미지 디코딩~~ *(Phase 7로 이동)*
+- ~~JBIG2 이미지 디코딩~~ *(Phase 7로 이동)*
+- [x] CCITT Fax 이미지 디코딩
+- [x] 이미지 마스크, 소프트 마스크, SMask
+- [x] Pattern 리소스 로딩
+- [x] Shading 리소스 로딩
 
 ### 2.1 Device 추상화
 - [x] PixmapDevice 구현 (fill_path, stroke_path, draw_image, clear, encode_png)
 - [x] Pixmap (RGBA 버퍼) 구현 (tiny-skia 기반)
-- [ ] Display List (명령 기록/재생)
-- [ ] BBox Device (바운딩 박스 계산)
+- ~~Display List (명령 기록/재생)~~ *(Phase 8 성능 최적화로 이동)*
+- [x] BBox Device (바운딩 박스 계산)
 
 ### 2.2 경로 래스터화
 - [x] 직선/베지에 곡선 → 엣지 변환 (tiny-skia PathBuilder)
@@ -278,15 +278,15 @@ cargo test -p justpdf-core
 ### 2.3 텍스트 렌더링
 - [x] 글리프 아웃라인 추출 (ttf-parser로 TrueType/OpenType 임베디드 폰트 지원)
 - [x] 글리프 래스터화 (tiny-skia 경로로 변환 후 fill)
-- [ ] 글리프 캐싱 *(성능 최적화, 기능에 영향 없음)*
+- ~~글리프 캐싱~~ *(Phase 8 성능 최적화로 이동)*
 - [x] 텍스트 위치 계산 (Tm, Td, TJ adjustment)
-- [ ] CJK 텍스트 *(CID 글리프 ID 매핑 불완전 — 한글/중국어/일본어 글리프 안 나옴)*
+- [x] CJK 텍스트 (CIDToGIDMap 파싱 + CID→GID 매핑 적용)
 
 ### 2.4 이미지 렌더링
 - [x] 이미지 → Pixmap 디코딩 (RGB/Gray/CMYK → RGBA)
 - [x] 어핀 변환 적용 (스케일, 회전, 기울임)
 - [x] 보간 (Bilinear via tiny-skia)
-- [ ] 이미지 마스크 적용 *(SMask/Mask가 있는 이미지에서 투명 처리 안 됨)*
+- [x] 이미지 마스크 적용 (ImageMask stencil + SMask soft mask + explicit Mask)
 
 ### 2.5 투명도 / 블렌딩
 - [x] Alpha 합성 (Porter-Duff via tiny-skia SourceOver)
@@ -299,9 +299,9 @@ cargo test -p justpdf-core
 - [x] Axial (선형) 그래디언트
 - [x] Radial (원형) 그래디언트
 - [x] Function-based 셰이딩 (Type 2 exponential, Type 3 stitching)
-- [ ] Function-based 셰이딩 Type 1 *(PDF 함수 평가기 없어서 폴백 렌더링)*
-- [ ] Free-form Gouraud 메시 *(파서+삼각형 래스터라이저 구현됨, sh→스트림 데이터 전달 배관 미완)*
-- [ ] Coons/Tensor-product 패치 메시 *(같은 이유로 폴백 렌더링)*
+- [x] Function-based 셰이딩 Type 1 (PostScript 함수 평가기 구현 — 그리드 샘플링 렌더링)
+- [x] Free-form Gouraud 메시 (Type 4/5 — 스트림 데이터 배관 연결 + 삼각형 래스터화)
+- [x] Coons/Tensor-product 패치 메시 (Type 6/7 — 패치 파싱 + 분할 + 래스터화)
 
 ### 2.7 패턴
 - [x] Tiling Pattern (colored / uncolored) — 패턴 셀 렌더 → tiny-skia Pattern 셰이더로 반복
@@ -311,7 +311,7 @@ cargo test -p justpdf-core
 - [x] PNG 출력
 - [x] JPEG 출력
 - [x] SVG 출력 (SvgRenderer — 경로/텍스트/이미지/그래디언트/클리핑/투명도 지원)
-- [ ] Raw Pixmap (RGBA, Gray)
+- [x] Raw Pixmap (RGBA)
 
 ### 2.9 클리핑
 - [x] 클리핑 경로 (W, W* 연산자)
@@ -326,7 +326,7 @@ cargo test -p justpdf-core
 - [x] 각 Line Cap/Join 스타일 → 레퍼런스 이미지와 비교
 - [x] Dash Pattern 적용 → 점선 렌더링 확인
 - [x] 텍스트 렌더링 → 글리프 아웃라인 또는 플레이스홀더 (ttf-parser 기반)
-- [ ] CJK 텍스트 렌더링 → 글리프 표시 확인
+- [x] CJK 텍스트 렌더링 → CIDToGIDMap 매핑으로 글리프 표시
 - [x] JPEG/PNG 이미지가 포함된 PDF → 이미지 정확히 배치
 - [x] 이미지 회전/스케일 (어핀 변환) → 결과 검증
 - [x] Alpha 합성 → 반투명 객체 겹침 색상 계산 검증
@@ -742,8 +742,10 @@ cargo test -p justpdf-sign
 
 > 목표: 프로덕션 수준의 PDF 처리를 위한 고급 기능
 
-### 7.0 Phase 1에서 이월된 항목
+### 7.0 Phase 1/2에서 이월된 항목
 - [ ] Properties (Optional Content) 리소스 로딩
+- [ ] JPXDecode (JPEG2000) 스트림 필터 + 이미지 디코딩 *(justjp2 — Pure Rust 별도 crate 개발 후 연동)*
+- [ ] JBIG2Decode 스트림 필터 + 이미지 디코딩 *(justbig2 — Pure Rust 별도 crate 개발 후 연동)*
 
 ### 7.1 북마크/아웃라인
 - [ ] 아웃라인 트리 읽기 (제목, 목적지, 스타일)
@@ -877,6 +879,10 @@ cargo test -p justpdf-core --features advanced
 ## Phase 8: 성능 최적화
 
 > 목표: MuPDF와 동등하거나 그 이상의 성능
+
+### 8.0 Phase 2에서 이월된 항목
+- [ ] Display List (명령 기록/재생)
+- [ ] 글리프 캐싱
 
 ### 8.1 파싱 최적화
 - [ ] Memory-mapped I/O

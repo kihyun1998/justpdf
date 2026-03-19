@@ -14,6 +14,8 @@ use crate::svg_device::SvgRenderer;
 pub enum OutputFormat {
     Png,
     Jpeg { quality: u8 },
+    /// Raw RGBA pixel data (4 bytes per pixel, row-major, top-left origin).
+    RawRgba,
 }
 
 pub struct RenderOptions {
@@ -102,6 +104,7 @@ pub fn render_page_info(
     match options.format {
         OutputFormat::Png => device.encode_png(),
         OutputFormat::Jpeg { quality } => device.encode_jpeg(quality),
+        OutputFormat::RawRgba => Ok(device.raw_rgba().to_vec()),
     }
 }
 
@@ -115,6 +118,71 @@ pub fn render_page_to_file(
     let png_data = render_page(doc, page_index, options)?;
     std::fs::write(output_path, &png_data)?;
     Ok(())
+}
+
+/// Rendered pixmap data with dimensions.
+pub struct RenderedPixmap {
+    /// Raw RGBA pixel data (4 bytes per pixel).
+    pub data: Vec<u8>,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+}
+
+/// Render a page and return the raw pixmap (RGBA data + dimensions).
+pub fn render_page_to_pixmap(
+    doc: &mut PdfDocument,
+    page_index: usize,
+    options: &RenderOptions,
+) -> Result<RenderedPixmap> {
+    let pages = collect_pages(doc)?;
+    let page = pages
+        .get(page_index)
+        .ok_or_else(|| RenderError::InvalidDimensions {
+            detail: format!("page index {page_index} out of range (total: {})", pages.len()),
+        })?
+        .clone();
+
+    let media_box = page.crop_box.unwrap_or(page.media_box);
+    let page_width = media_box.width();
+    let page_height = media_box.height();
+
+    if page_width <= 0.0 || page_height <= 0.0 {
+        return Err(RenderError::InvalidDimensions {
+            detail: format!("page has zero/negative size: {page_width}x{page_height}"),
+        });
+    }
+
+    let scale = options.dpi / 72.0;
+    let pixel_width = (page_width * scale).ceil() as u32;
+    let pixel_height = (page_height * scale).ceil() as u32;
+
+    if pixel_width == 0 || pixel_height == 0 || pixel_width > 16384 || pixel_height > 16384 {
+        return Err(RenderError::InvalidDimensions {
+            detail: format!("pixel dimensions out of range: {pixel_width}x{pixel_height}"),
+        });
+    }
+
+    let mut device = PixmapDevice::new(pixel_width, pixel_height)?;
+
+    device.clear(tiny_skia::Color::from_rgba8(
+        options.background[0],
+        options.background[1],
+        options.background[2],
+        options.background[3],
+    ));
+
+    let page_transform = compute_page_transform(&media_box, scale, page.rotate);
+
+    let mut interpreter = RenderInterpreter::new(doc, &mut device, page_transform);
+    interpreter.render_page(&page)?;
+
+    Ok(RenderedPixmap {
+        data: device.raw_rgba().to_vec(),
+        width: pixel_width,
+        height: pixel_height,
+    })
 }
 
 /// Render a single page of a PDF document to SVG string.

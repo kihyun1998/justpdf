@@ -2,6 +2,7 @@ pub mod color;
 pub mod content;
 pub mod error;
 pub mod font;
+pub mod function;
 pub mod image;
 pub mod object;
 pub mod page;

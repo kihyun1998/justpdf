@@ -22,6 +22,9 @@ struct ResolvedFont {
     cmap: Option<ToUnicodeCMap>,
     /// Raw embedded font data (TrueType/OpenType/CFF) for glyph outlines.
     font_data: Option<Vec<u8>>,
+    /// CIDToGIDMap for Type0 CID fonts: maps CID → glyph ID.
+    /// None = identity mapping (CID == GID).
+    cid_to_gid_map: Option<Vec<u16>>,
 }
 
 /// The rendering interpreter: walks content stream ops and renders onto a device.
@@ -123,8 +126,9 @@ impl<'a> RenderInterpreter<'a> {
                         None
                     };
 
-                    // Resolve CIDFont widths and font descriptor for Type0 fonts
+                    // Resolve CIDFont widths, font descriptor, and CIDToGIDMap for Type0 fonts
                     let mut cid_font_descriptor: Option<PdfDict> = None;
+                    let mut cid_to_gid_map: Option<Vec<u16>> = None;
                     if info.subtype == b"Type0" {
                         if let Some(PdfObject::Array(descendants)) =
                             fd.get(b"DescendantFonts")
@@ -153,6 +157,10 @@ impl<'a> RenderInterpreter<'a> {
                                             cid_font_descriptor = Some(d);
                                         }
                                     }
+
+                                    // Parse CIDToGIDMap
+                                    cid_to_gid_map =
+                                        self.parse_cid_to_gid_map(cid_dict);
                                 }
                             }
                         }
@@ -166,7 +174,12 @@ impl<'a> RenderInterpreter<'a> {
 
                     self.fonts.insert(
                         name.clone(),
-                        ResolvedFont { info, cmap, font_data },
+                        ResolvedFont {
+                            info,
+                            cmap,
+                            font_data,
+                            cid_to_gid_map,
+                        },
                     );
                 }
             }
@@ -221,6 +234,35 @@ impl<'a> RenderInterpreter<'a> {
         };
         match resolved {
             Some(PdfObject::Dict(d)) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// Parse CIDToGIDMap from a CID font dictionary.
+    /// Returns None for Identity mapping (CID == GID) or if not present.
+    /// Returns Some(vec) for stream-based mapping (2 bytes per CID entry).
+    fn parse_cid_to_gid_map(&mut self, cid_dict: &PdfDict) -> Option<Vec<u16>> {
+        let map_obj = cid_dict.get(b"CIDToGIDMap")?;
+
+        match map_obj {
+            PdfObject::Name(n) if n == b"Identity" => {
+                // Identity mapping: CID == GID
+                None
+            }
+            PdfObject::Reference(r) => {
+                let r = r.clone();
+                let resolved = self.doc.resolve(&r).ok()?.clone();
+                if let PdfObject::Stream { dict, data } = resolved {
+                    let decoded = self.doc.decode_stream(&dict, &data).ok()?;
+                    Some(parse_cid_gid_stream(&decoded))
+                } else {
+                    None
+                }
+            }
+            PdfObject::Stream { dict, data } => {
+                let decoded = self.doc.decode_stream(dict, data).ok()?;
+                Some(parse_cid_gid_stream(&decoded))
+            }
             _ => None,
         }
     }
@@ -905,8 +947,9 @@ impl<'a> RenderInterpreter<'a> {
             .map(|code| font.info.widths.get_width(*code))
             .collect();
 
-        // Clone font_data reference for glyph outline rendering
+        // Clone font_data and CIDToGIDMap for glyph outline rendering
         let font_data = font.font_data.clone();
+        let cid_to_gid_map = font.cid_to_gid_map.clone();
 
         // Now we're done borrowing self.fonts, can mutably borrow self
         for (i, code) in char_codes.iter().enumerate() {
@@ -914,7 +957,15 @@ impl<'a> RenderInterpreter<'a> {
             let w0 = width / 1000.0;
 
             if render_mode != 3 {
-                self.render_glyph(*code, w0 * font_size, font_size, text_rise, is_cid, &font_data)?;
+                self.render_glyph(
+                    *code,
+                    w0 * font_size,
+                    font_size,
+                    text_rise,
+                    is_cid,
+                    &font_data,
+                    cid_to_gid_map.as_deref(),
+                )?;
             }
 
             // Advance text matrix
@@ -940,6 +991,7 @@ impl<'a> RenderInterpreter<'a> {
         text_rise: f64,
         is_cid: bool,
         font_data: &Option<Vec<u8>>,
+        cid_to_gid_map: Option<&[u16]>,
     ) -> Result<()> {
         if glyph_width.abs() < 0.001 {
             return Ok(());
@@ -949,8 +1001,17 @@ impl<'a> RenderInterpreter<'a> {
         if let Some(data) = font_data {
             if let Ok(face) = ttf_parser::Face::parse(data, 0) {
                 let glyph_id = if is_cid {
-                    // For CID fonts, the code is often a CID — try direct GID mapping
-                    ttf_parser::GlyphId(code as u16)
+                    // For CID fonts: apply CIDToGIDMap if available
+                    if let Some(map) = cid_to_gid_map {
+                        let gid = map
+                            .get(code as usize)
+                            .copied()
+                            .unwrap_or(code as u16);
+                        ttf_parser::GlyphId(gid)
+                    } else {
+                        // Identity mapping: CID == GID
+                        ttf_parser::GlyphId(code as u16)
+                    }
                 } else {
                     crate::glyph::char_code_to_glyph_id(&face, code)
                 };
@@ -1120,25 +1181,165 @@ impl<'a> RenderInterpreter<'a> {
     }
 
     fn render_image(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
+        let info = image::image_info(dict);
+
+        // Check for ImageMask (stencil mask)
+        if let Some(ref img_info) = info {
+            if img_info.is_mask {
+                return self.render_image_mask(img_info, data, dict);
+            }
+        }
+
         let decoded = image::decode_image(data, dict).map_err(|e| RenderError::Core(e))?;
 
         // Convert decoded image to RGBA
-        let rgba_data = image_to_rgba(&decoded);
+        let mut rgba_data = image_to_rgba(&decoded);
         let w = decoded.width;
         let h = decoded.height;
 
-        let img_pixmap = match tiny_skia::Pixmap::from_vec(rgba_data, tiny_skia::IntSize::from_wh(w, h).unwrap()) {
-            Some(p) => p,
-            None => return Ok(()),
-        };
+        // Apply SMask if present on the image dict
+        if let Some(PdfObject::Reference(smask_ref)) = dict.get(b"SMask") {
+            let smask_ref = smask_ref.clone();
+            if let Ok(smask_obj) = self.doc.resolve(&smask_ref) {
+                if let PdfObject::Stream {
+                    dict: smask_dict,
+                    data: smask_data,
+                } = smask_obj.clone()
+                {
+                    self.apply_image_smask(
+                        &mut rgba_data,
+                        w,
+                        h,
+                        &smask_dict,
+                        &smask_data,
+                    );
+                }
+            }
+        }
+
+        // Apply Mask (explicit mask) if present — a 1-bit image defining transparency
+        if let Some(PdfObject::Reference(mask_ref)) = dict.get(b"Mask") {
+            let mask_ref = mask_ref.clone();
+            if let Ok(mask_obj) = self.doc.resolve(&mask_ref) {
+                if let PdfObject::Stream {
+                    dict: mask_dict,
+                    data: mask_data,
+                } = mask_obj.clone()
+                {
+                    self.apply_image_explicit_mask(
+                        &mut rgba_data,
+                        w,
+                        h,
+                        &mask_dict,
+                        &mask_data,
+                    );
+                }
+            }
+        }
+
+        let img_pixmap =
+            match tiny_skia::Pixmap::from_vec(rgba_data, tiny_skia::IntSize::from_wh(w, h).unwrap())
+            {
+                Some(p) => p,
+                None => return Ok(()),
+            };
 
         // PDF images are placed in a 1x1 unit square, scaled by the CTM
-        // The CTM should already include the scaling to position the image
         let image_transform = Matrix {
             a: 1.0 / w as f64,
             b: 0.0,
             c: 0.0,
             d: -1.0 / h as f64, // flip Y (PDF images are top-down)
+            e: 0.0,
+            f: 1.0,
+        };
+
+        let full_transform = image_transform
+            .concat(&self.state.ctm)
+            .concat(&self.page_transform);
+
+        let bm = self.blend_mode();
+        self.apply_soft_mask_to_device();
+        self.device.draw_image(
+            &img_pixmap.as_ref(),
+            full_transform.to_skia(),
+            self.state.fill_alpha as f32,
+            bm,
+        );
+        self.restore_clip_after_soft_mask();
+
+        Ok(())
+    }
+
+    /// Render a 1-bit image mask (stencil mask): paint current fill color
+    /// where mask bits are set.
+    fn render_image_mask(
+        &mut self,
+        info: &image::ImageInfo,
+        data: &[u8],
+        dict: &PdfDict,
+    ) -> Result<()> {
+        let w = info.width;
+        let h = info.height;
+        let pixel_count = (w * h) as usize;
+
+        // Decode the mask data if it has filters
+        let decoded_data = match dict.get(b"Filter") {
+            Some(_) => {
+                match image::decode_image(data, dict) {
+                    Ok(img) => img.data,
+                    Err(_) => data.to_vec(),
+                }
+            }
+            None => data.to_vec(),
+        };
+
+        // Get the Decode array to determine polarity
+        // Default for ImageMask: [0 1] means 0=paint, 1=mask (transparent)
+        let invert = dict
+            .get_array(b"Decode")
+            .map(|arr| {
+                let d0 = arr.first().and_then(|o| o.as_f64()).unwrap_or(0.0);
+                d0 != 0.0 // [1 0] means inverted
+            })
+            .unwrap_or(false);
+
+        let fill_color = self.state.fill_color_rgba();
+        let mut rgba = vec![0u8; pixel_count * 4];
+
+        // Unpack bits: the data is 1 bit per pixel, packed MSB first
+        for i in 0..pixel_count {
+            let byte_idx = i / 8;
+            let bit_idx = 7 - (i % 8);
+            let bit = if byte_idx < decoded_data.len() {
+                (decoded_data[byte_idx] >> bit_idx) & 1
+            } else {
+                0
+            };
+
+            // Determine if this pixel should be painted
+            let paint = if invert { bit == 1 } else { bit == 0 };
+
+            if paint {
+                rgba[i * 4] = fill_color[0];
+                rgba[i * 4 + 1] = fill_color[1];
+                rgba[i * 4 + 2] = fill_color[2];
+                rgba[i * 4 + 3] = fill_color[3];
+            }
+            // else: transparent (0,0,0,0)
+        }
+
+        let img_pixmap =
+            match tiny_skia::Pixmap::from_vec(rgba, tiny_skia::IntSize::from_wh(w, h).unwrap()) {
+                Some(p) => p,
+                None => return Ok(()),
+            };
+
+        let image_transform = Matrix {
+            a: 1.0 / w as f64,
+            b: 0.0,
+            c: 0.0,
+            d: -1.0 / h as f64,
             e: 0.0,
             f: 1.0,
         };
@@ -1156,6 +1357,124 @@ impl<'a> RenderInterpreter<'a> {
         );
 
         Ok(())
+    }
+
+    /// Apply an SMask (soft mask) from the image's own /SMask entry to the RGBA data.
+    fn apply_image_smask(
+        &mut self,
+        rgba: &mut [u8],
+        w: u32,
+        h: u32,
+        smask_dict: &PdfDict,
+        smask_data: &[u8],
+    ) {
+        // Decode the SMask image
+        let decoded = match self.doc.decode_stream(smask_dict, smask_data) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        let smask_decoded = match image::decode_image(&decoded, smask_dict) {
+            Ok(img) => img,
+            Err(_) => return,
+        };
+
+        let pixel_count = (w * h) as usize;
+        let mask_pixels = smask_decoded.data;
+
+        // SMask is typically a grayscale image — use its values as alpha
+        for i in 0..pixel_count {
+            let mask_val = if smask_decoded.components == 1 {
+                // Grayscale: direct alpha value
+                if smask_decoded.bpc == 8 {
+                    mask_pixels.get(i).copied().unwrap_or(255)
+                } else if smask_decoded.bpc == 1 {
+                    if mask_pixels.get(i).copied().unwrap_or(255) != 0 {
+                        255
+                    } else {
+                        0
+                    }
+                } else {
+                    mask_pixels.get(i).copied().unwrap_or(255)
+                }
+            } else {
+                // Multi-component: use luminosity
+                let idx = i * smask_decoded.components as usize;
+                let r = mask_pixels.get(idx).copied().unwrap_or(255) as f32;
+                let g = mask_pixels.get(idx + 1).copied().unwrap_or(255) as f32;
+                let b = mask_pixels.get(idx + 2).copied().unwrap_or(255) as f32;
+                (0.2126 * r + 0.7152 * g + 0.0722 * b).clamp(0.0, 255.0) as u8
+            };
+
+            // Multiply existing alpha with mask value
+            let existing_alpha = rgba[i * 4 + 3] as u16;
+            rgba[i * 4 + 3] = ((existing_alpha * mask_val as u16) / 255) as u8;
+        }
+    }
+
+    /// Apply an explicit /Mask image (1-bit transparency mask) to the RGBA data.
+    fn apply_image_explicit_mask(
+        &mut self,
+        rgba: &mut [u8],
+        w: u32,
+        h: u32,
+        mask_dict: &PdfDict,
+        mask_data: &[u8],
+    ) {
+        let decoded = match self.doc.decode_stream(mask_dict, mask_data) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
+        let mask_decoded = match image::decode_image(&decoded, mask_dict) {
+            Ok(img) => img,
+            Err(_) => return,
+        };
+
+        let pixel_count = (w * h) as usize;
+
+        // Scale mask to image dimensions if different
+        let mask_w = mask_decoded.width as usize;
+        let mask_h = mask_decoded.height as usize;
+        let img_w = w as usize;
+        let img_h = h as usize;
+
+        for y in 0..img_h {
+            for x in 0..img_w {
+                let i = y * img_w + x;
+                if i >= pixel_count {
+                    break;
+                }
+
+                // Map to mask coordinates
+                let mx = if mask_w > 0 { x * mask_w / img_w } else { 0 };
+                let my = if mask_h > 0 { y * mask_h / img_h } else { 0 };
+                let mi = my * mask_w + mx;
+
+                let mask_bit = if mask_decoded.bpc == 1 {
+                    // 1-bit packed
+                    let byte_idx = mi / 8;
+                    let bit_idx = 7 - (mi % 8);
+                    if byte_idx < mask_decoded.data.len() {
+                        (mask_decoded.data[byte_idx] >> bit_idx) & 1
+                    } else {
+                        1
+                    }
+                } else {
+                    // 8bpc or higher
+                    if mi < mask_decoded.data.len() {
+                        if mask_decoded.data[mi] > 127 { 1 } else { 0 }
+                    } else {
+                        1
+                    }
+                };
+
+                // In PDF, mask bit 0 = paint (opaque), 1 = do not paint (transparent)
+                if mask_bit == 1 {
+                    rgba[i * 4 + 3] = 0; // transparent
+                }
+            }
+        }
     }
 
     fn render_inline_image(
@@ -1201,25 +1520,33 @@ impl<'a> RenderInterpreter<'a> {
             None => return Ok(()),
         };
 
-        if let PdfObject::Dict(sh_dict) = &sh_obj {
-            // Resolve function if it's a reference
-            let mut resolved_dict = sh_dict.clone();
-            if let Some(PdfObject::Reference(func_ref)) = sh_dict.get(b"Function") {
-                let func_ref = func_ref.clone();
-                if let Ok(func_obj) = self.doc.resolve(&func_ref) {
-                    resolved_dict.insert(b"Function".to_vec(), func_obj.clone());
-                }
+        // Extract dict and optional stream data from the shading object
+        let (sh_dict, stream_data) = match &sh_obj {
+            PdfObject::Dict(d) => (d.clone(), None),
+            PdfObject::Stream { dict, data } => {
+                let decoded = self.doc.decode_stream(dict, data).ok();
+                (dict.clone(), decoded)
             }
+            _ => return Ok(()),
+        };
 
-            let clip = self.device.clip_mask.as_ref();
-            crate::shading::render_shading(
-                &mut self.device.pixmap,
-                &resolved_dict,
-                &self.state.ctm,
-                &self.page_transform,
-                clip,
-            );
+        // Resolve function if it's a reference
+        let mut resolved_dict = sh_dict;
+        if let Some(PdfObject::Reference(func_ref)) = resolved_dict.get(b"Function").cloned() {
+            if let Ok(func_obj) = self.doc.resolve(&func_ref) {
+                resolved_dict.insert(b"Function".to_vec(), func_obj.clone());
+            }
         }
+
+        let clip = self.device.clip_mask.as_ref();
+        crate::shading::render_shading(
+            &mut self.device.pixmap,
+            &resolved_dict,
+            &self.state.ctm,
+            &self.page_transform,
+            clip,
+            stream_data.as_deref(),
+        );
 
         Ok(())
     }
@@ -1846,15 +2173,19 @@ impl<'a> RenderInterpreter<'a> {
             None => return Ok(None),
         };
 
-        let shading_dict = match &shading_obj {
-            PdfObject::Dict(d) => d.clone(),
+        // Extract dict and optional stream data
+        let (shading_dict, stream_data) = match &shading_obj {
+            PdfObject::Dict(d) => (d.clone(), None),
+            PdfObject::Stream { dict, data } => {
+                let decoded = self.doc.decode_stream(dict, data).ok();
+                (dict.clone(), decoded)
+            }
             _ => return Ok(None),
         };
 
         // Resolve function references within the shading dict
-        let mut resolved_shading = shading_dict.clone();
-        if let Some(PdfObject::Reference(func_ref)) = shading_dict.get(b"Function") {
-            let func_ref = func_ref.clone();
+        let mut resolved_shading = shading_dict;
+        if let Some(PdfObject::Reference(func_ref)) = resolved_shading.get(b"Function").cloned() {
             if let Ok(func_obj) = self.doc.resolve(&func_ref) {
                 resolved_shading.insert(b"Function".to_vec(), func_obj.clone());
             }
@@ -1896,6 +2227,7 @@ impl<'a> RenderInterpreter<'a> {
             &effective_ctm,
             &self.page_transform,
             clip,
+            stream_data.as_deref(),
         );
 
         Ok(Some(shading_pixmap))
@@ -1962,6 +2294,19 @@ fn cs_from_name(name: &[u8]) -> ColorSpace {
         b"DeviceCMYK" | b"CMYK" => ColorSpace::DeviceCMYK,
         _ => ColorSpace::DeviceRGB, // fallback
     }
+}
+
+/// Parse a CIDToGIDMap stream: 2 bytes (big-endian) per CID entry.
+fn parse_cid_gid_stream(data: &[u8]) -> Vec<u16> {
+    data.chunks(2)
+        .map(|c| {
+            if c.len() == 2 {
+                ((c[0] as u16) << 8) | (c[1] as u16)
+            } else {
+                c[0] as u16
+            }
+        })
+        .collect()
 }
 
 /// Get f64 from operands at index.
