@@ -10,6 +10,7 @@ pub mod parser;
 pub mod stream;
 pub mod text;
 pub mod tokenizer;
+pub mod writer;
 pub mod xref;
 
 pub use error::{JustPdfError, Result};

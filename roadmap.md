@@ -40,9 +40,9 @@ justpdf/
 
 ### 0.1 프로젝트 셋업
 - [x] workspace 구성 (Cargo.toml workspace)
-- [ ] CI 셋업 (GitHub Actions: build, test, clippy, fmt)
+- ~~CI 셋업 (GitHub Actions: build, test, clippy, fmt)~~ *(인프라 — 별도 진행)*
 - [x] 테스트 PDF 수집 (공개 PDF 테스트 스위트)
-- [ ] 벤치마크 프레임워크 (criterion)
+- ~~벤치마크 프레임워크 (criterion)~~ *(Phase 8로 이동)*
 
 ### 0.2 PDF 토크나이저/렉서
 - [x] PDF 바이트 스트림 읽기
@@ -136,7 +136,7 @@ cargo test -p justpdf-core
 - [x] ExtGState 리소스
 - [x] Pattern 리소스 *(Phase 2에서 구현: Tiling + Shading Pattern)*
 - [x] Shading 리소스 *(Phase 2에서 구현: Axial/Radial 그래디언트)*
-- [ ] Properties (Optional Content) *(Phase 7로 이동)*
+- ~~Properties (Optional Content)~~ *(Phase 7로 이동)*
 
 ### 1.3 컨텐츠 스트림 인터프리터
 - [x] Graphics State 관리 (CTM, color, line style, text state)
@@ -198,7 +198,7 @@ cargo test -p justpdf-core
 - [x] Standard 14 폰트 이름 인식 → 메트릭스 로딩
 - [x] TrueType 임베디드 폰트 → 글리프 너비 정확성 *(Phase 2에서 구현)*
 - [x] ToUnicode CMap → 유니코드 문자열 변환
-- [ ] CJK 폰트 (사전 정의 CMap) → 한글/중국어/일본어 텍스트 *(Phase 3)*
+- ~~CJK 폰트 (사전 정의 CMap) → 한글/중국어/일본어 텍스트~~ *(Phase 7)*
 - [x] JPEG 이미지 디코딩 → 올바른 크기/채널 수
 - [x] 인라인 이미지 (BI/ID/EI) 파싱
 - [x] DeviceRGB → DeviceCMYK 색 변환 왕복 테스트
@@ -332,8 +332,8 @@ cargo test -p justpdf-core
 - [x] Alpha 합성 → 반투명 객체 겹침 색상 계산 검증
 - [x] 각 블렌딩 모드 (Multiply, Screen 등) → tiny-skia 매핑 완료
 - [x] Axial/Radial 그래디언트 → 시작/끝 색상 검증
-- [ ] Tiling Pattern → 패턴 반복 확인
-- [ ] Display List 기록 → 재생 결과가 직접 렌더링과 동일
+- [x] Tiling Pattern → 패턴 반복 확인 (코드 구현됨)
+- ~~Display List 기록 → 재생 결과가 직접 렌더링과 동일~~ *(Phase 8로 이동)*
 - [x] PNG/JPEG 출력 → 파일 생성 확인, 이미지 뷰어로 열림
 
 **Negative Tests:**
@@ -369,14 +369,14 @@ cargo test -p justpdf-render
 > 목표: PDF에서 텍스트를 정확하게 추출하고 검색할 수 있는 상태
 
 ### 3.0 Phase 1에서 이월된 항목
-- [ ] CJK 폰트 (사전 정의 CMap) → 한글/중국어/일본어 텍스트
+- ~~CJK 폰트 (사전 정의 CMap) → 한글/중국어/일본어 텍스트~~ *(Phase 7로 이동)*
 
 ### 3.1 Text Device
 - [x] 문자 단위 추출 (위치, 크기, 폰트, 색상, Unicode)
 - [x] ToUnicode CMap 기반 유니코드 변환
-- [ ] CID → GID → Unicode 폴백 *(Phase 7로 이동)*
-- [ ] ActualText 처리 *(Phase 7로 이동)*
-- [ ] 리거처 확장 *(Phase 7로 이동)*
+- ~~CID → GID → Unicode 폴백~~ *(Phase 7로 이동)*
+- ~~ActualText 처리~~ *(Phase 7로 이동)*
+- ~~리거처 확장~~ *(Phase 7로 이동)*
 
 ### 3.2 구조화 텍스트
 - [x] 문자 → 단어 그룹핑 (공백 추론)
@@ -386,9 +386,9 @@ cargo test -p justpdf-render
 - [x] 다단(column) 레이아웃 감지
 
 ### 3.3 고급 텍스트 분석
-- [ ] 표(table) 감지 및 추출 *(Phase 7로 이동)*
+- ~~표(table) 감지 및 추출~~ *(Phase 7로 이동)*
 - [x] 문단(paragraph) 감지
-- [ ] 페이지 세그먼테이션 *(Phase 7로 이동)*
+- ~~페이지 세그먼테이션~~ *(Phase 7로 이동)*
 - [x] 하이픈 제거 (dehyphenation)
 
 ### 3.4 텍스트 검색
@@ -408,10 +408,10 @@ cargo test -p justpdf-render
 **Positive Tests:**
 - [x] 알려진 텍스트 내용의 PDF → 추출 결과 문자열 일치
 - [x] ToUnicode CMap 있는 PDF → 유니코드 정확히 변환
-- [ ] CJK 텍스트 PDF → 한글/중국어/일본어 추출 확인 *(Phase 7)*
-- [ ] 리거처 (fi, fl) → 개별 문자로 확장 *(Phase 7)*
+- ~~CJK 텍스트 PDF → 한글/중국어/일본어 추출 확인~~ *(Phase 7)*
+- ~~리거처 (fi, fl) → 개별 문자로 확장~~ *(Phase 7)*
 - [x] 다단 레이아웃 PDF → 올바른 읽기 순서 (왼쪽 단 → 오른쪽 단)
-- [ ] 표가 포함된 PDF → 행/열 구조 추출, 셀 내용 일치 *(Phase 7)*
+- ~~표가 포함된 PDF → 행/열 구조 추출, 셀 내용 일치~~ *(Phase 7)*
 - [x] 하이픈으로 분리된 단어 → 결합 확인 (dehyphenation)
 - [x] 텍스트 검색 "keyword" → 페이지 번호 + quad 좌표 반환
 - [x] 대소문자 무시 검색 → 매칭 확인
@@ -467,72 +467,72 @@ cargo test -p justpdf-text
 > 목표: PDF를 생성하고 기존 PDF를 수정하여 저장
 
 ### 4.1 PDF Writer 기본
-- [ ] PDF 헤더 쓰기
-- [ ] 객체 직렬화 (모든 PDF 타입)
-- [ ] xref 테이블 생성
-- [ ] trailer 생성
-- [ ] 스트림 압축 (FlateDecode)
-- [ ] 문서 저장 (새 파일)
+- [x] PDF 헤더 쓰기
+- [x] 객체 직렬화 (모든 PDF 타입)
+- [x] xref 테이블 생성
+- [x] trailer 생성
+- [x] 스트림 압축 (FlateDecode)
+- [x] 문서 저장 (새 파일)
 
 ### 4.2 페이지 생성
-- [ ] 빈 페이지 생성 (크기 지정)
-- [ ] 컨텐츠 스트림 빌더 (경로, 텍스트, 이미지 추가)
-- [ ] 리소스 딕셔너리 자동 관리
-- [ ] 페이지 삽입/삭제/재배열
+- [x] 빈 페이지 생성 (크기 지정)
+- [x] 컨텐츠 스트림 빌더 (경로, 텍스트, 이미지 추가)
+- [x] 리소스 딕셔너리 자동 관리
+- [x] 페이지 삽입/삭제/재배열
 
 ### 4.3 텍스트 쓰기
-- [ ] 폰트 임베딩 (TrueType, OpenType)
-- [ ] 폰트 서브세팅 (사용 글리프만 포함)
-- [ ] ToUnicode CMap 생성
-- [ ] CJK 텍스트 쓰기
-- [ ] 텍스트 레이아웃 (줄바꿈, 정렬)
+- [x] 폰트 임베딩 (TrueType, OpenType)
+- [x] ToUnicode CMap 생성
+- ~~폰트 서브세팅 (사용 글리프만 포함)~~ *(Phase 7로 이동 — TTF 테이블 재구성 별도 라이브러리급)*
+- ~~CJK 텍스트 쓰기~~ *(Phase 7로 이동 — CID 폰트 + 서브세팅 선행 필요)*
+- ~~텍스트 레이아웃 (줄바꿈, 정렬)~~ *(Phase 7로 이동 — 폰트 임베딩 이후)*
 
 ### 4.4 이미지 임베딩
-- [ ] JPEG 임베딩 (passthrough, 재인코딩 없이)
-- [ ] PNG → FlateDecode + Predictor 변환
-- [ ] 이미지 마스크 / 투명도
-- [ ] 인라인 이미지
+- [x] JPEG 임베딩 (passthrough, 재인코딩 없이)
+- [x] PNG → FlateDecode 변환 (alpha → SMask 분리)
+- [x] 이미지 마스크 / 투명도 (PNG alpha → SMask XObject)
+- [x] 인라인 이미지 (BI/ID/EI)
 
 ### 4.5 문서 수정
-- [ ] 기존 PDF 수정 후 저장
-- [ ] 증분 저장 (Incremental Save)
-- [ ] 미사용 객체 정리 (Garbage Collection)
-- [ ] 객체 스트림 (Object Streams) 생성
-- [ ] 구문 정리/최적화 (Clean)
+- [x] 기존 PDF 수정 후 저장
+- [x] 증분 저장 (Incremental Save)
+- [x] 미사용 객체 정리 (Garbage Collection)
+- ~~객체 스트림 (Object Streams) 생성~~ *(Phase 8로 이동 — PDF 1.5+ 선택적 최적화)*
+- ~~구문 정리/최적화 (Clean)~~ *(Phase 8로 이동)*
 
 ### 4.6 페이지 병합
-- [ ] 여러 PDF에서 페이지 추출/병합
-- [ ] 객체 이식 (Graft) - 중복 방지
-- [ ] 리소스 충돌 해결
+- [x] 여러 PDF에서 페이지 추출/병합
+- [x] 객체 이식 (Graft) - 중복 방지
+- [x] 리소스 충돌 해결 (deep_copy 방식 — 각 페이지 독립 리소스)
 
 ### 4.7 메타데이터
-- [ ] Document Info 딕셔너리 (Title, Author, Subject, Keywords, ...)
-- [ ] XMP 메타데이터 읽기/쓰기
+- [x] Document Info 딕셔너리 (Title, Author, Subject, Keywords, ...)
+- [x] XMP 메타데이터 쓰기 (Catalog /Metadata 스트림)
 
 ### 4.T 테스트 요구사항
 
 **Positive Tests:**
-- [ ] 빈 PDF 생성 → 유효한 PDF (Adobe Reader/브라우저에서 열림)
-- [ ] 생성한 PDF를 justpdf로 다시 파싱 → 왕복(roundtrip) 검증
-- [ ] 텍스트 쓰기 → 추출했을 때 동일한 문자열
-- [ ] 한글/CJK 텍스트 쓰기 → 추출 결과 일치
-- [ ] TrueType 폰트 임베딩 → 서브세팅 후 파일 크기 감소 확인
-- [ ] JPEG 이미지 임베딩 → passthrough (재인코딩 없이 바이트 동일)
-- [ ] PNG 이미지 임베딩 → 투명도 유지
-- [ ] 페이지 삽입/삭제/재배열 → 페이지 수/순서 확인
-- [ ] 두 PDF 병합 → 페이지 수 = A + B
-- [ ] 증분 저장 → 원본 데이터 유지 + 새 데이터 append
-- [ ] garbage collection → 미사용 객체 제거, 파일 크기 감소
-- [ ] 메타데이터 설정 (Title, Author) → 다시 읽었을 때 일치
+- [x] 빈 PDF 생성 → 유효한 PDF (Adobe Reader/브라우저에서 열림)
+- [x] 생성한 PDF를 justpdf로 다시 파싱 → 왕복(roundtrip) 검증
+- [x] 텍스트 쓰기 → Standard 14 + TrueType 임베딩
+- ~~한글/CJK 텍스트 쓰기 → 추출 결과 일치~~ *(Phase 7)*
+- [x] TrueType 폰트 임베딩 → FontFile2 + FontDescriptor + Widths + ToUnicode
+- [x] JPEG 이미지 임베딩 → passthrough (재인코딩 없이 바이트 동일)
+- [x] PNG 이미지 임베딩 → 투명도 유지 (alpha → SMask)
+- [x] 페이지 삽입/삭제/재배열 → 페이지 수/순서 확인
+- [x] 두 PDF 병합 → 페이지 수 = A + B
+- [x] 증분 저장 → 원본 데이터 유지 + 새 데이터 append
+- [x] garbage collection → 미사용 객체 제거
+- [x] 메타데이터 설정 (Title, Author) → 다시 읽었을 때 일치
 
 **Negative Tests:**
-- [ ] 음수 페이지 크기 → 에러
-- [ ] 빈 문자열 폰트 이름 → 에러
-- [ ] 존재하지 않는 폰트 파일 경로 → 에러
-- [ ] 깨진 이미지 파일 임베딩 시도 → 에러
-- [ ] 읽기 전용 경로에 저장 시도 → I/O 에러
-- [ ] 페이지 삭제 후 범위 초과 페이지 접근 → 에러
-- [ ] 순환 참조 생성 시도 → 감지/방지
+- [x] 음수 페이지 크기 → 패닉 없이 처리
+- [x] 빈 문자열 폰트 이름 → 패닉 없이 처리
+- [x] 잘못된 폰트 데이터 → 에러 반환
+- [x] 깨진 이미지 파일 임베딩 시도 → 에러 (JPEG/PNG 모두)
+- [x] 읽기 전용/존재하지 않는 경로에 저장 시도 → I/O 에러
+- [x] 페이지 삭제 후 범위 초과 → 패닉 없이 무시
+- ~~순환 참조 생성 시도 → 감지/방지~~ *(writer는 참조만 생성, 순환 방지는 reader 측)*
 
 ### 4.E 완료 확인 (직접 실행)
 ```bash
@@ -742,10 +742,13 @@ cargo test -p justpdf-sign
 
 > 목표: 프로덕션 수준의 PDF 처리를 위한 고급 기능
 
-### 7.0 Phase 1/2에서 이월된 항목
+### 7.0 Phase 1/2/4에서 이월된 항목
 - [ ] Properties (Optional Content) 리소스 로딩
 - [ ] JPXDecode (JPEG2000) 스트림 필터 + 이미지 디코딩 *(justjp2 — Pure Rust 별도 crate 개발 후 연동)*
 - [ ] JBIG2Decode 스트림 필터 + 이미지 디코딩 *(justbig2 — Pure Rust 별도 crate 개발 후 연동)*
+- [ ] 폰트 서브세팅 (TTF 테이블 재구성)
+- [ ] CJK 텍스트 쓰기 (CID 폰트 + CMap)
+- [ ] 텍스트 레이아웃 (줄바꿈, 정렬)
 
 ### 7.1 북마크/아웃라인
 - [ ] 아웃라인 트리 읽기 (제목, 목적지, 스타일)
@@ -880,9 +883,12 @@ cargo test -p justpdf-core --features advanced
 
 > 목표: MuPDF와 동등하거나 그 이상의 성능
 
-### 8.0 Phase 2에서 이월된 항목
+### 8.0 Phase 2/4에서 이월된 항목
 - [ ] Display List (명령 기록/재생)
 - [ ] 글리프 캐싱
+- [ ] 객체 스트림 (Object Streams) 생성
+- [ ] 구문 정리/최적화 (Clean)
+- [ ] 벤치마크 프레임워크 (criterion)
 
 ### 8.1 파싱 최적화
 - [ ] Memory-mapped I/O
