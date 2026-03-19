@@ -1190,6 +1190,63 @@ cargo test --all
 
 ---
 
+## 미구현 항목 정리 및 향후 계획
+
+> Phase 0~8 핵심 기능 완료 (테스트 906개). 아래는 남은 항목과 진행 방향.
+
+### Phase 8 잔여 — 병렬화/벤치마크
+
+| 항목 | 방향 |
+|------|------|
+| 병렬 페이지 파싱 | `resolve(&mut self)` → `resolve(&self)` + `RwLock` 캐시로 리팩토링 후 `rayon` 적용 |
+| 멀티스레드 렌더링 | 병렬 파싱 완료 후 페이지 단위 `rayon::par_iter` 렌더링 |
+| 타일 기반 렌더링 | Display List 기반 — 타일 rect 클리핑 후 replay |
+| Arena allocator | `bumpalo`로 content stream 파싱 시 임시 할당 최적화 |
+| MuPDF 비교 벤치마크 | 실제 PDF 코퍼스 수집 후 `mutool draw` 대비 시간/메모리 비교 |
+
+### Phase 9 — 확장 포맷 (선택)
+
+| 항목 | 방향 |
+|------|------|
+| XPS | `zip` crate로 컨테이너 파싱 → XML 파서로 페이지 해석 → 기존 렌더러 재활용 |
+| EPUB | `zip` + HTML/CSS 파싱 → reflow 레이아웃 → PDF 변환은 writer 활용 |
+| SVG 입력 | `roxmltree`로 파싱 → path/text/image 추출 → tiny-skia 렌더링 |
+| Office (DOCX/XLSX/PPTX) | `zip` + XML 파싱. 범위가 매우 큼 — 텍스트 추출만 우선 |
+| CBZ/MOBI/FB2 | CBZ는 zip+이미지로 간단. MOBI/FB2는 우선순위 낮음 |
+
+### Phase 10 — 특수 기능 (선택)
+
+| 항목 | 방향 |
+|------|------|
+| OCR | Tesseract CLI 연동 (`std::process::Command`). Rust 네이티브 OCR은 미성숙 |
+| 바코드 | `qrcode` crate (생성), `rxing`/`bardecoder` (인식) |
+| ZUGFeRD | PDF 임베디드 XML 추출 (embedded_file 모듈 활용) → XML 파싱 |
+| BiDi | Unicode BiDi Algorithm (UAX #9) 구현 — `unicode-bidi` crate 활용 |
+| Deskew | 이미지 회전 감지 — Hough 변환 또는 projection profile |
+
+### Phase 11 — API & 생태계
+
+| 항목 | 방향 |
+|------|------|
+| 고수준 API | `Document` wrapper: open → pages → render/text/modify → save 체인 |
+| CLI | `clap` 기반 서브커맨드 (render, text, info, merge, split, encrypt, sign, clean, convert) |
+| Python 바인딩 | `pyo3` — Document/Page 클래스 노출 |
+| Node.js 바인딩 | `napi-rs` — 비동기 API |
+| WASM | `wasm-bindgen` — 브라우저 렌더링 데모 |
+| C API (FFI) | `cbindgen`으로 헤더 생성 |
+| 문서화 | `cargo doc` + mdbook 가이드 + examples/ 정리 |
+
+### 추천 진행 순서
+
+1. **Phase 11.1 — 고수준 API** (다른 Phase들의 기반)
+2. **Phase 11.2 — CLI** (즉시 사용 가능한 도구)
+3. **Phase 8 잔여 — 병렬화** (성능 차별화)
+4. **Phase 11.3 — Python 바인딩** (생태계 확장)
+5. **Phase 11.4 — WASM** (웹 데모)
+6. **Phase 9~10** (필요에 따라 선택적)
+
+---
+
 ## 의존성 후보 (Rust Crates)
 
 | 영역 | Crate | 용도 |
