@@ -771,9 +771,9 @@ cargo test -p justpdf-sign
 
 ### 7.4 Linearized PDF
 - [x] Linearized PDF 판별
-- [ ] 힌트 테이블 파싱
-- [ ] Progressive loading (첫 페이지 우선 렌더링)
-- [ ] Linearized PDF 생성
+- ~~힌트 테이블 파싱~~ *(Phase 8 성능 최적화로 이동)*
+- ~~Progressive loading (첫 페이지 우선 렌더링)~~ *(Phase 8 성능 최적화로 이동)*
+- ~~Linearized PDF 생성~~ *(Phase 8 성능 최적화로 이동)*
 
 ### 7.5 ICC 색상 관리
 - [x] ICC 프로필 파싱 *(matrix/TRC RGB, Gray 프로필 지원)*
@@ -883,12 +883,15 @@ cargo test -p justpdf-core --features advanced
 
 > 목표: MuPDF와 동등하거나 그 이상의 성능
 
-### 8.0 Phase 2/4에서 이월된 항목
+### 8.0 Phase 2/4/7에서 이월된 항목
 - [ ] Display List (명령 기록/재생)
 - [ ] 글리프 캐싱
 - [ ] 객체 스트림 (Object Streams) 생성
 - [ ] 구문 정리/최적화 (Clean)
 - [ ] 벤치마크 프레임워크 (criterion)
+- [ ] 힌트 테이블 파싱 *(Phase 7.4에서 이동)*
+- [ ] Progressive loading (첫 페이지 우선 렌더링) *(Phase 7.4에서 이동)*
+- [ ] Linearized PDF 생성 *(Phase 7.4에서 이동)*
 
 ### 8.1 파싱 최적화
 - [ ] Memory-mapped I/O
