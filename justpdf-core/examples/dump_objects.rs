@@ -18,7 +18,7 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse().ok());
 
-    let mut doc = match PdfDocument::open(path) {
+    let doc = match PdfDocument::open(path) {
         Ok(doc) => doc,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -47,7 +47,7 @@ fn main() {
         for iref in refs {
             match doc.resolve(&iref) {
                 Ok(obj) => {
-                    let summary = format_summary(obj);
+                    let summary = format_summary(&obj);
                     println!(
                         "obj {} {}: {} {}",
                         iref.obj_num,

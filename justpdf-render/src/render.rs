@@ -41,7 +41,7 @@ impl Default for RenderOptions {
 ///
 /// `page_index` is 0-based.
 pub fn render_page(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     page_index: usize,
     options: &RenderOptions,
 ) -> Result<Vec<u8>> {
@@ -58,7 +58,7 @@ pub fn render_page(
 
 /// Render a page given its PageInfo.
 pub fn render_page_info(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     page: &PageInfo,
     options: &RenderOptions,
 ) -> Result<Vec<u8>> {
@@ -110,7 +110,7 @@ pub fn render_page_info(
 
 /// Render a page and save to a file.
 pub fn render_page_to_file(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     page_index: usize,
     options: &RenderOptions,
     output_path: &Path,
@@ -132,7 +132,7 @@ pub struct RenderedPixmap {
 
 /// Render a page and return the raw pixmap (RGBA data + dimensions).
 pub fn render_page_to_pixmap(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     page_index: usize,
     options: &RenderOptions,
 ) -> Result<RenderedPixmap> {
@@ -189,7 +189,7 @@ pub fn render_page_to_pixmap(
 ///
 /// `page_index` is 0-based. Returns a complete SVG XML document.
 pub fn render_page_to_svg(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     page_index: usize,
 ) -> Result<String> {
     let pages = collect_pages(doc)?;
@@ -215,6 +215,64 @@ pub fn render_page_to_svg(
 
     let renderer = SvgRenderer::new(doc, page_transform, page_width, page_height);
     renderer.render_page(&page)
+}
+
+/// Render multiple pages in parallel using rayon.
+///
+/// Returns a `Vec<Result<Vec<u8>>>` where each entry corresponds to
+/// the rendered output of the page at the given index.
+/// Requires the `parallel` feature.
+#[cfg(feature = "parallel")]
+pub fn render_pages_parallel(
+    doc: &PdfDocument,
+    page_indices: &[usize],
+    options: &RenderOptions,
+) -> Vec<Result<Vec<u8>>> {
+    use rayon::prelude::*;
+
+    let pages = match collect_pages(doc) {
+        Ok(p) => p,
+        Err(e) => {
+            let msg = format!("failed to collect pages: {e}");
+            return page_indices
+                .iter()
+                .map(|_| {
+                    Err(RenderError::InvalidDimensions {
+                        detail: msg.clone(),
+                    })
+                })
+                .collect();
+        }
+    };
+
+    page_indices
+        .par_iter()
+        .map(|&idx| {
+            let page = pages
+                .get(idx)
+                .ok_or_else(|| RenderError::InvalidDimensions {
+                    detail: format!("page index {idx} out of range (total: {})", pages.len()),
+                })?;
+            render_page_info(doc, page, options)
+        })
+        .collect()
+}
+
+/// Render all pages in parallel using rayon.
+///
+/// Requires the `parallel` feature.
+#[cfg(feature = "parallel")]
+pub fn render_all_pages_parallel(
+    doc: &PdfDocument,
+    options: &RenderOptions,
+) -> Vec<Result<Vec<u8>>> {
+    let pages = match collect_pages(doc) {
+        Ok(p) => p,
+        Err(e) => return vec![Err(e.into())],
+    };
+
+    let indices: Vec<usize> = (0..pages.len()).collect();
+    render_pages_parallel(doc, &indices, options)
 }
 
 /// Compute the transform from PDF user space to device (pixel) space.
@@ -282,6 +340,39 @@ mod tests {
         let opts = RenderOptions::default();
         assert_eq!(opts.dpi, 72.0);
         assert_eq!(opts.background, [255, 255, 255, 255]);
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_render_pages_parallel_empty() {
+        use std::path::Path;
+        let pdf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testpdf.pdf");
+        if !pdf_path.exists() {
+            eprintln!("skipping: testpdf.pdf not found");
+            return;
+        }
+        let doc = justpdf_core::PdfDocument::open(&pdf_path).expect("failed to open PDF");
+        let opts = RenderOptions::default();
+        // Empty indices should return empty results.
+        let results = render_pages_parallel(&doc, &[], &opts);
+        assert!(results.is_empty());
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_render_pages_parallel_out_of_range() {
+        use std::path::Path;
+        let pdf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testpdf.pdf");
+        if !pdf_path.exists() {
+            eprintln!("skipping: testpdf.pdf not found");
+            return;
+        }
+        let doc = justpdf_core::PdfDocument::open(&pdf_path).expect("failed to open PDF");
+        let opts = RenderOptions::default();
+        // Out-of-range index should produce an error.
+        let results = render_pages_parallel(&doc, &[9999], &opts);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_err());
     }
 
     #[test]

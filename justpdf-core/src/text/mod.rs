@@ -676,7 +676,7 @@ fn build_line(mut words: Vec<TextWord>) -> TextLine {
 
 /// Resolve all fonts from a page's Resources dictionary.
 fn resolve_fonts(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     resources_ref: &Option<PdfObject>,
 ) -> HashMap<Vec<u8>, ResolvedFont> {
     let mut fonts = HashMap::new();
@@ -686,7 +686,7 @@ fn resolve_fonts(
         Some(PdfObject::Reference(r)) => {
             let r = r.clone();
             match doc.resolve(&r) {
-                Ok(PdfObject::Dict(d)) => d.clone(),
+                Ok(PdfObject::Dict(d)) => d,
                 _ => return fonts,
             }
         }
@@ -698,7 +698,7 @@ fn resolve_fonts(
         Some(PdfObject::Reference(r)) => {
             let r = r.clone();
             match doc.resolve(&r) {
-                Ok(PdfObject::Dict(d)) => d.clone(),
+                Ok(PdfObject::Dict(d)) => d,
                 _ => return fonts,
             }
         }
@@ -737,12 +737,12 @@ fn resolve_fonts(
     fonts
 }
 
-fn resolve_to_unicode(doc: &mut PdfDocument, font_dict: &PdfDict) -> Option<ToUnicodeCMap> {
+fn resolve_to_unicode(doc: &PdfDocument, font_dict: &PdfDict) -> Option<ToUnicodeCMap> {
     let tu_obj = font_dict.get(b"ToUnicode")?;
     match tu_obj {
         PdfObject::Reference(r) => {
             let r = r.clone();
-            let obj = doc.resolve(&r).ok()?.clone();
+            let obj = doc.resolve(&r).ok()?;
             match obj {
                 PdfObject::Stream { dict, data } => {
                     let decoded = doc.decode_stream(&dict, &data).ok()?;
@@ -759,7 +759,7 @@ fn resolve_to_unicode(doc: &mut PdfDocument, font_dict: &PdfDict) -> Option<ToUn
     }
 }
 
-fn resolve_type0_descendant(doc: &mut PdfDocument, font_dict: &PdfDict, info: &mut FontInfo) {
+fn resolve_type0_descendant(doc: &PdfDocument, font_dict: &PdfDict, info: &mut FontInfo) {
     let descendants = match font_dict.get(b"DescendantFonts") {
         Some(PdfObject::Array(arr)) => arr.clone(),
         _ => return,
@@ -771,7 +771,7 @@ fn resolve_type0_descendant(doc: &mut PdfDocument, font_dict: &PdfDict, info: &m
     };
 
     let descendant = match doc.resolve(&descendant_ref) {
-        Ok(PdfObject::Dict(d)) => d.clone(),
+        Ok(PdfObject::Dict(d)) => d,
         _ => return,
     };
 
@@ -858,7 +858,7 @@ fn parse_cid_widths(w_array: &[PdfObject]) -> crate::font::FontWidths {
 // Get content stream data for a page
 // ---------------------------------------------------------------------------
 
-fn get_page_content_data(doc: &mut PdfDocument, page: &PageInfo) -> Result<Vec<u8>> {
+fn get_page_content_data(doc: &PdfDocument, page: &PageInfo) -> Result<Vec<u8>> {
     let contents_obj = match &page.contents_ref {
         Some(obj) => obj.clone(),
         None => return Ok(Vec::new()),
@@ -866,7 +866,7 @@ fn get_page_content_data(doc: &mut PdfDocument, page: &PageInfo) -> Result<Vec<u
 
     match contents_obj {
         PdfObject::Reference(r) => {
-            let obj = doc.resolve(&r)?.clone();
+            let obj = doc.resolve(&r)?;
             decode_content_obj(doc, &obj)
         }
         PdfObject::Array(arr) => {
@@ -875,7 +875,7 @@ fn get_page_content_data(doc: &mut PdfDocument, page: &PageInfo) -> Result<Vec<u
                 let data = match item {
                     PdfObject::Reference(r) => {
                         let r = r.clone();
-                        let obj = doc.resolve(&r)?.clone();
+                        let obj = doc.resolve(&r)?;
                         decode_content_obj(doc, &obj)?
                     }
                     _ => Vec::new(),
@@ -904,7 +904,7 @@ fn decode_content_obj(doc: &PdfDocument, obj: &PdfObject) -> Result<Vec<u8>> {
 // ---------------------------------------------------------------------------
 
 /// Extract text from a single page.
-pub fn extract_page_text(doc: &mut PdfDocument, page: &PageInfo) -> Result<PageText> {
+pub fn extract_page_text(doc: &PdfDocument, page: &PageInfo) -> Result<PageText> {
     // Resolve fonts
     let fonts = resolve_fonts(doc, &page.resources_ref);
 
@@ -942,7 +942,7 @@ pub fn extract_page_text(doc: &mut PdfDocument, page: &PageInfo) -> Result<PageT
 }
 
 /// Extract text from all pages of a document.
-pub fn extract_all_text(doc: &mut PdfDocument) -> Result<Vec<PageText>> {
+pub fn extract_all_text(doc: &PdfDocument) -> Result<Vec<PageText>> {
     let pages = collect_pages(doc)?;
     let mut results = Vec::with_capacity(pages.len());
 
@@ -954,13 +954,13 @@ pub fn extract_all_text(doc: &mut PdfDocument) -> Result<Vec<PageText>> {
 }
 
 /// Extract plain text from a single page as a string.
-pub fn extract_page_text_string(doc: &mut PdfDocument, page: &PageInfo) -> Result<String> {
+pub fn extract_page_text_string(doc: &PdfDocument, page: &PageInfo) -> Result<String> {
     let page_text = extract_page_text(doc, page)?;
     Ok(page_text.plain_text())
 }
 
 /// Extract plain text from all pages, joining with form feeds.
-pub fn extract_all_text_string(doc: &mut PdfDocument) -> Result<String> {
+pub fn extract_all_text_string(doc: &PdfDocument) -> Result<String> {
     let pages = extract_all_text(doc)?;
     let texts: Vec<String> = pages.iter().map(|p| p.plain_text()).collect();
     Ok(texts.join("\n\n"))

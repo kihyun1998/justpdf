@@ -20,7 +20,7 @@ use super::types::AnnotColor;
 /// 4. Removes the Redact annotations
 pub fn apply_redactions(
     modifier: &mut DocumentModifier,
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     page_index: usize,
 ) -> Result<()> {
     let pages = collect_pages(doc)?;
@@ -28,7 +28,7 @@ pub fn apply_redactions(
         detail: format!("page index {page_index} out of range"),
     })?;
 
-    let page_obj = doc.resolve(&page.page_ref)?.clone();
+    let page_obj = doc.resolve(&page.page_ref)?;
     let page_dict = match page_obj.as_dict() {
         Some(d) => d.clone(),
         None => return Ok(()),
@@ -39,7 +39,7 @@ pub fn apply_redactions(
         Some(PdfObject::Array(arr)) => arr.clone(),
         Some(PdfObject::Reference(r)) => {
             let r = r.clone();
-            match doc.resolve(&r)?.clone() {
+            match doc.resolve(&r)? {
                 PdfObject::Array(arr) => arr,
                 _ => return Ok(()),
             }
@@ -54,7 +54,7 @@ pub fn apply_redactions(
         let annot_dict = match item {
             PdfObject::Reference(r) => {
                 let r = r.clone();
-                match doc.resolve(&r)?.clone() {
+                match doc.resolve(&r)? {
                     PdfObject::Dict(d) => d,
                     _ => {
                         remaining_annots.push(item.clone());
@@ -321,7 +321,7 @@ fn rects_overlap(a: &Rect, b: &Rect) -> bool {
 }
 
 /// Get raw content stream data from page dict.
-fn get_page_content_data(doc: &mut PdfDocument, page_dict: &PdfDict) -> Result<Vec<u8>> {
+fn get_page_content_data(doc: &PdfDocument, page_dict: &PdfDict) -> Result<Vec<u8>> {
     let contents = match page_dict.get(b"Contents") {
         Some(obj) => obj.clone(),
         None => return Ok(Vec::new()),
@@ -329,7 +329,7 @@ fn get_page_content_data(doc: &mut PdfDocument, page_dict: &PdfDict) -> Result<V
 
     match contents {
         PdfObject::Reference(r) => {
-            let resolved = doc.resolve(&r)?.clone();
+            let resolved = doc.resolve(&r)?;
             match resolved {
                 PdfObject::Stream { dict, data } => {
                     stream::decode_stream(&data, &dict)
@@ -341,7 +341,7 @@ fn get_page_content_data(doc: &mut PdfDocument, page_dict: &PdfDict) -> Result<V
             let mut all_data = Vec::new();
             for item in &arr {
                 if let PdfObject::Reference(r) = item {
-                    let resolved = doc.resolve(r)?.clone();
+                    let resolved = doc.resolve(r)?;
                     if let PdfObject::Stream { dict, data } = resolved {
                         let decoded = stream::decode_stream(&data, &dict)?;
                         all_data.extend_from_slice(&decoded);

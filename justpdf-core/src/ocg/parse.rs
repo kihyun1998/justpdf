@@ -10,13 +10,13 @@ use super::types::*;
 /// - /OCGs: array of OCG indirect refs
 /// - /D: default viewing configuration dict
 /// - /Configs: optional array of alternate configuration dicts
-pub fn read_oc_properties(doc: &mut PdfDocument) -> Result<Option<OCProperties>> {
+pub fn read_oc_properties(doc: &PdfDocument) -> Result<Option<OCProperties>> {
     // Get the catalog
     let catalog_ref = match doc.catalog_ref() {
         Some(r) => r.clone(),
         None => return Ok(None),
     };
-    let catalog_obj = doc.resolve(&catalog_ref)?.clone();
+    let catalog_obj = doc.resolve(&catalog_ref)?;
     let catalog_dict = match catalog_obj.as_dict() {
         Some(d) => d.clone(),
         None => return Ok(None),
@@ -27,7 +27,7 @@ pub fn read_oc_properties(doc: &mut PdfDocument) -> Result<Option<OCProperties>>
         Some(PdfObject::Dict(d)) => d.clone(),
         Some(PdfObject::Reference(r)) => {
             let r = r.clone();
-            let resolved = doc.resolve(&r)?.clone();
+            let resolved = doc.resolve(&r)?;
             match resolved.as_dict() {
                 Some(d) => d.clone(),
                 None => return Ok(None),
@@ -42,7 +42,7 @@ pub fn read_oc_properties(doc: &mut PdfDocument) -> Result<Option<OCProperties>>
     for item in &ocg_refs {
         if let PdfObject::Reference(r) = item {
             let r = r.clone();
-            let ocg_obj = doc.resolve(&r)?.clone();
+            let ocg_obj = doc.resolve(&r)?;
             if let Some(ocg_dict) = ocg_obj.as_dict() {
                 groups.push(parse_ocg(ocg_dict, r));
             }
@@ -54,7 +54,7 @@ pub fn read_oc_properties(doc: &mut PdfDocument) -> Result<Option<OCProperties>>
         Some(PdfObject::Dict(d)) => Some(parse_config(doc, d)?),
         Some(PdfObject::Reference(r)) => {
             let r = r.clone();
-            let resolved = doc.resolve(&r)?.clone();
+            let resolved = doc.resolve(&r)?;
             if let Some(d) = resolved.as_dict() {
                 Some(parse_config(doc, d)?)
             } else {
@@ -74,7 +74,7 @@ pub fn read_oc_properties(doc: &mut PdfDocument) -> Result<Option<OCProperties>>
             }
             PdfObject::Reference(r) => {
                 let r = r.clone();
-                let resolved = doc.resolve(&r)?.clone();
+                let resolved = doc.resolve(&r)?;
                 if let Some(d) = resolved.as_dict() {
                     configs.push(parse_config(doc, d)?);
                 }
@@ -92,7 +92,7 @@ pub fn read_oc_properties(doc: &mut PdfDocument) -> Result<Option<OCProperties>>
 
 /// Helper to get an array from a dict, resolving indirect refs.
 fn get_array_from_dict(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     dict: &PdfDict,
     key: &[u8],
 ) -> Result<Vec<PdfObject>> {
@@ -100,7 +100,7 @@ fn get_array_from_dict(
         Some(PdfObject::Array(arr)) => Ok(arr.clone()),
         Some(PdfObject::Reference(r)) => {
             let r = r.clone();
-            let resolved = doc.resolve(&r)?.clone();
+            let resolved = doc.resolve(&r)?;
             match resolved.as_array() {
                 Some(arr) => Ok(arr.to_vec()),
                 None => Ok(Vec::new()),
@@ -165,7 +165,7 @@ fn parse_usage_state(dict: &PdfDict, category_key: &[u8], state_key: &[u8]) -> O
 }
 
 /// Parse an OC configuration dict.
-fn parse_config(doc: &mut PdfDocument, dict: &PdfDict) -> Result<OCConfig> {
+fn parse_config(doc: &PdfDocument, dict: &PdfDict) -> Result<OCConfig> {
     let name = dict
         .get(b"Name")
         .and_then(|o| o.as_str())
@@ -191,7 +191,7 @@ fn parse_config(doc: &mut PdfDocument, dict: &PdfDict) -> Result<OCConfig> {
         }
         Some(PdfObject::Reference(r)) => {
             let r = r.clone();
-            let resolved = doc.resolve(&r)?.clone();
+            let resolved = doc.resolve(&r)?;
             match resolved.as_array() {
                 Some(arr) => {
                     let arr = arr.to_vec();
@@ -215,7 +215,7 @@ fn parse_config(doc: &mut PdfDocument, dict: &PdfDict) -> Result<OCConfig> {
 
 /// Collect indirect references from an array entry in a dict.
 fn collect_ref_array(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     dict: &PdfDict,
     key: &[u8],
 ) -> Result<Vec<IndirectRef>> {
@@ -235,7 +235,7 @@ fn collect_ref_array(
 /// - Indirect refs to OCGs
 /// - Strings (labels for the following sub-array)
 /// - Sub-arrays (grouped OCGs, optionally preceded by a label string)
-fn parse_order(doc: &mut PdfDocument, arr: &[PdfObject]) -> Result<Vec<OCOrderItem>> {
+fn parse_order(doc: &PdfDocument, arr: &[PdfObject]) -> Result<Vec<OCOrderItem>> {
     let mut items = Vec::new();
     let mut i = 0;
 
@@ -634,7 +634,7 @@ mod tests {
         let pdf_bytes = build_minimal_pdf_with_ocg();
         let mut doc = PdfDocument::from_bytes(pdf_bytes).unwrap();
 
-        let config = parse_config(&mut doc, &dict).unwrap();
+        let config = parse_config(&doc, &dict).unwrap();
         assert_eq!(config.name, Some("Default".to_string()));
         assert_eq!(config.creator, Some("TestApp".to_string()));
         assert_eq!(config.base_state, OCGState::On);
@@ -651,7 +651,7 @@ mod tests {
         let pdf_bytes = build_minimal_pdf_with_ocg();
         let mut doc = PdfDocument::from_bytes(pdf_bytes).unwrap();
 
-        let config = parse_config(&mut doc, &dict).unwrap();
+        let config = parse_config(&doc, &dict).unwrap();
         assert_eq!(config.base_state, OCGState::Off);
     }
 
@@ -662,7 +662,7 @@ mod tests {
         let pdf_bytes = build_minimal_pdf_with_ocg();
         let mut doc = PdfDocument::from_bytes(pdf_bytes).unwrap();
 
-        let config = parse_config(&mut doc, &dict).unwrap();
+        let config = parse_config(&doc, &dict).unwrap();
         assert_eq!(config.base_state, OCGState::On); // default
     }
 
@@ -676,7 +676,7 @@ mod tests {
             PdfObject::Reference(make_ref(6)),
         ];
 
-        let items = parse_order(&mut doc, &arr).unwrap();
+        let items = parse_order(&doc, &arr).unwrap();
         assert_eq!(items.len(), 2);
         match &items[0] {
             OCOrderItem::Group(r) => assert_eq!(r, &make_ref(5)),
@@ -697,7 +697,7 @@ mod tests {
             ]),
         ];
 
-        let items = parse_order(&mut doc, &arr).unwrap();
+        let items = parse_order(&doc, &arr).unwrap();
         assert_eq!(items.len(), 1);
         match &items[0] {
             OCOrderItem::SubGroup { name, children } => {
@@ -717,7 +717,7 @@ mod tests {
             PdfObject::Reference(make_ref(7)),
         ])];
 
-        let items = parse_order(&mut doc, &arr).unwrap();
+        let items = parse_order(&doc, &arr).unwrap();
         assert_eq!(items.len(), 1);
         match &items[0] {
             OCOrderItem::SubGroup { name, children } => {
@@ -738,7 +738,7 @@ mod tests {
             PdfObject::Reference(make_ref(1)),
         ];
 
-        let items = parse_order(&mut doc, &arr).unwrap();
+        let items = parse_order(&doc, &arr).unwrap();
         // "Orphan Label" followed by a ref, not an array: creates empty sub-group + group
         assert_eq!(items.len(), 2);
         match &items[0] {
@@ -756,7 +756,7 @@ mod tests {
     fn test_read_oc_properties_none() {
         let pdf_bytes = build_minimal_pdf();
         let mut doc = PdfDocument::from_bytes(pdf_bytes).unwrap();
-        let props = read_oc_properties(&mut doc).unwrap();
+        let props = read_oc_properties(&doc).unwrap();
         assert!(props.is_none());
     }
 
@@ -764,7 +764,7 @@ mod tests {
     fn test_read_oc_properties_with_ocg() {
         let pdf_bytes = build_pdf_with_oc_properties();
         let mut doc = PdfDocument::from_bytes(pdf_bytes).unwrap();
-        let props = read_oc_properties(&mut doc).unwrap();
+        let props = read_oc_properties(&doc).unwrap();
         assert!(props.is_some());
 
         let props = props.unwrap();

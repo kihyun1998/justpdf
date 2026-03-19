@@ -26,7 +26,7 @@ struct ResolvedFont {
 
 /// SVG rendering interpreter: walks content stream ops and builds SVG XML.
 pub struct SvgRenderer<'a> {
-    doc: &'a mut PdfDocument,
+    doc: &'a PdfDocument,
     state: GraphicsState,
     state_stack: Vec<GraphicsState>,
     fonts: HashMap<Vec<u8>, ResolvedFont>,
@@ -53,7 +53,7 @@ pub struct SvgRenderer<'a> {
 
 impl<'a> SvgRenderer<'a> {
     pub fn new(
-        doc: &'a mut PdfDocument,
+        doc: &'a PdfDocument,
         page_transform: Matrix,
         page_width: f64,
         page_height: f64,
@@ -148,7 +148,7 @@ impl<'a> SvgRenderer<'a> {
             Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             _ => return Ok(()),
         };
@@ -158,7 +158,7 @@ impl<'a> SvgRenderer<'a> {
                 let font_obj = match val {
                     PdfObject::Reference(r) => {
                         let r = r.clone();
-                        self.doc.resolve(&r)?.clone()
+                        self.doc.resolve(&r)?
                     }
                     other => other.clone(),
                 };
@@ -169,7 +169,7 @@ impl<'a> SvgRenderer<'a> {
                     let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {
                         let tu_ref = tu_ref.clone();
                         if let Ok(tu_obj) = self.doc.resolve(&tu_ref) {
-                            if let PdfObject::Stream { dict, data } = tu_obj.clone() {
+                            if let PdfObject::Stream { dict, data } = tu_obj {
                                 let decoded = self.doc.decode_stream(&dict, &data).ok();
                                 decoded.map(|d| ToUnicodeCMap::parse(&d))
                             } else {
@@ -189,7 +189,7 @@ impl<'a> SvgRenderer<'a> {
                                 let desc_obj = match desc_ref {
                                     PdfObject::Reference(r) => {
                                         let r = r.clone();
-                                        self.doc.resolve(&r)?.clone()
+                                        self.doc.resolve(&r)?
                                     }
                                     other => other.clone(),
                                 };
@@ -220,7 +220,7 @@ impl<'a> SvgRenderer<'a> {
         match obj {
             PdfObject::Reference(r) => {
                 let r = r.clone();
-                Ok(self.doc.resolve(&r)?.clone())
+                Ok(self.doc.resolve(&r)?)
             }
             other => Ok(other.clone()),
         }
@@ -235,7 +235,7 @@ impl<'a> SvgRenderer<'a> {
         match &contents {
             PdfObject::Reference(r) => {
                 let r = r.clone();
-                let obj = self.doc.resolve(&r)?.clone();
+                let obj = self.doc.resolve(&r)?;
                 match obj {
                     PdfObject::Stream { dict, data } => {
                         Ok(self.doc.decode_stream(&dict, &data).unwrap_or_default())
@@ -261,7 +261,7 @@ impl<'a> SvgRenderer<'a> {
             let obj = match item {
                 PdfObject::Reference(r) => {
                     let r = r.clone();
-                    self.doc.resolve(&r)?.clone()
+                    self.doc.resolve(&r)?
                 }
                 other => other.clone(),
             };
@@ -1079,7 +1079,7 @@ impl<'a> SvgRenderer<'a> {
             Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             _ => return Ok(None),
         };
@@ -1094,7 +1094,7 @@ impl<'a> SvgRenderer<'a> {
             _ => return Ok(None),
         };
 
-        let xobj = self.doc.resolve(&xobj_ref)?.clone();
+        let xobj = self.doc.resolve(&xobj_ref)?;
 
         match xobj {
             PdfObject::Stream { dict, data } => {
@@ -1230,7 +1230,7 @@ impl<'a> SvgRenderer<'a> {
             Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             _ => return Ok(()),
         };
@@ -1243,7 +1243,7 @@ impl<'a> SvgRenderer<'a> {
         let gs_obj = match extgstate_dict.get(name) {
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             Some(other) => other.clone(),
             None => return Ok(()),

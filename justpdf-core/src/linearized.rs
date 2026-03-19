@@ -140,7 +140,7 @@ pub fn is_linearized(data: &[u8]) -> bool {
 /// Finds the first object (usually obj 1) and checks for `/Linearized`.
 /// This re-parses from the raw data since the linearization dict is always the
 /// first indirect object in the file.
-pub fn read_linearization(doc: &mut PdfDocument) -> Option<LinearizationParams> {
+pub fn read_linearization(doc: &PdfDocument) -> Option<LinearizationParams> {
     detect_linearization(doc.raw_data())
 }
 

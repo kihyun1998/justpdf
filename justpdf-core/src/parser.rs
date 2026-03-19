@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::path::Path;
+use std::sync::RwLock;
 
 use crate::crypto;
 use crate::crypto::SecurityState;
@@ -141,7 +142,10 @@ impl<K: Eq + Hash + Clone, V> LruCache<K, V> {
 const DEFAULT_CACHE_CAPACITY: usize = 2048;
 
 /// A parsed PDF document.
-#[derive(Debug)]
+///
+/// `PdfDocument` uses interior mutability (`RwLock`) for its object caches so
+/// that `resolve` only requires `&self`. This makes the type `Sync` and enables
+/// multi-threaded page parsing and rendering via shared references.
 pub struct PdfDocument {
     /// PDF version, e.g. (1, 7) for PDF 1.7.
     pub version: (u8, u8),
@@ -149,12 +153,29 @@ pub struct PdfDocument {
     pub xref: Xref,
     /// Raw file data (owned or memory-mapped).
     data: PdfData,
-    /// Bounded LRU cache of parsed objects.
-    objects: LruCache<IndirectRef, PdfObject>,
+    /// Bounded LRU cache of parsed objects (interior-mutable).
+    objects: RwLock<LruCache<IndirectRef, PdfObject>>,
     /// Encryption/security state (None if document is not encrypted).
     security: Option<SecurityState>,
-    /// Cache of decoded object stream data (Task 3: avoids re-decoding).
-    decoded_obj_streams: HashMap<u32, Vec<u8>>,
+    /// Cache of decoded object stream data (interior-mutable).
+    decoded_obj_streams: RwLock<HashMap<u32, Vec<u8>>>,
+}
+
+impl std::fmt::Debug for PdfDocument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let obj_cache_len = self
+            .objects
+            .read()
+            .map(|c| c.len())
+            .unwrap_or(0);
+        f.debug_struct("PdfDocument")
+            .field("version", &self.version)
+            .field("xref", &self.xref)
+            .field("data", &self.data)
+            .field("objects_cached", &obj_cache_len)
+            .field("security", &self.security)
+            .finish()
+    }
 }
 
 impl PdfDocument {
@@ -186,9 +207,9 @@ impl PdfDocument {
             version,
             xref,
             data,
-            objects: LruCache::new(DEFAULT_CACHE_CAPACITY),
+            objects: RwLock::new(LruCache::new(DEFAULT_CACHE_CAPACITY)),
             security: None,
-            decoded_obj_streams: HashMap::new(),
+            decoded_obj_streams: RwLock::new(HashMap::new()),
         };
 
         // Detect encryption
@@ -217,9 +238,9 @@ impl PdfDocument {
             version,
             xref,
             data: PdfData::Owned(data),
-            objects: LruCache::new(DEFAULT_CACHE_CAPACITY),
+            objects: RwLock::new(LruCache::new(DEFAULT_CACHE_CAPACITY)),
             security: None,
-            decoded_obj_streams: HashMap::new(),
+            decoded_obj_streams: RwLock::new(HashMap::new()),
         }
     }
 
@@ -339,8 +360,8 @@ impl PdfDocument {
         state.file_key = Some(key);
 
         // Clear cached objects — they need to be re-loaded with decryption
-        self.objects.clear();
-        self.decoded_obj_streams.clear();
+        self.objects.write().unwrap().clear();
+        self.decoded_obj_streams.write().unwrap().clear();
 
         Ok(())
     }
@@ -373,10 +394,17 @@ impl PdfDocument {
     /// Resolve an indirect reference to the actual object.
     /// Uses internal LRU cache. Detects circular references.
     /// Automatically decrypts if the document is encrypted and authenticated.
-    pub fn resolve(&mut self, iref: &IndirectRef) -> Result<&PdfObject> {
-        if self.objects.contains_key(iref) {
-            // Promote to most-recently-used and return.
-            return Ok(self.objects.get(iref).unwrap());
+    ///
+    /// Returns a cloned `PdfObject` (owned). The interior LRU cache is
+    /// protected by a `RwLock`, so this method only requires `&self` and
+    /// can be called from multiple threads simultaneously.
+    pub fn resolve(&self, iref: &IndirectRef) -> Result<PdfObject> {
+        // Fast path: cache hit (read lock only).
+        {
+            let mut cache = self.objects.write().unwrap();
+            if let Some(obj) = cache.get(iref) {
+                return Ok(obj.clone());
+            }
         }
 
         // Check if we need authentication
@@ -386,16 +414,17 @@ impl PdfDocument {
             }
         }
 
-        // Load the object
+        // Load the object (no lock held during I/O)
         let obj = self.load_object(iref, &mut HashSet::new())?;
-        self.objects.insert(iref.clone(), obj);
-        Ok(self.objects.get(iref).unwrap())
+        let result = obj.clone();
+        self.objects.write().unwrap().insert(iref.clone(), obj);
+        Ok(result)
     }
 
     /// Load an object, tracking visited refs to detect cycles.
     /// Applies decryption if the document is encrypted.
     fn load_object(
-        &mut self,
+        &self,
         iref: &IndirectRef,
         visited: &mut HashSet<IndirectRef>,
     ) -> Result<PdfObject> {
@@ -413,7 +442,7 @@ impl PdfDocument {
 
     /// Load an object without decryption (used for the encryption dict itself).
     fn load_object_raw(
-        &mut self,
+        &self,
         iref: &IndirectRef,
         visited: &mut HashSet<IndirectRef>,
     ) -> Result<PdfObject> {
@@ -450,48 +479,57 @@ impl PdfDocument {
     /// Load an object from a compressed object stream.
     /// Uses the decoded object stream cache to avoid re-decoding.
     fn load_compressed_object(
-        &mut self,
+        &self,
         obj_stream_num: u32,
         index_within: u16,
         visited: &mut HashSet<IndirectRef>,
     ) -> Result<PdfObject> {
         // Check the decoded object stream cache first (Task 3).
-        if !self.decoded_obj_streams.contains_key(&obj_stream_num) {
-            let stream_ref = IndirectRef {
-                obj_num: obj_stream_num,
-                gen_num: 0,
-            };
+        {
+            let cache = self.decoded_obj_streams.read().unwrap();
+            if !cache.contains_key(&obj_stream_num) {
+                drop(cache); // release read lock before acquiring write lock
 
-            // Load the object stream itself (which may need decryption)
-            let stream_obj = {
-                let raw = self.load_object_raw(&stream_ref, visited)?;
-                // Decrypt the object stream if needed
-                if let Some(ref sec) = self.security {
-                    if sec.is_authenticated() {
-                        crypto::decrypt_object(raw, sec, obj_stream_num, 0)?
+                let stream_ref = IndirectRef {
+                    obj_num: obj_stream_num,
+                    gen_num: 0,
+                };
+
+                // Load the object stream itself (which may need decryption)
+                let stream_obj = {
+                    let raw = self.load_object_raw(&stream_ref, visited)?;
+                    // Decrypt the object stream if needed
+                    if let Some(ref sec) = self.security {
+                        if sec.is_authenticated() {
+                            crypto::decrypt_object(raw, sec, obj_stream_num, 0)?
+                        } else {
+                            raw
+                        }
                     } else {
                         raw
                     }
-                } else {
-                    raw
-                }
-            };
+                };
 
-            let (dict, raw_data) = match &stream_obj {
-                PdfObject::Stream { dict, data } => (dict, data),
-                _ => {
-                    return Err(JustPdfError::InvalidObject {
-                        offset: 0,
-                        detail: format!("object stream {obj_stream_num} is not a stream"),
-                    });
-                }
-            };
+                let (dict, raw_data) = match &stream_obj {
+                    PdfObject::Stream { dict, data } => (dict, data),
+                    _ => {
+                        return Err(JustPdfError::InvalidObject {
+                            offset: 0,
+                            detail: format!("object stream {obj_stream_num} is not a stream"),
+                        });
+                    }
+                };
 
-            let decoded = stream::decode_stream(raw_data, dict)?;
-            self.decoded_obj_streams.insert(obj_stream_num, decoded);
+                let decoded = stream::decode_stream(raw_data, dict)?;
+                self.decoded_obj_streams
+                    .write()
+                    .unwrap()
+                    .insert(obj_stream_num, decoded);
+            }
         }
 
-        let decoded = self.decoded_obj_streams.get(&obj_stream_num).unwrap();
+        let cache = self.decoded_obj_streams.read().unwrap();
+        let decoded = cache.get(&obj_stream_num).unwrap();
 
         // We need N and First to parse the index. Parse them from the
         // decoded data header: N pairs of (obj_num, offset) followed by
@@ -570,12 +608,12 @@ impl PdfDocument {
 
     /// Set the maximum number of parsed objects to keep in the LRU cache.
     pub fn set_cache_capacity(&mut self, capacity: usize) {
-        self.objects.set_capacity(capacity);
+        self.objects.write().unwrap().set_capacity(capacity);
     }
 
     /// Return the current number of cached objects.
     pub fn cached_object_count(&self) -> usize {
-        self.objects.len()
+        self.objects.read().unwrap().len()
     }
 }
 
@@ -662,7 +700,7 @@ mod tests {
     #[test]
     fn test_open_minimal_pdf() {
         let data = build_minimal_pdf();
-        let mut doc = PdfDocument::from_bytes(data).unwrap();
+        let doc = PdfDocument::from_bytes(data).unwrap();
 
         assert_eq!(doc.version, (1, 4));
         assert!(doc.object_count() > 0);
@@ -671,7 +709,7 @@ mod tests {
         // Resolve catalog
         let catalog_ref = doc.catalog_ref().unwrap().clone();
         let catalog = doc.resolve(&catalog_ref).unwrap();
-        match catalog {
+        match &catalog {
             PdfObject::Dict(d) => {
                 assert_eq!(d.get_name(b"Type"), Some(b"Catalog".as_slice()));
             }
@@ -700,7 +738,7 @@ mod tests {
     #[test]
     fn test_object_not_found() {
         let data = build_minimal_pdf();
-        let mut doc = PdfDocument::from_bytes(data).unwrap();
+        let doc = PdfDocument::from_bytes(data).unwrap();
         let result = doc.resolve(&IndirectRef {
             obj_num: 999,
             gen_num: 0,
@@ -835,34 +873,37 @@ mod tests {
         // Resolving 3 should evict ref1 (LRU).
         doc.resolve(&ref3).unwrap();
         assert_eq!(doc.cached_object_count(), 2);
-        assert!(!doc.objects.contains_key(&ref1));
-        assert!(doc.objects.contains_key(&ref2));
-        assert!(doc.objects.contains_key(&ref3));
+        assert!(!doc.objects.read().unwrap().contains_key(&ref1));
+        assert!(doc.objects.read().unwrap().contains_key(&ref2));
+        assert!(doc.objects.read().unwrap().contains_key(&ref3));
 
         // Re-resolving ref1 should work (re-parsed from data).
         doc.resolve(&ref1).unwrap();
-        assert!(doc.objects.contains_key(&ref1));
+        assert!(doc.objects.read().unwrap().contains_key(&ref1));
     }
 
     #[test]
     fn test_object_stream_caching() {
         let data = build_minimal_pdf();
-        let mut doc = PdfDocument::from_bytes(data).unwrap();
+        let doc = PdfDocument::from_bytes(data).unwrap();
         // The minimal PDF uses normal (non-compressed) objects, so the
         // decoded_obj_streams cache should be empty.
-        assert_eq!(doc.decoded_obj_streams.len(), 0);
+        assert_eq!(doc.decoded_obj_streams.read().unwrap().len(), 0);
 
         // Verify the cache exists and is functional by inserting directly.
-        doc.decoded_obj_streams.insert(42, vec![1, 2, 3]);
-        assert!(doc.decoded_obj_streams.contains_key(&42));
-        assert_eq!(doc.decoded_obj_streams.get(&42).unwrap(), &[1, 2, 3]);
+        doc.decoded_obj_streams.write().unwrap().insert(42, vec![1, 2, 3]);
+        assert!(doc.decoded_obj_streams.read().unwrap().contains_key(&42));
+        assert_eq!(
+            doc.decoded_obj_streams.read().unwrap().get(&42).unwrap(),
+            &[1, 2, 3]
+        );
 
         // Authentication clear should also clear the stream cache.
-        doc.decoded_obj_streams.insert(99, vec![4, 5, 6]);
+        doc.decoded_obj_streams.write().unwrap().insert(99, vec![4, 5, 6]);
         // Simulate what authenticate() does:
-        doc.objects.clear();
-        doc.decoded_obj_streams.clear();
-        assert_eq!(doc.decoded_obj_streams.len(), 0);
+        doc.objects.write().unwrap().clear();
+        doc.decoded_obj_streams.write().unwrap().clear();
+        assert_eq!(doc.decoded_obj_streams.read().unwrap().len(), 0);
     }
 
     #[cfg(feature = "mmap")]
@@ -877,13 +918,13 @@ mod tests {
             let mut f = std::fs::File::create(&path).unwrap();
             f.write_all(&data).unwrap();
         }
-        let mut doc = PdfDocument::open_mmap(&path).unwrap();
+        let doc = PdfDocument::open_mmap(&path).unwrap();
         assert_eq!(doc.version, (1, 4));
         assert!(!doc.is_encrypted());
 
         let catalog_ref = doc.catalog_ref().unwrap().clone();
         let catalog = doc.resolve(&catalog_ref).unwrap();
-        match catalog {
+        match &catalog {
             PdfObject::Dict(d) => {
                 assert_eq!(d.get_name(b"Type"), Some(b"Catalog".as_slice()));
             }

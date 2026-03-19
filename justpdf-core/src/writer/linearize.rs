@@ -34,7 +34,7 @@ use crate::writer::serialize::{serialize_dict, serialize_object};
 /// 4. Hint streams are included for page boundaries
 ///
 /// This enables progressive display (web optimization).
-pub fn linearize(doc: &mut PdfDocument) -> Result<Vec<u8>> {
+pub fn linearize(doc: &PdfDocument) -> Result<Vec<u8>> {
     // Collect page information.
     let pages = collect_pages(doc)?;
     if pages.is_empty() {
@@ -56,7 +56,7 @@ pub fn linearize(doc: &mut PdfDocument) -> Result<Vec<u8>> {
     let refs: Vec<IndirectRef> = doc.object_refs().collect();
     for iref in &refs {
         if let Ok(obj) = doc.resolve(iref) {
-            all_objects.push((iref.obj_num, obj.clone()));
+            all_objects.push((iref.obj_num, obj));
         }
     }
 
@@ -715,7 +715,7 @@ mod tests {
     fn linearize_two_page_pdf() {
         let original = create_test_pdf(2);
         let mut doc = PdfDocument::from_bytes(original).unwrap();
-        let result = linearize(&mut doc).unwrap();
+        let result = linearize(&doc).unwrap();
 
         // The result should start with %PDF header.
         assert!(result.starts_with(b"%PDF-"));
@@ -731,7 +731,7 @@ mod tests {
     fn linearized_params_are_correct() {
         let original = create_test_pdf(3);
         let mut doc = PdfDocument::from_bytes(original).unwrap();
-        let result = linearize(&mut doc).unwrap();
+        let result = linearize(&doc).unwrap();
 
         let params = detect_linearization(&result).expect("should detect linearization");
 
@@ -763,11 +763,11 @@ mod tests {
         for num_pages in [1, 2, 3, 5] {
             let original = create_test_pdf(num_pages);
             let mut doc = PdfDocument::from_bytes(original).unwrap();
-            let result = linearize(&mut doc).unwrap();
+            let result = linearize(&doc).unwrap();
 
             // Re-parse and count pages.
             let mut reparsed = PdfDocument::from_bytes(result).unwrap();
-            let pages = collect_pages(&mut reparsed).unwrap();
+            let pages = collect_pages(&reparsed).unwrap();
             assert_eq!(
                 pages.len(),
                 num_pages,
@@ -780,7 +780,7 @@ mod tests {
     fn linearization_dict_is_first_object() {
         let original = create_test_pdf(2);
         let mut doc = PdfDocument::from_bytes(original).unwrap();
-        let result = linearize(&mut doc).unwrap();
+        let result = linearize(&doc).unwrap();
 
         // After header + binary comment, the first object should contain /Linearized.
         let text = String::from_utf8_lossy(&result);
@@ -799,15 +799,15 @@ mod tests {
         let mut doc_orig = PdfDocument::from_bytes(original.clone()).unwrap();
 
         // Get the first page object number from the original doc.
-        let pages_orig = collect_pages(&mut doc_orig).unwrap();
+        let pages_orig = collect_pages(&doc_orig).unwrap();
         let first_page_obj = pages_orig[0].page_ref.obj_num;
 
         let mut doc = PdfDocument::from_bytes(original).unwrap();
-        let result = linearize(&mut doc).unwrap();
+        let result = linearize(&doc).unwrap();
 
         // Verify the output is a valid PDF.
         let mut reparsed = PdfDocument::from_bytes(result.clone()).unwrap();
-        let pages = collect_pages(&mut reparsed).unwrap();
+        let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 2);
 
         // The linearization dict should report the correct first page object.
@@ -824,7 +824,7 @@ mod tests {
     fn linearize_single_page() {
         let original = create_test_pdf(1);
         let mut doc = PdfDocument::from_bytes(original).unwrap();
-        let result = linearize(&mut doc).unwrap();
+        let result = linearize(&doc).unwrap();
 
         assert!(is_linearized(&result));
         let params = detect_linearization(&result).unwrap();
@@ -836,7 +836,7 @@ mod tests {
     fn hint_stream_is_parseable() {
         let original = create_test_pdf(3);
         let mut doc = PdfDocument::from_bytes(original).unwrap();
-        let result = linearize(&mut doc).unwrap();
+        let result = linearize(&doc).unwrap();
 
         let params = detect_linearization(&result).unwrap();
 

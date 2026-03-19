@@ -7,12 +7,12 @@ use super::types::*;
 
 /// Parse the AcroForm from a PDF document.
 /// Returns None if the document has no AcroForm.
-pub fn parse_acroform(doc: &mut PdfDocument) -> Result<Option<AcroForm>> {
+pub fn parse_acroform(doc: &PdfDocument) -> Result<Option<AcroForm>> {
     let catalog_ref = doc
         .catalog_ref()
         .ok_or(JustPdfError::TrailerNotFound)?
         .clone();
-    let catalog = doc.resolve(&catalog_ref)?.clone();
+    let catalog = doc.resolve(&catalog_ref)?;
     let catalog_dict = match catalog.as_dict() {
         Some(d) => d.clone(),
         None => return Ok(None),
@@ -21,7 +21,7 @@ pub fn parse_acroform(doc: &mut PdfDocument) -> Result<Option<AcroForm>> {
     let acroform_dict = match catalog_dict.get(b"AcroForm") {
         Some(PdfObject::Dict(d)) => d.clone(),
         Some(PdfObject::Reference(r)) => {
-            let resolved = doc.resolve(r)?.clone();
+            let resolved = doc.resolve(r)?;
             match resolved.as_dict() {
                 Some(d) => d.clone(),
                 None => return Ok(None),
@@ -85,7 +85,7 @@ pub fn parse_acroform(doc: &mut PdfDocument) -> Result<Option<AcroForm>> {
 
 /// Recursively walk the field tree.
 fn walk_field_tree(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     field_ref: &IndirectRef,
     parent_name: &str,
     inherited_ft: Option<&[u8]>,
@@ -93,7 +93,7 @@ fn walk_field_tree(
     inherited_da: Option<&str>,
     fields: &mut Vec<FormField>,
 ) -> Result<()> {
-    let field_obj = doc.resolve(field_ref)?.clone();
+    let field_obj = doc.resolve(field_ref)?;
     let dict = match field_obj.as_dict() {
         Some(d) => d.clone(),
         None => return Ok(()),

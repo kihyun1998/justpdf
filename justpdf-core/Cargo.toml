@@ -6,10 +6,12 @@ edition = "2024"
 [features]
 default = []
 mmap = ["memmap2"]
+arena = ["bumpalo"]
 
 [dependencies]
 thiserror = "2"
 memmap2 = { version = "0.9", optional = true }
+bumpalo = { version = "3", features = ["collections"], optional = true }
 flate2 = "1"
 jpeg-decoder = "0.3"
 ttf-parser = "0.25"
@@ -44,4 +46,8 @@ harness = false
 
 [[bench]]
 name = "text"
+harness = false
+
+[[bench]]
+name = "corpus"
 harness = false

@@ -513,6 +513,7 @@ name = "justpdf-core"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "bumpalo",
  "cbc",
  "cms",
  "const-oid",
@@ -540,8 +541,10 @@ dependencies = [
 name = "justpdf-render"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "image",
  "justpdf-core",
+ "rayon",
  "tiny-skia",
  "ttf-parser",
 ]

@@ -359,7 +359,7 @@ fn parse_output_intent_dict(dict: &PdfDict) -> OutputIntent {
 /// Parses the `/OutputIntents` array from the catalog dictionary.  Each entry
 /// is a dictionary with keys `/S`, `/OutputConditionIdentifier`,
 /// `/OutputCondition`, `/RegistryName`, `/Info`, and `/DestOutputProfile`.
-pub fn read_output_intents(doc: &mut PdfDocument) -> Result<Vec<OutputIntent>> {
+pub fn read_output_intents(doc: &PdfDocument) -> Result<Vec<OutputIntent>> {
     let catalog_ref = match doc.catalog_ref() {
         Some(r) => r.clone(),
         None => {
@@ -370,7 +370,7 @@ pub fn read_output_intents(doc: &mut PdfDocument) -> Result<Vec<OutputIntent>> {
         }
     };
 
-    let catalog = doc.resolve(&catalog_ref)?.clone();
+    let catalog = doc.resolve(&catalog_ref)?;
     let catalog_dict = match &catalog {
         PdfObject::Dict(d) => d,
         _ => {
@@ -389,7 +389,7 @@ pub fn read_output_intents(doc: &mut PdfDocument) -> Result<Vec<OutputIntent>> {
 
     // Resolve if indirect reference
     let intents_obj = match intents_obj {
-        PdfObject::Reference(r) => doc.resolve(&r)?.clone(),
+        PdfObject::Reference(r) => doc.resolve(&r)?,
         other => other,
     };
 
@@ -401,7 +401,7 @@ pub fn read_output_intents(doc: &mut PdfDocument) -> Result<Vec<OutputIntent>> {
     let mut result = Vec::with_capacity(arr.len());
     for item in arr {
         let dict_obj = match item {
-            PdfObject::Reference(r) => doc.resolve(r)?.clone(),
+            PdfObject::Reference(r) => doc.resolve(r)?,
             PdfObject::Dict(_) => item.clone(),
             _ => continue,
         };

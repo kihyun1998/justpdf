@@ -6,12 +6,12 @@ use crate::annot::types::AnnotColor;
 use super::types::*;
 
 /// Read all outline (bookmark) items from the document.
-pub fn read_outlines(doc: &mut PdfDocument) -> Result<Vec<OutlineItem>> {
+pub fn read_outlines(doc: &PdfDocument) -> Result<Vec<OutlineItem>> {
     let catalog_ref = match doc.catalog_ref() {
         Some(r) => r.clone(),
         None => return Ok(Vec::new()),
     };
-    let catalog = doc.resolve(&catalog_ref)?.clone();
+    let catalog = doc.resolve(&catalog_ref)?;
     let catalog_dict = match catalog.as_dict() {
         Some(d) => d,
         None => return Ok(Vec::new()),
@@ -22,7 +22,7 @@ pub fn read_outlines(doc: &mut PdfDocument) -> Result<Vec<OutlineItem>> {
         None => return Ok(Vec::new()),
     };
 
-    let outlines_obj = doc.resolve(&outlines_ref)?.clone();
+    let outlines_obj = doc.resolve(&outlines_ref)?;
     let outlines_dict = match outlines_obj.as_dict() {
         Some(d) => d.clone(),
         None => return Ok(Vec::new()),
@@ -39,7 +39,7 @@ pub fn read_outlines(doc: &mut PdfDocument) -> Result<Vec<OutlineItem>> {
 
 /// Read a chain of sibling outline items starting from `first_ref`.
 fn read_outline_siblings(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     first_ref: &IndirectRef,
 ) -> Result<Vec<OutlineItem>> {
     let mut items = Vec::new();
@@ -51,7 +51,7 @@ fn read_outline_siblings(
             break; // prevent infinite loop
         }
 
-        let obj = doc.resolve(iref)?.clone();
+        let obj = doc.resolve(iref)?;
         let dict = match obj.as_dict() {
             Some(d) => d.clone(),
             None => break,
@@ -108,13 +108,13 @@ fn read_outline_siblings(
 /// Looks in both Catalog -> /Names -> /Dests (name tree)
 /// and legacy Catalog -> /Dests (dictionary).
 pub fn read_named_destinations(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
 ) -> Result<Vec<(String, Destination)>> {
     let catalog_ref = match doc.catalog_ref() {
         Some(r) => r.clone(),
         None => return Ok(Vec::new()),
     };
-    let catalog = doc.resolve(&catalog_ref)?.clone();
+    let catalog = doc.resolve(&catalog_ref)?;
     let catalog_dict = match catalog.as_dict() {
         Some(d) => d.clone(),
         None => return Ok(Vec::new()),
@@ -125,11 +125,11 @@ pub fn read_named_destinations(
     // Try name tree: /Names -> /Dests
     if let Some(names_ref) = catalog_dict.get_ref(b"Names") {
         let names_ref = names_ref.clone();
-        let names_obj = doc.resolve(&names_ref)?.clone();
+        let names_obj = doc.resolve(&names_ref)?;
         if let Some(names_dict) = names_obj.as_dict() {
             if let Some(dests_ref) = names_dict.get_ref(b"Dests") {
                 let dests_ref = dests_ref.clone();
-                let dests_obj = doc.resolve(&dests_ref)?.clone();
+                let dests_obj = doc.resolve(&dests_ref)?;
                 if let Some(dests_dict) = dests_obj.as_dict() {
                     parse_name_tree(doc, &dests_dict.clone(), &mut result)?;
                 }
@@ -140,7 +140,7 @@ pub fn read_named_destinations(
     } else if let Some(PdfObject::Dict(names_dict)) = catalog_dict.get(b"Names") {
         if let Some(dests_ref) = names_dict.get_ref(b"Dests") {
             let dests_ref = dests_ref.clone();
-            let dests_obj = doc.resolve(&dests_ref)?.clone();
+            let dests_obj = doc.resolve(&dests_ref)?;
             if let Some(dests_dict) = dests_obj.as_dict() {
                 parse_name_tree(doc, &dests_dict.clone(), &mut result)?;
             }
@@ -152,12 +152,12 @@ pub fn read_named_destinations(
     // Try legacy: /Dests dict
     if let Some(dests_ref) = catalog_dict.get_ref(b"Dests") {
         let dests_ref = dests_ref.clone();
-        let dests_obj = doc.resolve(&dests_ref)?.clone();
+        let dests_obj = doc.resolve(&dests_ref)?;
         if let Some(dests_dict) = dests_obj.as_dict() {
             for (key, val) in dests_dict.iter() {
                 let name = String::from_utf8_lossy(key).into_owned();
                 let dest_obj = match val {
-                    PdfObject::Reference(r) => doc.resolve(r)?.clone(),
+                    PdfObject::Reference(r) => doc.resolve(r)?,
                     other => other.clone(),
                 };
                 // Value can be array or dict with /D
@@ -185,7 +185,7 @@ pub fn read_named_destinations(
 
 /// Parse a PDF name tree node recursively, collecting (name, destination) pairs.
 fn parse_name_tree(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     node: &PdfDict,
     result: &mut Vec<(String, Destination)>,
 ) -> Result<()> {
@@ -203,7 +203,7 @@ fn parse_name_tree(
             };
             let val = &names_arr[i + 1];
             let val_resolved = match val {
-                PdfObject::Reference(r) => doc.resolve(r)?.clone(),
+                PdfObject::Reference(r) => doc.resolve(r)?,
                 other => other.clone(),
             };
             let dest = match &val_resolved {
@@ -224,7 +224,7 @@ fn parse_name_tree(
         for kid in &kids {
             if let PdfObject::Reference(r) = kid {
                 let r = r.clone();
-                let kid_obj = doc.resolve(&r)?.clone();
+                let kid_obj = doc.resolve(&r)?;
                 if let Some(kid_dict) = kid_obj.as_dict() {
                     parse_name_tree(doc, &kid_dict.clone(), result)?;
                 }

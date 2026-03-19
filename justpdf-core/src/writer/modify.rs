@@ -23,7 +23,7 @@ pub struct DocumentModifier {
 impl DocumentModifier {
     /// Create a modifier from an existing PdfDocument.
     /// Copies all objects from the document into the writer.
-    pub fn from_document(doc: &mut PdfDocument) -> Result<Self> {
+    pub fn from_document(doc: &PdfDocument) -> Result<Self> {
         let mut writer = PdfWriter::new();
         writer.version = doc.version;
 
@@ -47,7 +47,6 @@ impl DocumentModifier {
         let refs: Vec<IndirectRef> = doc.object_refs().collect();
         for iref in &refs {
             if let Ok(obj) = doc.resolve(iref) {
-                let obj = obj.clone();
                 writer.objects.push((iref.obj_num, obj));
                 max_obj = max_obj.max(iref.obj_num);
             }
@@ -370,7 +369,7 @@ pub fn incremental_save(original_data: &[u8], modifier: DocumentModifier) -> Res
 ///
 /// Returns the merged PDF as bytes. Pages are concatenated in order:
 /// all pages from doc1, then all from doc2, etc.
-pub fn merge_documents(docs: &mut [&mut PdfDocument]) -> Result<Vec<u8>> {
+pub fn merge_documents(docs: &[&PdfDocument]) -> Result<Vec<u8>> {
     let mut writer = PdfWriter::new();
     let pages_obj_num = writer.alloc_object_num();
     let pages_ref = IndirectRef {
@@ -380,7 +379,7 @@ pub fn merge_documents(docs: &mut [&mut PdfDocument]) -> Result<Vec<u8>> {
 
     let mut all_page_refs: Vec<IndirectRef> = Vec::new();
 
-    for doc in docs.iter_mut() {
+    for doc in docs.iter() {
         let pages = collect_pages(*doc)?;
         for page_info in &pages {
             let page_ref = graft_page(&mut writer, *doc, page_info, &pages_ref)?;
@@ -414,14 +413,14 @@ pub fn merge_documents(docs: &mut [&mut PdfDocument]) -> Result<Vec<u8>> {
 /// Copies the page dict and all referenced objects with remapped object numbers.
 fn graft_page(
     writer: &mut PdfWriter,
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     page_info: &PageInfo,
     new_pages_ref: &IndirectRef,
 ) -> Result<IndirectRef> {
     let mut remap: HashMap<u32, u32> = HashMap::new();
 
     // Resolve the page object
-    let page_obj = doc.resolve(&page_info.page_ref)?.clone();
+    let page_obj = doc.resolve(&page_info.page_ref)?;
 
     // Deep-copy the page and all referenced objects
     let new_page_obj = deep_copy_object(writer, doc, &page_obj, &mut remap)?;
@@ -441,7 +440,7 @@ fn graft_page(
 /// Deep-copy a PdfObject, resolving all references and remapping object numbers.
 fn deep_copy_object(
     writer: &mut PdfWriter,
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     obj: &PdfObject,
     remap: &mut HashMap<u32, u32>,
 ) -> Result<PdfObject> {
@@ -460,7 +459,7 @@ fn deep_copy_object(
             remap.insert(r.obj_num, new_num);
 
             // Resolve and deep-copy
-            let resolved = doc.resolve(r)?.clone();
+            let resolved = doc.resolve(r)?;
             let copied = deep_copy_object(writer, doc, &resolved, remap)?;
             writer.set_object(new_num, copied);
 
@@ -529,11 +528,11 @@ mod tests {
         let bytes = create_test_pdf("Hello", 2);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
 
-        let modifier = DocumentModifier::from_document(&mut doc).unwrap();
+        let modifier = DocumentModifier::from_document(&doc).unwrap();
         let new_bytes = modifier.build().unwrap();
 
         let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
-        let pages = collect_pages(&mut reparsed).unwrap();
+        let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 2);
     }
 
@@ -542,12 +541,12 @@ mod tests {
         let bytes = create_test_pdf("Test", 3);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
 
-        let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.delete_page(1).unwrap(); // remove middle page
 
         let new_bytes = modifier.build().unwrap();
         let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
-        let pages = collect_pages(&mut reparsed).unwrap();
+        let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 2);
     }
 
@@ -556,12 +555,12 @@ mod tests {
         let bytes = create_test_pdf("Reorder", 3);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
 
-        let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.reorder_pages(&[2, 0, 1]).unwrap(); // reverse-ish
 
         let new_bytes = modifier.build().unwrap();
         let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
-        let pages = collect_pages(&mut reparsed).unwrap();
+        let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 3);
     }
 
@@ -570,7 +569,7 @@ mod tests {
         let bytes = create_test_pdf("Info", 1);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
 
-        let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.set_info(b"Title", "New Title");
         modifier.set_info(b"Author", "New Author");
 
@@ -588,10 +587,10 @@ mod tests {
         let mut doc1 = PdfDocument::from_bytes(bytes1).unwrap();
         let mut doc2 = PdfDocument::from_bytes(bytes2).unwrap();
 
-        let merged = merge_documents(&mut [&mut doc1, &mut doc2]).unwrap();
+        let merged = merge_documents(&[&doc1, &doc2]).unwrap();
 
         let mut reparsed = PdfDocument::from_bytes(merged).unwrap();
-        let pages = collect_pages(&mut reparsed).unwrap();
+        let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 5); // 2 + 3
     }
 
@@ -601,7 +600,7 @@ mod tests {
         let original_len = original.len();
 
         let mut doc = PdfDocument::from_bytes(original.clone()).unwrap();
-        let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.set_info(b"Title", "Updated Title");
 
         let result = incremental_save(&original, modifier).unwrap();
@@ -626,7 +625,7 @@ mod tests {
     fn test_garbage_collect() {
         let bytes = create_test_pdf("GC Test", 1);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-        let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         // Run GC first to establish baseline (some objects from parsing may be unreachable)
         modifier.garbage_collect();
@@ -657,10 +656,10 @@ mod tests {
         let mut doc1 = PdfDocument::from_bytes(bytes1).unwrap();
         let mut doc2 = PdfDocument::from_bytes(bytes2).unwrap();
 
-        let merged = merge_documents(&mut [&mut doc1, &mut doc2]).unwrap();
+        let merged = merge_documents(&[&doc1, &doc2]).unwrap();
 
         let mut reparsed = PdfDocument::from_bytes(merged).unwrap();
-        let pages = collect_pages(&mut reparsed).unwrap();
+        let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 2);
 
         // Both pages should be independently valid (each has its own Resources)

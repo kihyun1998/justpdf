@@ -106,7 +106,7 @@ impl PageLabelRange {
 /// - Intermediate nodes contain a /Kids array of indirect references to child
 ///   nodes, and optionally a /Limits array `[min max]`.
 fn parse_number_tree(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     node: &PdfObject,
     out: &mut Vec<(i64, PdfObject)>,
 ) -> Result<()> {
@@ -115,7 +115,7 @@ fn parse_number_tree(
         PdfObject::Reference(r) => {
             let resolved = doc.resolve(r)?;
             match resolved {
-                PdfObject::Dict(d) => d.clone(),
+                PdfObject::Dict(d) => d,
                 _ => return Ok(()),
             }
         }
@@ -139,7 +139,7 @@ fn parse_number_tree(
         for kid in &kids_owned {
             match kid {
                 PdfObject::Reference(r) => {
-                    let child = doc.resolve(r)?.clone();
+                    let child = doc.resolve(r)?;
                     parse_number_tree(doc, &child, out)?;
                 }
                 PdfObject::Dict(_) => {
@@ -170,14 +170,14 @@ fn build_nums_array(entries: &[(i64, PdfObject)]) -> Vec<PdfObject> {
 /// Read page label ranges from the document catalog's /PageLabels number tree.
 ///
 /// Returns an empty vec if no page labels are defined.
-pub fn read_page_labels(doc: &mut PdfDocument) -> Result<Vec<PageLabelRange>> {
+pub fn read_page_labels(doc: &PdfDocument) -> Result<Vec<PageLabelRange>> {
     // Get catalog
     let catalog_ref = match doc.catalog_ref() {
         Some(r) => r.clone(),
         None => return Ok(Vec::new()),
     };
     let catalog = match doc.resolve(&catalog_ref)? {
-        PdfObject::Dict(d) => d.clone(),
+        PdfObject::Dict(d) => d,
         _ => return Ok(Vec::new()),
     };
 
@@ -185,7 +185,7 @@ pub fn read_page_labels(doc: &mut PdfDocument) -> Result<Vec<PageLabelRange>> {
     let page_labels_obj = match catalog.get(b"PageLabels") {
         Some(PdfObject::Reference(r)) => {
             let r = r.clone();
-            doc.resolve(&r)?.clone()
+            doc.resolve(&r)?
         }
         Some(obj) => obj.clone(),
         None => return Ok(Vec::new()),
@@ -202,7 +202,7 @@ pub fn read_page_labels(doc: &mut PdfDocument) -> Result<Vec<PageLabelRange>> {
     let mut ranges = Vec::with_capacity(entries.len());
     for (page_index, value) in &entries {
         let label_dict = match value {
-            PdfObject::Dict(d) => d,
+            PdfObject::Dict(d) => d.clone(),
             PdfObject::Reference(r) => {
                 let r = r.clone();
                 match doc.resolve(&r)? {
@@ -598,7 +598,7 @@ mod tests {
 
         // Manually inject /PageLabels into the catalog.
         let catalog_ref = doc.catalog_ref().unwrap().clone();
-        let catalog = doc.resolve(&catalog_ref).unwrap().clone();
+        let catalog = doc.resolve(&catalog_ref).unwrap();
         let mut catalog_dict = catalog.as_dict().unwrap().clone();
 
         // Build the number tree inline:
@@ -648,7 +648,7 @@ mod tests {
     fn test_roundtrip_page_labels() {
         let bytes = make_test_pdf(6);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-        let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ranges = vec![
             PageLabelRange::new(0, PageLabelStyle::LowerRoman),
@@ -664,7 +664,7 @@ mod tests {
         let new_bytes = modifier.build().unwrap();
         let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
 
-        let parsed_ranges = read_page_labels(&mut reparsed).unwrap();
+        let parsed_ranges = read_page_labels(&reparsed).unwrap();
         assert_eq!(parsed_ranges.len(), 3);
 
         assert_eq!(parsed_ranges[0].start_page, 0);
@@ -692,7 +692,7 @@ mod tests {
     fn test_roundtrip_with_logical_start() {
         let bytes = make_test_pdf(4);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-        let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ranges = vec![
             PageLabelRange::new(0, PageLabelStyle::Decimal).with_logical_start(10),
@@ -703,7 +703,7 @@ mod tests {
         let new_bytes = modifier.build().unwrap();
         let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
 
-        let parsed_ranges = read_page_labels(&mut reparsed).unwrap();
+        let parsed_ranges = read_page_labels(&reparsed).unwrap();
         assert_eq!(parsed_ranges.len(), 1);
         assert_eq!(parsed_ranges[0].logical_start, 10);
 
@@ -715,7 +715,7 @@ mod tests {
     fn test_roundtrip_none_style_with_prefix() {
         let bytes = make_test_pdf(2);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-        let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ranges = vec![
             PageLabelRange::new(0, PageLabelStyle::None).with_prefix("Cover"),
@@ -727,7 +727,7 @@ mod tests {
         let new_bytes = modifier.build().unwrap();
         let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
 
-        let parsed_ranges = read_page_labels(&mut reparsed).unwrap();
+        let parsed_ranges = read_page_labels(&reparsed).unwrap();
         assert_eq!(parsed_ranges.len(), 2);
         assert_eq!(label_for_page(&parsed_ranges, 0), "Cover");
         assert_eq!(label_for_page(&parsed_ranges, 1), "1");
@@ -737,7 +737,7 @@ mod tests {
     fn test_read_page_labels_no_labels() {
         let bytes = make_test_pdf(1);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-        let ranges = read_page_labels(&mut doc).unwrap();
+        let ranges = read_page_labels(&doc).unwrap();
         assert!(ranges.is_empty());
     }
 

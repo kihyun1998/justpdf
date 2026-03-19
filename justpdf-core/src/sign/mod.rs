@@ -20,7 +20,7 @@ use crate::error::Result;
 use crate::parser::PdfDocument;
 
 /// High-level: detect and verify all signatures in a PDF.
-pub fn verify_all_signatures(doc: &mut PdfDocument) -> Result<Vec<VerificationResult>> {
+pub fn verify_all_signatures(doc: &PdfDocument) -> Result<Vec<VerificationResult>> {
     let signatures = detect_signatures(doc)?;
     let pdf_data = doc.raw_data().to_vec();
     let mut results = Vec::new();

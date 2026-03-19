@@ -303,6 +303,64 @@ impl DisplayList {
     pub fn height(&self) -> u32 {
         self.height
     }
+
+    /// Render a rectangular tile of the display list.
+    ///
+    /// The tile is specified by its top-left corner (`tile_left`, `tile_top`)
+    /// in the display list's coordinate system, and its dimensions in pixels.
+    /// The display list is replayed with a translation so that the tile region
+    /// maps to (0, 0) on the output pixmap.
+    ///
+    /// Returns `None` if the pixmap cannot be created (e.g. zero dimensions).
+    pub fn render_tile(
+        &self,
+        tile_left: f32,
+        tile_top: f32,
+        tile_width: u32,
+        tile_height: u32,
+    ) -> Option<Pixmap> {
+        let mut pixmap = Pixmap::new(tile_width, tile_height)?;
+        pixmap.fill(Color::TRANSPARENT);
+        let transform = Transform::from_translate(-tile_left, -tile_top);
+        self.replay_with_transform(&mut pixmap, transform);
+        Some(pixmap)
+    }
+
+    /// Render the display list as a grid of tiles and composite them into
+    /// a single output pixmap. This can reduce peak memory usage compared
+    /// to rendering the full page at once when combined with command culling.
+    ///
+    /// Returns `None` if the output pixmap cannot be created.
+    pub fn render_tiled(&self, tile_size: u32, background: Color) -> Option<Pixmap> {
+        let mut output = Pixmap::new(self.width, self.height)?;
+        output.fill(background);
+
+        let cols = (self.width + tile_size - 1) / tile_size;
+        let rows = (self.height + tile_size - 1) / tile_size;
+
+        for row in 0..rows {
+            for col in 0..cols {
+                let tx = (col * tile_size) as f32;
+                let ty = (row * tile_size) as f32;
+                let tw = tile_size.min(self.width - col * tile_size);
+                let th = tile_size.min(self.height - row * tile_size);
+
+                if let Some(tile) = self.render_tile(tx, ty, tw, th) {
+                    let paint = PixmapPaint::default();
+                    output.draw_pixmap(
+                        tx as i32,
+                        ty as i32,
+                        tile.as_ref(),
+                        &paint,
+                        Transform::identity(),
+                        None,
+                    );
+                }
+            }
+        }
+
+        Some(output)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -516,6 +574,60 @@ mod tests {
         assert_eq!(outside.red(), 0);
         assert_eq!(outside.green(), 0);
         assert_eq!(outside.blue(), 0);
+    }
+
+    #[test]
+    fn test_render_tile_basic() {
+        let mut dl = DisplayList::new(100, 100);
+        dl.push(DisplayCommand::FillPath {
+            path: rect_path(0.0, 0.0, 100.0, 100.0),
+            fill_rule: FillRule::Winding,
+            transform: Transform::identity(),
+            color: Color::from_rgba8(255, 0, 0, 255),
+            alpha: 1.0,
+            blend_mode: BlendMode::SourceOver,
+        });
+
+        // Render a tile covering the top-left 50x50 region.
+        let tile = dl.render_tile(0.0, 0.0, 50, 50).unwrap();
+        assert_eq!(tile.width(), 50);
+        assert_eq!(tile.height(), 50);
+        // Should be red everywhere in the tile.
+        let pixel = tile.pixel(25, 25).unwrap();
+        assert_eq!(pixel.red(), 255);
+        assert_eq!(pixel.green(), 0);
+    }
+
+    #[test]
+    fn test_render_tiled_matches_full() {
+        let mut dl = DisplayList::new(100, 100);
+        dl.push(DisplayCommand::FillPath {
+            path: rect_path(10.0, 10.0, 80.0, 80.0),
+            fill_rule: FillRule::Winding,
+            transform: Transform::identity(),
+            color: Color::from_rgba8(0, 128, 255, 255),
+            alpha: 1.0,
+            blend_mode: BlendMode::SourceOver,
+        });
+
+        // Full render
+        let mut full = Pixmap::new(100, 100).unwrap();
+        full.fill(Color::WHITE);
+        dl.replay(&mut full);
+
+        // Tiled render
+        let tiled = dl.render_tiled(32, Color::WHITE).unwrap();
+
+        // Compare a few sample pixels.
+        for &(x, y) in &[(50, 50), (5, 5), (95, 95), (10, 10)] {
+            let fp = full.pixel(x, y).unwrap();
+            let tp = tiled.pixel(x, y).unwrap();
+            assert_eq!(
+                (fp.red(), fp.green(), fp.blue()),
+                (tp.red(), tp.green(), tp.blue()),
+                "mismatch at ({x}, {y})"
+            );
+        }
     }
 
     #[test]

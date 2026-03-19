@@ -13,7 +13,7 @@ use super::parse::parse_acroform;
 /// remove widget annotations and AcroForm.
 pub fn flatten_form(
     modifier: &mut DocumentModifier,
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
 ) -> Result<()> {
     let acroform = match parse_acroform(doc)? {
         Some(f) => f,
@@ -28,7 +28,7 @@ pub fn flatten_form(
     // Walk all pages and check for Widget annotations
     let pages = crate::page::collect_pages(doc)?;
     for page_info in &pages {
-        let page_obj = doc.resolve(&page_info.page_ref)?.clone();
+        let page_obj = doc.resolve(&page_info.page_ref)?;
         let page_dict = match page_obj.as_dict() {
             Some(d) => d.clone(),
             None => continue,
@@ -37,7 +37,7 @@ pub fn flatten_form(
         let annots = match page_dict.get(b"Annots") {
             Some(PdfObject::Array(arr)) => arr.clone(),
             Some(PdfObject::Reference(r)) => {
-                let resolved = doc.resolve(r)?.clone();
+                let resolved = doc.resolve(r)?;
                 match resolved.as_array() {
                     Some(arr) => arr.to_vec(),
                     None => continue,
@@ -52,7 +52,7 @@ pub fn flatten_form(
         for item in &annots {
             let (annot_dict, _annot_ref) = match item {
                 PdfObject::Reference(r) => {
-                    let resolved = doc.resolve(r)?.clone();
+                    let resolved = doc.resolve(r)?;
                     match resolved {
                         PdfObject::Dict(d) => (d, Some(r.clone())),
                         _ => {

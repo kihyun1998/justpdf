@@ -6,8 +6,8 @@ use crate::parser::PdfDocument;
 use super::types::*;
 
 /// Get all annotations from a specific page.
-pub fn get_annotations(doc: &mut PdfDocument, page: &PageInfo) -> Result<Vec<Annotation>> {
-    let page_obj = doc.resolve(&page.page_ref)?.clone();
+pub fn get_annotations(doc: &PdfDocument, page: &PageInfo) -> Result<Vec<Annotation>> {
+    let page_obj = doc.resolve(&page.page_ref)?;
     let page_dict = match page_obj.as_dict() {
         Some(d) => d,
         None => return Ok(Vec::new()),
@@ -16,7 +16,7 @@ pub fn get_annotations(doc: &mut PdfDocument, page: &PageInfo) -> Result<Vec<Ann
     let annots_arr = match page_dict.get(b"Annots") {
         Some(PdfObject::Array(arr)) => arr.clone(),
         Some(PdfObject::Reference(r)) => {
-            let resolved = doc.resolve(r)?.clone();
+            let resolved = doc.resolve(r)?;
             match resolved.as_array() {
                 Some(arr) => arr.to_vec(),
                 None => return Ok(Vec::new()),
@@ -29,7 +29,7 @@ pub fn get_annotations(doc: &mut PdfDocument, page: &PageInfo) -> Result<Vec<Ann
     for item in &annots_arr {
         let (annot_dict, obj_ref) = match item {
             PdfObject::Reference(r) => {
-                let resolved = doc.resolve(r)?.clone();
+                let resolved = doc.resolve(r)?;
                 match resolved {
                     PdfObject::Dict(d) => (d, Some(r.clone())),
                     _ => continue,
@@ -46,7 +46,7 @@ pub fn get_annotations(doc: &mut PdfDocument, page: &PageInfo) -> Result<Vec<Ann
 }
 
 /// Get all annotations from all pages.
-pub fn get_all_annotations(doc: &mut PdfDocument) -> Result<Vec<(usize, Vec<Annotation>)>> {
+pub fn get_all_annotations(doc: &PdfDocument) -> Result<Vec<(usize, Vec<Annotation>)>> {
     let pages = collect_pages(doc)?;
     let mut result = Vec::new();
     for page in &pages {

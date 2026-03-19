@@ -11,12 +11,12 @@ use super::types::SignatureInfo;
 ///
 /// Walks the AcroForm field tree looking for /FT /Sig fields with a /V value,
 /// and extracts the signature information.
-pub fn detect_signatures(doc: &mut PdfDocument) -> Result<Vec<SignatureInfo>> {
+pub fn detect_signatures(doc: &PdfDocument) -> Result<Vec<SignatureInfo>> {
     let catalog_ref = doc
         .catalog_ref()
         .ok_or(JustPdfError::TrailerNotFound)?
         .clone();
-    let catalog = doc.resolve(&catalog_ref)?.clone();
+    let catalog = doc.resolve(&catalog_ref)?;
     let catalog_dict = match catalog.as_dict() {
         Some(d) => d.clone(),
         None => return Ok(Vec::new()),
@@ -25,7 +25,7 @@ pub fn detect_signatures(doc: &mut PdfDocument) -> Result<Vec<SignatureInfo>> {
     let acroform_dict = match catalog_dict.get(b"AcroForm") {
         Some(PdfObject::Dict(d)) => d.clone(),
         Some(PdfObject::Reference(r)) => {
-            let resolved = doc.resolve(r)?.clone();
+            let resolved = doc.resolve(r)?;
             match resolved.as_dict() {
                 Some(d) => d.clone(),
                 None => return Ok(Vec::new()),
@@ -54,12 +54,12 @@ pub fn detect_signatures(doc: &mut PdfDocument) -> Result<Vec<SignatureInfo>> {
 
 /// Recursively walk the field tree looking for signature fields.
 fn collect_sig_fields(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     field_ref: &IndirectRef,
     parent_name: &str,
     sigs: &mut Vec<SignatureInfo>,
 ) -> Result<()> {
-    let obj = doc.resolve(field_ref)?.clone();
+    let obj = doc.resolve(field_ref)?;
     let dict = match obj.as_dict() {
         Some(d) => d.clone(),
         None => return Ok(()),
@@ -101,7 +101,7 @@ fn collect_sig_fields(
     let sig_dict = match dict.get(b"V") {
         Some(PdfObject::Dict(d)) => d.clone(),
         Some(PdfObject::Reference(r)) => {
-            let resolved = doc.resolve(r)?.clone();
+            let resolved = doc.resolve(r)?;
             match resolved.as_dict() {
                 Some(d) => d.clone(),
                 None => return Ok(()),
@@ -269,7 +269,7 @@ mod tests {
     fn test_detect_unsigned_sig_field() {
         let bytes = create_pdf_with_sig_field(false);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-        let sigs = detect_signatures(&mut doc).unwrap();
+        let sigs = detect_signatures(&doc).unwrap();
         // Unsigned field has no /V, so it should not be detected as a signature
         assert_eq!(sigs.len(), 0);
     }
@@ -278,7 +278,7 @@ mod tests {
     fn test_detect_signed_sig_field() {
         let bytes = create_pdf_with_sig_field(true);
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-        let sigs = detect_signatures(&mut doc).unwrap();
+        let sigs = detect_signatures(&doc).unwrap();
         assert_eq!(sigs.len(), 1);
         assert_eq!(sigs[0].field_name, "Signature1");
         assert_eq!(sigs[0].signer_name, Some("Test Signer".to_string()));
@@ -299,7 +299,7 @@ mod tests {
             serialize_pdf(&w.objects, (1, 7), &catalog_ref, None).unwrap()
         };
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-        let sigs = detect_signatures(&mut doc).unwrap();
+        let sigs = detect_signatures(&doc).unwrap();
         assert!(sigs.is_empty());
     }
 }

@@ -30,7 +30,7 @@ struct ResolvedFont {
 
 /// The rendering interpreter: walks content stream ops and renders onto a device.
 pub struct RenderInterpreter<'a> {
-    doc: &'a mut PdfDocument,
+    doc: &'a PdfDocument,
     device: &'a mut PixmapDevice,
     state: GraphicsState,
     state_stack: Vec<GraphicsState>,
@@ -47,7 +47,7 @@ pub struct RenderInterpreter<'a> {
 
 impl<'a> RenderInterpreter<'a> {
     pub fn new(
-        doc: &'a mut PdfDocument,
+        doc: &'a PdfDocument,
         device: &'a mut PixmapDevice,
         page_transform: Matrix,
     ) -> Self {
@@ -85,7 +85,7 @@ impl<'a> RenderInterpreter<'a> {
     /// Render annotation appearance streams on top of page content.
     fn render_annotations(&mut self, page: &PageInfo) -> Result<()> {
         // Get page dict → /Annots array
-        let page_obj = self.doc.resolve(&page.page_ref)?.clone();
+        let page_obj = self.doc.resolve(&page.page_ref)?;
         let page_dict = match page_obj.as_dict() {
             Some(d) => d.clone(),
             None => return Ok(()),
@@ -95,7 +95,7 @@ impl<'a> RenderInterpreter<'a> {
             Some(PdfObject::Array(arr)) => arr.clone(),
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                match self.doc.resolve(&r)?.clone() {
+                match self.doc.resolve(&r)? {
                     PdfObject::Array(arr) => arr,
                     _ => return Ok(()),
                 }
@@ -107,7 +107,7 @@ impl<'a> RenderInterpreter<'a> {
             let annot_dict = match item {
                 PdfObject::Reference(r) => {
                     let r = r.clone();
-                    match self.doc.resolve(&r)?.clone() {
+                    match self.doc.resolve(&r)? {
                         PdfObject::Dict(d) => d,
                         _ => continue,
                     }
@@ -131,7 +131,7 @@ impl<'a> RenderInterpreter<'a> {
                     let n_obj = match ap.get(b"N") {
                         Some(PdfObject::Reference(r)) => {
                             let r = r.clone();
-                            self.doc.resolve(&r)?.clone()
+                            self.doc.resolve(&r)?
                         }
                         Some(other) => other.clone(),
                         None => continue,
@@ -179,7 +179,7 @@ impl<'a> RenderInterpreter<'a> {
             Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             _ => return Ok(()),
         };
@@ -189,7 +189,7 @@ impl<'a> RenderInterpreter<'a> {
                 let font_obj = match val {
                     PdfObject::Reference(r) => {
                         let r = r.clone();
-                        self.doc.resolve(&r)?.clone()
+                        self.doc.resolve(&r)?
                     }
                     other => other.clone(),
                 };
@@ -201,7 +201,7 @@ impl<'a> RenderInterpreter<'a> {
                     let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {
                         let tu_ref = tu_ref.clone();
                         if let Ok(tu_obj) = self.doc.resolve(&tu_ref) {
-                            if let PdfObject::Stream { dict, data } = tu_obj.clone() {
+                            if let PdfObject::Stream { dict, data } = tu_obj {
                                 let decoded = self.doc.decode_stream(&dict, &data).ok();
                                 decoded.map(|d| ToUnicodeCMap::parse(&d))
                             } else {
@@ -225,7 +225,7 @@ impl<'a> RenderInterpreter<'a> {
                                 let desc_obj = match desc_ref {
                                     PdfObject::Reference(r) => {
                                         let r = r.clone();
-                                        self.doc.resolve(&r)?.clone()
+                                        self.doc.resolve(&r)?
                                     }
                                     other => other.clone(),
                                 };
@@ -237,7 +237,7 @@ impl<'a> RenderInterpreter<'a> {
                                         let fd_resolved = match fd_obj {
                                             PdfObject::Reference(r) => {
                                                 let r = r.clone();
-                                                self.doc.resolve(&r).ok().cloned()
+                                                self.doc.resolve(&r).ok()
                                             }
                                             other => Some(other.clone()),
                                         };
@@ -296,7 +296,7 @@ impl<'a> RenderInterpreter<'a> {
                 let stream_obj = match obj {
                     PdfObject::Reference(r) => {
                         let r = r.clone();
-                        self.doc.resolve(&r).ok().cloned()
+                        self.doc.resolve(&r).ok()
                     }
                     other => Some(other.clone()),
                 };
@@ -316,7 +316,7 @@ impl<'a> RenderInterpreter<'a> {
         let resolved = match fd_obj {
             PdfObject::Reference(r) => {
                 let r = r.clone();
-                self.doc.resolve(&r).ok().cloned()
+                self.doc.resolve(&r).ok()
             }
             other => Some(other.clone()),
         };
@@ -339,7 +339,7 @@ impl<'a> RenderInterpreter<'a> {
             }
             PdfObject::Reference(r) => {
                 let r = r.clone();
-                let resolved = self.doc.resolve(&r).ok()?.clone();
+                let resolved = self.doc.resolve(&r).ok()?;
                 if let PdfObject::Stream { dict, data } = resolved {
                     let decoded = self.doc.decode_stream(&dict, &data).ok()?;
                     Some(parse_cid_gid_stream(&decoded))
@@ -359,7 +359,7 @@ impl<'a> RenderInterpreter<'a> {
         match obj {
             PdfObject::Reference(r) => {
                 let r = r.clone();
-                Ok(self.doc.resolve(&r)?.clone())
+                Ok(self.doc.resolve(&r)?)
             }
             other => Ok(other.clone()),
         }
@@ -374,7 +374,7 @@ impl<'a> RenderInterpreter<'a> {
         match &contents {
             PdfObject::Reference(r) => {
                 let r = r.clone();
-                let obj = self.doc.resolve(&r)?.clone();
+                let obj = self.doc.resolve(&r)?;
                 match obj {
                     PdfObject::Stream { dict, data } => {
                         Ok(self.doc.decode_stream(&dict, &data).unwrap_or_default())
@@ -400,7 +400,7 @@ impl<'a> RenderInterpreter<'a> {
             let obj = match item {
                 PdfObject::Reference(r) => {
                     let r = r.clone();
-                    self.doc.resolve(&r)?.clone()
+                    self.doc.resolve(&r)?
                 }
                 other => other.clone(),
             };
@@ -1220,7 +1220,7 @@ impl<'a> RenderInterpreter<'a> {
             Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             _ => return Ok(None),
         };
@@ -1235,7 +1235,7 @@ impl<'a> RenderInterpreter<'a> {
             _ => return Ok(None),
         };
 
-        let xobj = self.doc.resolve(&xobj_ref)?.clone();
+        let xobj = self.doc.resolve(&xobj_ref)?;
 
         match xobj {
             PdfObject::Stream { dict, data } => {
@@ -1297,7 +1297,7 @@ impl<'a> RenderInterpreter<'a> {
                 if let PdfObject::Stream {
                     dict: smask_dict,
                     data: smask_data,
-                } = smask_obj.clone()
+                } = smask_obj
                 {
                     self.apply_image_smask(
                         &mut rgba_data,
@@ -1317,7 +1317,7 @@ impl<'a> RenderInterpreter<'a> {
                 if let PdfObject::Stream {
                     dict: mask_dict,
                     data: mask_data,
-                } = mask_obj.clone()
+                } = mask_obj
                 {
                     self.apply_image_explicit_mask(
                         &mut rgba_data,
@@ -1594,7 +1594,7 @@ impl<'a> RenderInterpreter<'a> {
             Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             _ => return Ok(()),
         };
@@ -1607,7 +1607,7 @@ impl<'a> RenderInterpreter<'a> {
         let sh_obj = match shading_container.get(name) {
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             Some(other) => other.clone(),
             None => return Ok(()),
@@ -1627,7 +1627,7 @@ impl<'a> RenderInterpreter<'a> {
         let mut resolved_dict = sh_dict;
         if let Some(PdfObject::Reference(func_ref)) = resolved_dict.get(b"Function").cloned() {
             if let Ok(func_obj) = self.doc.resolve(&func_ref) {
-                resolved_dict.insert(b"Function".to_vec(), func_obj.clone());
+                resolved_dict.insert(b"Function".to_vec(), func_obj);
             }
         }
 
@@ -1829,7 +1829,7 @@ impl<'a> RenderInterpreter<'a> {
             Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             _ => return Ok(()),
         };
@@ -1842,7 +1842,7 @@ impl<'a> RenderInterpreter<'a> {
         let gs_obj = match extgstate_dict.get(name) {
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             Some(other) => other.clone(),
             None => return Ok(()),
@@ -1911,7 +1911,7 @@ impl<'a> RenderInterpreter<'a> {
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
                 match self.doc.resolve(&r) {
-                    Ok(obj) => obj.clone(),
+                    Ok(obj) => obj,
                     Err(_) => return Ok(()),
                 }
             }
@@ -2038,7 +2038,7 @@ impl<'a> RenderInterpreter<'a> {
             Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                self.doc.resolve(&r)?.clone()
+                self.doc.resolve(&r)?
             }
             _ => return Ok(None),
         };
@@ -2051,7 +2051,7 @@ impl<'a> RenderInterpreter<'a> {
         match pattern_dict.get(name) {
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                Ok(Some(self.doc.resolve(&r)?.clone()))
+                Ok(Some(self.doc.resolve(&r)?))
             }
             Some(other) => Ok(Some(other.clone())),
             None => Ok(None),
@@ -2258,7 +2258,7 @@ impl<'a> RenderInterpreter<'a> {
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
                 match self.doc.resolve(&r) {
-                    Ok(obj) => obj.clone(),
+                    Ok(obj) => obj,
                     Err(_) => return Ok(None),
                 }
             }
@@ -2280,7 +2280,7 @@ impl<'a> RenderInterpreter<'a> {
         let mut resolved_shading = shading_dict;
         if let Some(PdfObject::Reference(func_ref)) = resolved_shading.get(b"Function").cloned() {
             if let Ok(func_obj) = self.doc.resolve(&func_ref) {
-                resolved_shading.insert(b"Function".to_vec(), func_obj.clone());
+                resolved_shading.insert(b"Function".to_vec(), func_obj);
             }
         }
 

@@ -66,13 +66,13 @@ pub struct PageInfo {
 }
 
 /// Walk the page tree and collect all pages in order.
-pub fn collect_pages(doc: &mut PdfDocument) -> Result<Vec<PageInfo>> {
+pub fn collect_pages(doc: &PdfDocument) -> Result<Vec<PageInfo>> {
     let catalog_ref = doc
         .catalog_ref()
         .ok_or(JustPdfError::TrailerNotFound)?
         .clone();
 
-    let catalog = doc.resolve(&catalog_ref)?.clone();
+    let catalog = doc.resolve(&catalog_ref)?;
     let catalog_dict = catalog.as_dict().ok_or(JustPdfError::InvalidObject {
         offset: 0,
         detail: "catalog is not a dict".into(),
@@ -93,13 +93,13 @@ pub fn collect_pages(doc: &mut PdfDocument) -> Result<Vec<PageInfo>> {
 }
 
 /// Get the total page count from the Pages dict /Count.
-pub fn page_count(doc: &mut PdfDocument) -> Result<usize> {
+pub fn page_count(doc: &PdfDocument) -> Result<usize> {
     let catalog_ref = doc
         .catalog_ref()
         .ok_or(JustPdfError::TrailerNotFound)?
         .clone();
 
-    let catalog = doc.resolve(&catalog_ref)?.clone();
+    let catalog = doc.resolve(&catalog_ref)?;
     let catalog_dict = catalog.as_dict().ok_or(JustPdfError::InvalidObject {
         offset: 0,
         detail: "catalog is not a dict".into(),
@@ -113,7 +113,7 @@ pub fn page_count(doc: &mut PdfDocument) -> Result<usize> {
         })?
         .clone();
 
-    let pages_obj = doc.resolve(&pages_ref)?.clone();
+    let pages_obj = doc.resolve(&pages_ref)?;
     let pages_dict = pages_obj.as_dict().ok_or(JustPdfError::InvalidObject {
         offset: 0,
         detail: "Pages is not a dict".into(),
@@ -128,13 +128,13 @@ pub fn page_count(doc: &mut PdfDocument) -> Result<usize> {
 /// `PageInfo` for the requested page as soon as it is found.  For documents
 /// with many pages this avoids allocating and resolving every page object when
 /// only a single page is needed.
-pub fn get_page(doc: &mut PdfDocument, index: usize) -> Result<PageInfo> {
+pub fn get_page(doc: &PdfDocument, index: usize) -> Result<PageInfo> {
     let catalog_ref = doc
         .catalog_ref()
         .ok_or(JustPdfError::TrailerNotFound)?
         .clone();
 
-    let catalog = doc.resolve(&catalog_ref)?.clone();
+    let catalog = doc.resolve(&catalog_ref)?;
     let catalog_dict = catalog.as_dict().ok_or(JustPdfError::InvalidObject {
         offset: 0,
         detail: "catalog is not a dict".into(),
@@ -149,7 +149,7 @@ pub fn get_page(doc: &mut PdfDocument, index: usize) -> Result<PageInfo> {
         .clone();
 
     // Optional: fast-path bounds check via /Count.
-    let pages_obj = doc.resolve(&pages_ref)?.clone();
+    let pages_obj = doc.resolve(&pages_ref)?;
     let pages_dict = pages_obj.as_dict().ok_or(JustPdfError::InvalidObject {
         offset: 0,
         detail: "Pages is not a dict".into(),
@@ -180,13 +180,13 @@ pub fn get_page(doc: &mut PdfDocument, index: usize) -> Result<PageInfo> {
 /// Returns `Ok(Some(page))` as soon as the target page is found, or
 /// `Ok(None)` after exhausting the subtree without finding it.
 fn walk_page_tree_find(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     node_ref: &IndirectRef,
     inherited: &InheritedAttrs,
     target: usize,
     counter: &mut usize,
 ) -> Result<Option<PageInfo>> {
-    let node_obj = doc.resolve(node_ref)?.clone();
+    let node_obj = doc.resolve(node_ref)?;
     let dict = node_obj.as_dict().ok_or(JustPdfError::InvalidObject {
         offset: 0,
         detail: "page tree node is not a dict".into(),
@@ -299,12 +299,12 @@ impl InheritedAttrs {
 
 /// Recursively walk the page tree.
 fn walk_page_tree(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     node_ref: &IndirectRef,
     inherited: &InheritedAttrs,
     pages: &mut Vec<PageInfo>,
 ) -> Result<()> {
-    let node_obj = doc.resolve(node_ref)?.clone();
+    let node_obj = doc.resolve(node_ref)?;
     let dict = node_obj.as_dict().ok_or(JustPdfError::InvalidObject {
         offset: 0,
         detail: "page tree node is not a dict".into(),

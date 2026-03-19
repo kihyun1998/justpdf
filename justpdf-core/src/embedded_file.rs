@@ -68,7 +68,7 @@ fn obj_to_string(obj: &PdfObject) -> Option<String> {
 
 /// Parse a single FileSpec dictionary into a `FileSpec`.
 fn parse_file_spec_dict(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     dict: &PdfDict,
 ) -> Result<FileSpec> {
     // Filename: prefer /UF (Unicode), fall back to /F
@@ -95,7 +95,7 @@ fn parse_file_spec_dict(
 
             // Resolve the stream to extract params
             if let Ok(stream_obj) = doc.resolve(&stream_ref) {
-                if let PdfObject::Stream { dict: s_dict, .. } = stream_obj.clone() {
+                if let PdfObject::Stream { dict: s_dict, .. } = stream_obj {
                     // MIME type from /Subtype
                     if let Some(name) = s_dict.get_name(b"Subtype") {
                         let raw = String::from_utf8_lossy(name).into_owned();
@@ -131,7 +131,7 @@ fn parse_file_spec_dict(
 
 /// Resolve a dict entry that might be an indirect reference to a dict.
 fn resolve_dict<'a>(
-    doc: &'a mut PdfDocument,
+    doc: &'a PdfDocument,
     parent: &PdfDict,
     key: &[u8],
 ) -> Result<Option<PdfDict>> {
@@ -141,7 +141,7 @@ fn resolve_dict<'a>(
             let r = r.clone();
             let obj = doc.resolve(&r)?;
             match obj {
-                PdfObject::Dict(d) => Ok(Some(d.clone())),
+                PdfObject::Dict(d) => Ok(Some(d)),
                 _ => Ok(None),
             }
         }
@@ -157,14 +157,14 @@ fn resolve_dict<'a>(
 ///
 /// Parses the Catalog -> /Names -> /EmbeddedFiles name tree and returns
 /// a `Vec<FileSpec>` for each attachment found.
-pub fn read_embedded_files(doc: &mut PdfDocument) -> Result<Vec<FileSpec>> {
+pub fn read_embedded_files(doc: &PdfDocument) -> Result<Vec<FileSpec>> {
     // Get catalog
     let catalog_ref = match doc.catalog_ref() {
         Some(r) => r.clone(),
         None => return Ok(Vec::new()),
     };
     let catalog = match doc.resolve(&catalog_ref)? {
-        PdfObject::Dict(d) => d.clone(),
+        PdfObject::Dict(d) => d,
         _ => return Ok(Vec::new()),
     };
 
@@ -189,7 +189,7 @@ pub fn read_embedded_files(doc: &mut PdfDocument) -> Result<Vec<FileSpec>> {
 
 /// Recursively collect FileSpec values from a name tree node.
 fn collect_name_tree_values(
-    doc: &mut PdfDocument,
+    doc: &PdfDocument,
     node: &PdfDict,
     out: &mut Vec<FileSpec>,
 ) -> Result<()> {
@@ -205,7 +205,7 @@ fn collect_name_tree_values(
                 PdfObject::Reference(r) => {
                     let r = r.clone();
                     match doc.resolve(&r)? {
-                        PdfObject::Dict(d) => Some(d.clone()),
+                        PdfObject::Dict(d) => Some(d),
                         _ => None,
                     }
                 }
@@ -225,7 +225,7 @@ fn collect_name_tree_values(
             if let PdfObject::Reference(r) = kid {
                 let r = r.clone();
                 let child = doc.resolve(&r)?;
-                if let PdfObject::Dict(d) = child.clone() {
+                if let PdfObject::Dict(d) = child {
                     collect_name_tree_values(doc, &d, out)?;
                 }
             }
@@ -243,7 +243,7 @@ fn collect_name_tree_values(
 ///
 /// Resolves the EF stream reference, decodes the stream through its filter
 /// chain, and optionally verifies the MD5 checksum when present.
-pub fn extract_file(doc: &mut PdfDocument, file_spec: &FileSpec) -> Result<Vec<u8>> {
+pub fn extract_file(doc: &PdfDocument, file_spec: &FileSpec) -> Result<Vec<u8>> {
     let stream_ref = file_spec.ef_stream_ref.as_ref().ok_or_else(|| {
         JustPdfError::StreamDecode {
             filter: String::new(),
@@ -251,7 +251,7 @@ pub fn extract_file(doc: &mut PdfDocument, file_spec: &FileSpec) -> Result<Vec<u
         }
     })?;
 
-    let stream_obj = doc.resolve(stream_ref)?.clone();
+    let stream_obj = doc.resolve(stream_ref)?;
     let (dict, raw_data) = match &stream_obj {
         PdfObject::Stream { dict, data } => (dict, data.as_slice()),
         _ => {

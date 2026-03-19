@@ -226,7 +226,7 @@ impl BBoxDevice {
 }
 
 /// Compute the content bounding box for a page (in PDF user space coordinates).
-pub fn compute_page_bbox(doc: &mut PdfDocument, page_index: usize) -> Result<Option<Rect>> {
+pub fn compute_page_bbox(doc: &PdfDocument, page_index: usize) -> Result<Option<Rect>> {
     let pages = collect_pages(doc)?;
     let page = pages
         .get(page_index)
@@ -253,7 +253,7 @@ pub fn compute_page_bbox(doc: &mut PdfDocument, page_index: usize) -> Result<Opt
 }
 
 /// Helper to get page content data (simplified version).
-fn get_page_content(doc: &mut PdfDocument, page: &PageInfo) -> Result<Vec<u8>> {
+fn get_page_content(doc: &PdfDocument, page: &PageInfo) -> Result<Vec<u8>> {
     let contents = match &page.contents_ref {
         Some(c) => c.clone(),
         None => return Ok(Vec::new()),
@@ -262,7 +262,7 @@ fn get_page_content(doc: &mut PdfDocument, page: &PageInfo) -> Result<Vec<u8>> {
     match &contents {
         PdfObject::Reference(r) => {
             let r = r.clone();
-            let obj = doc.resolve(&r)?.clone();
+            let obj = doc.resolve(&r)?;
             match obj {
                 PdfObject::Stream { dict, data } => {
                     Ok(doc.decode_stream(&dict, &data).unwrap_or_default())
@@ -282,13 +282,13 @@ fn get_page_content(doc: &mut PdfDocument, page: &PageInfo) -> Result<Vec<u8>> {
     }
 }
 
-fn concat_streams(doc: &mut PdfDocument, arr: &[PdfObject]) -> Result<Vec<u8>> {
+fn concat_streams(doc: &PdfDocument, arr: &[PdfObject]) -> Result<Vec<u8>> {
     let mut combined = Vec::new();
     for item in arr {
         let obj = match item {
             PdfObject::Reference(r) => {
                 let r = r.clone();
-                doc.resolve(&r)?.clone()
+                doc.resolve(&r)?
             }
             other => other.clone(),
         };

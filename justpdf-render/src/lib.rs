@@ -16,3 +16,6 @@ pub use render::{
     render_page, render_page_to_pixmap, render_page_to_svg, OutputFormat, RenderedPixmap,
     RenderOptions,
 };
+
+#[cfg(feature = "parallel")]
+pub use render::{render_all_pages_parallel, render_pages_parallel};
