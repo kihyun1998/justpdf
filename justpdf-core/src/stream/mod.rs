@@ -66,6 +66,11 @@ fn decode_single(data: &[u8], filter: &[u8], params: Option<&PdfDict>) -> Result
         b"CCITTFaxDecode" | b"CCF" => {
             ccitt::decode(data, params)
         }
+        b"Crypt" => {
+            // Crypt filter is handled at the document level (transparent decryption).
+            // By the time we reach here, the data has already been decrypted.
+            Ok(data.to_vec())
+        }
         _ => Err(JustPdfError::StreamDecode {
             filter: String::from_utf8_lossy(filter).into_owned(),
             detail: "unsupported filter".into(),

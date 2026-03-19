@@ -26,6 +26,7 @@ pub fn generate_field_appearance(
         FieldType::ComboBox => combo_appearance(field, w, h),
         FieldType::ListBox => list_appearance(field, w, h),
         FieldType::PushButton => button_appearance(field, w, h),
+        FieldType::Signature => return None, // Signatures have their own appearance
     };
 
     let (stream_dict, stream_data) = make_stream(content.as_bytes(), true);

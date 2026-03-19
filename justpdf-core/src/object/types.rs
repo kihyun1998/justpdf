@@ -94,6 +94,31 @@ impl PdfDict {
             _ => None,
         }
     }
+
+    /// Get a value as a string (byte slice), returning None if not a string.
+    pub fn get_string(&self, key: &[u8]) -> Option<&[u8]> {
+        match self.get(key) {
+            Some(PdfObject::String(v)) => Some(v.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Get a value as bool, returning None if not a boolean.
+    pub fn get_bool(&self, key: &[u8]) -> Option<bool> {
+        match self.get(key) {
+            Some(PdfObject::Bool(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Get a value as f64, returning None if not numeric.
+    pub fn get_f64(&self, key: &[u8]) -> Option<f64> {
+        match self.get(key) {
+            Some(PdfObject::Integer(v)) => Some(*v as f64),
+            Some(PdfObject::Real(v)) => Some(*v),
+            _ => None,
+        }
+    }
 }
 
 impl Default for PdfDict {

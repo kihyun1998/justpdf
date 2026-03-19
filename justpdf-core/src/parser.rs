@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use crate::crypto;
+use crate::crypto::SecurityState;
 use crate::error::{JustPdfError, Result};
 use crate::object::{self, IndirectRef, PdfDict, PdfObject};
 use crate::stream;
@@ -18,6 +20,8 @@ pub struct PdfDocument {
     data: Vec<u8>,
     /// Cache of parsed objects.
     objects: HashMap<IndirectRef, PdfObject>,
+    /// Encryption/security state (None if document is not encrypted).
+    security: Option<SecurityState>,
 }
 
 impl PdfDocument {
@@ -39,12 +43,149 @@ impl PdfDocument {
         // Load xref
         let xref = xref::load_xref(&data)?;
 
-        Ok(Self {
+        let mut doc = Self {
             version,
             xref,
             data,
             objects: HashMap::new(),
-        })
+            security: None,
+        };
+
+        // Detect encryption
+        doc.detect_encryption()?;
+
+        Ok(doc)
+    }
+
+    /// Detect and initialize encryption from the trailer.
+    fn detect_encryption(&mut self) -> Result<()> {
+        // Check for /Encrypt in trailer
+        let encrypt_ref = match self.xref.trailer.get_ref(b"Encrypt") {
+            Some(r) => r.clone(),
+            None => {
+                // Also check for inline /Encrypt dict
+                if self.xref.trailer.get_dict(b"Encrypt").is_some() {
+                    return self.detect_encryption_inline();
+                }
+                return Ok(());
+            }
+        };
+
+        // Load the encryption dictionary object (without decryption!)
+        let encrypt_obj = self.load_object_raw(&encrypt_ref, &mut HashSet::new())?;
+        let encrypt_dict = match &encrypt_obj {
+            PdfObject::Dict(d) => d,
+            _ => {
+                return Err(JustPdfError::EncryptionError {
+                    detail: "encryption object is not a dictionary".into(),
+                });
+            }
+        };
+
+        let ed = crypto::EncryptionDict::from_dict(encrypt_dict)?;
+
+        // Verify we support this encryption
+        if ed.filter != b"Standard" {
+            return Err(JustPdfError::UnsupportedEncryption {
+                detail: format!(
+                    "unsupported security handler: {}",
+                    String::from_utf8_lossy(&ed.filter)
+                ),
+            });
+        }
+
+        // Extract file ID from trailer
+        let file_id = self.extract_file_id();
+
+        let mut state =
+            SecurityState::new(ed, file_id, Some(encrypt_ref.obj_num));
+
+        // Try empty password (very common for user-password-only PDFs)
+        if let Ok(key) = crypto::auth::authenticate(&state, b"") {
+            state.file_key = Some(key);
+        }
+
+        self.security = Some(state);
+        Ok(())
+    }
+
+    /// Handle inline /Encrypt dict (not an indirect reference).
+    fn detect_encryption_inline(&mut self) -> Result<()> {
+        let encrypt_dict = self.xref.trailer.get_dict(b"Encrypt").unwrap().clone();
+        let ed = crypto::EncryptionDict::from_dict(&encrypt_dict)?;
+
+        if ed.filter != b"Standard" {
+            return Err(JustPdfError::UnsupportedEncryption {
+                detail: format!(
+                    "unsupported security handler: {}",
+                    String::from_utf8_lossy(&ed.filter)
+                ),
+            });
+        }
+
+        let file_id = self.extract_file_id();
+        let mut state = SecurityState::new(ed, file_id, None);
+
+        if let Ok(key) = crypto::auth::authenticate(&state, b"") {
+            state.file_key = Some(key);
+        }
+
+        self.security = Some(state);
+        Ok(())
+    }
+
+    /// Extract the first element of the /ID array from the trailer.
+    fn extract_file_id(&self) -> Vec<u8> {
+        if let Some(PdfObject::Array(arr)) = self.xref.trailer.get(b"ID") {
+            if let Some(PdfObject::String(id)) = arr.first() {
+                return id.clone();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Whether the document is encrypted.
+    pub fn is_encrypted(&self) -> bool {
+        self.security.is_some()
+    }
+
+    /// Whether the document is encrypted and authentication has succeeded.
+    pub fn is_authenticated(&self) -> bool {
+        match &self.security {
+            Some(s) => s.is_authenticated(),
+            None => true, // Not encrypted = always accessible
+        }
+    }
+
+    /// Authenticate with a password. Required for encrypted documents
+    /// where the empty password doesn't work.
+    pub fn authenticate(&mut self, password: &[u8]) -> Result<()> {
+        let state = match &mut self.security {
+            Some(s) => s,
+            None => return Ok(()), // Not encrypted
+        };
+
+        if state.is_authenticated() {
+            return Ok(()); // Already authenticated
+        }
+
+        let key = crypto::auth::authenticate(state, password)?;
+        state.file_key = Some(key);
+
+        // Clear cached objects — they need to be re-loaded with decryption
+        self.objects.clear();
+
+        Ok(())
+    }
+
+    /// Get the permission flags (if encrypted).
+    pub fn permissions(&self) -> Option<crypto::Permissions> {
+        self.security.as_ref().map(|s| s.permissions())
+    }
+
+    /// Get the security state (for advanced use).
+    pub fn security_state(&self) -> Option<&SecurityState> {
+        self.security.as_ref()
     }
 
     /// Number of objects declared in xref.
@@ -64,9 +205,17 @@ impl PdfDocument {
 
     /// Resolve an indirect reference to the actual object.
     /// Uses internal cache. Detects circular references.
+    /// Automatically decrypts if the document is encrypted and authenticated.
     pub fn resolve(&mut self, iref: &IndirectRef) -> Result<&PdfObject> {
         if self.objects.contains_key(iref) {
             return Ok(self.objects.get(iref).unwrap());
+        }
+
+        // Check if we need authentication
+        if let Some(ref sec) = self.security {
+            if !sec.is_authenticated() {
+                return Err(JustPdfError::EncryptedDocument);
+            }
         }
 
         // Load the object
@@ -76,7 +225,26 @@ impl PdfDocument {
     }
 
     /// Load an object, tracking visited refs to detect cycles.
+    /// Applies decryption if the document is encrypted.
     fn load_object(
+        &self,
+        iref: &IndirectRef,
+        visited: &mut HashSet<IndirectRef>,
+    ) -> Result<PdfObject> {
+        let obj = self.load_object_raw(iref, visited)?;
+
+        // Apply decryption if needed
+        if let Some(ref sec) = self.security {
+            if sec.is_authenticated() {
+                return crypto::decrypt_object(obj, sec, iref.obj_num, iref.gen_num);
+            }
+        }
+
+        Ok(obj)
+    }
+
+    /// Load an object without decryption (used for the encryption dict itself).
+    fn load_object_raw(
         &self,
         iref: &IndirectRef,
         visited: &mut HashSet<IndirectRef>,
@@ -123,7 +291,20 @@ impl PdfDocument {
             gen_num: 0,
         };
 
-        let stream_obj = self.load_object(&stream_ref, visited)?;
+        // Load the object stream itself (which may need decryption)
+        let stream_obj = {
+            let raw = self.load_object_raw(&stream_ref, visited)?;
+            // Decrypt the object stream if needed
+            if let Some(ref sec) = self.security {
+                if sec.is_authenticated() {
+                    crypto::decrypt_object(raw, sec, obj_stream_num, 0)?
+                } else {
+                    raw
+                }
+            } else {
+                raw
+            }
+        };
 
         let (dict, raw_data) = match &stream_obj {
             PdfObject::Stream { dict, data } => (dict, data),
@@ -286,6 +467,7 @@ mod tests {
 
         assert_eq!(doc.version, (1, 4));
         assert!(doc.object_count() > 0);
+        assert!(!doc.is_encrypted());
 
         // Resolve catalog
         let catalog_ref = doc.catalog_ref().unwrap().clone();
@@ -325,5 +507,13 @@ mod tests {
             gen_num: 0,
         });
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unencrypted_pdf_is_authenticated() {
+        let data = build_minimal_pdf();
+        let doc = PdfDocument::from_bytes(data).unwrap();
+        assert!(!doc.is_encrypted());
+        assert!(doc.is_authenticated());
     }
 }

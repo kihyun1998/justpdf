@@ -903,3 +903,216 @@ fn test_redaction_apply() {
         "redact annotations should be removed"
     );
 }
+
+// ============================================================
+// Encryption tests (Phase 6)
+// ============================================================
+
+use justpdf_core::crypto;
+
+#[test]
+fn test_encrypt_rc4_128_roundtrip() {
+    // Create an encrypted PDF using RC4-128
+    let mut builder = justpdf_core::writer::document::DocumentBuilder::new();
+    let font_name = builder.add_standard_font("Helvetica");
+
+    let mut page = justpdf_core::writer::page::PageBuilder::new(612.0, 792.0);
+    page.add_font(&font_name, "Helvetica");
+    page.begin_text();
+    page.set_font(&font_name, 24.0);
+    page.move_to(72.0, 720.0);
+    page.show_text("Secret RC4 Content");
+    page.end_text();
+    builder.add_page(page);
+    builder.set_title("Encrypted RC4 Doc");
+
+    builder.set_encryption(crypto::EncryptionConfig {
+        user_password: b"user123".to_vec(),
+        owner_password: b"owner456".to_vec(),
+        permissions: crypto::Permissions::allow_all(),
+        method: crypto::EncryptionMethod::RC4_128,
+        encrypt_metadata: true,
+    });
+
+    let bytes = builder.build().unwrap();
+
+    // Verify it's a valid PDF
+    assert!(bytes.starts_with(b"%PDF-1.7"));
+
+    // The raw bytes should NOT contain plaintext "Secret RC4 Content"
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(!text.contains("Secret RC4 Content"));
+
+    // Open and authenticate with user password
+    let mut doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
+    assert!(doc.is_encrypted());
+
+    // Try wrong password first
+    assert!(doc.authenticate(b"wrong").is_err());
+
+    // Authenticate with correct user password
+    doc.authenticate(b"user123").unwrap();
+    assert!(doc.is_authenticated());
+
+    // Verify we can parse pages
+    let pages = collect_pages(&mut doc).unwrap();
+    assert_eq!(pages.len(), 1);
+}
+
+#[test]
+fn test_encrypt_aes128_roundtrip() {
+    let mut builder = justpdf_core::writer::document::DocumentBuilder::new();
+    let font_name = builder.add_standard_font("Courier");
+
+    let mut page = justpdf_core::writer::page::PageBuilder::new(612.0, 792.0);
+    page.add_font(&font_name, "Courier");
+    page.begin_text();
+    page.set_font(&font_name, 12.0);
+    page.move_to(72.0, 700.0);
+    page.show_text("AES-128 Encrypted Text");
+    page.end_text();
+    builder.add_page(page);
+
+    builder.set_encryption(crypto::EncryptionConfig {
+        user_password: b"aes128pass".to_vec(),
+        owner_password: b"aes128owner".to_vec(),
+        permissions: crypto::Permissions::allow_all(),
+        method: crypto::EncryptionMethod::AES128,
+        encrypt_metadata: true,
+    });
+
+    let bytes = builder.build().unwrap();
+
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert!(doc.is_encrypted());
+
+    doc.authenticate(b"aes128pass").unwrap();
+    let pages = collect_pages(&mut doc).unwrap();
+    assert_eq!(pages.len(), 1);
+}
+
+#[test]
+fn test_encrypt_aes256_roundtrip() {
+    let mut builder = justpdf_core::writer::document::DocumentBuilder::new();
+    let font_name = builder.add_standard_font("Helvetica");
+
+    let mut page = justpdf_core::writer::page::PageBuilder::new(612.0, 792.0);
+    page.add_font(&font_name, "Helvetica");
+    page.begin_text();
+    page.set_font(&font_name, 18.0);
+    page.move_to(72.0, 700.0);
+    page.show_text("AES-256 Top Secret");
+    page.end_text();
+    builder.add_page(page);
+
+    builder.set_encryption(crypto::EncryptionConfig {
+        user_password: b"aes256user".to_vec(),
+        owner_password: b"aes256owner".to_vec(),
+        permissions: crypto::Permissions::allow_all(),
+        method: crypto::EncryptionMethod::AES256,
+        encrypt_metadata: true,
+    });
+
+    let bytes = builder.build().unwrap();
+
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert!(doc.is_encrypted());
+
+    // Authenticate with owner password
+    doc.authenticate(b"aes256owner").unwrap();
+    assert!(doc.is_authenticated());
+
+    let pages = collect_pages(&mut doc).unwrap();
+    assert_eq!(pages.len(), 1);
+}
+
+#[test]
+fn test_encrypt_empty_user_password() {
+    // Many real PDFs use empty user password (open access but restricted permissions)
+    let mut builder = justpdf_core::writer::document::DocumentBuilder::new();
+    let page = justpdf_core::writer::page::PageBuilder::new(612.0, 792.0);
+    builder.add_page(page);
+
+    builder.set_encryption(crypto::EncryptionConfig {
+        user_password: vec![],
+        owner_password: b"admin".to_vec(),
+        permissions: crypto::Permissions::new(0xFFFFF0C4u32 as i32), // only print
+        method: crypto::EncryptionMethod::RC4_128,
+        encrypt_metadata: true,
+    });
+
+    let bytes = builder.build().unwrap();
+
+    // Should auto-authenticate with empty password
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert!(doc.is_encrypted());
+    assert!(doc.is_authenticated()); // empty password auto-authenticated
+
+    // Check permissions
+    let perms = doc.permissions().unwrap();
+    assert!(perms.can_print());
+    assert!(!perms.can_copy());
+    assert!(!perms.can_modify());
+}
+
+#[test]
+fn test_encrypt_incorrect_password() {
+    let mut builder = justpdf_core::writer::document::DocumentBuilder::new();
+    let page = justpdf_core::writer::page::PageBuilder::new(612.0, 792.0);
+    builder.add_page(page);
+
+    builder.set_encryption(crypto::EncryptionConfig {
+        user_password: b"secret".to_vec(),
+        owner_password: b"secret".to_vec(),
+        permissions: crypto::Permissions::allow_all(),
+        method: crypto::EncryptionMethod::AES128,
+        encrypt_metadata: true,
+    });
+
+    let bytes = builder.build().unwrap();
+
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert!(doc.is_encrypted());
+    assert!(!doc.is_authenticated()); // non-empty password
+
+    // Wrong password
+    let err = doc.authenticate(b"wrong").unwrap_err();
+    assert!(matches!(err, JustPdfError::IncorrectPassword));
+
+    // Trying to resolve objects without auth should fail
+    let cat_ref = doc.catalog_ref().unwrap().clone();
+    let err = doc.resolve(&cat_ref).unwrap_err();
+    assert!(matches!(err, JustPdfError::EncryptedDocument));
+
+    // Correct password
+    doc.authenticate(b"secret").unwrap();
+    assert!(doc.is_authenticated());
+}
+
+#[test]
+fn test_unencrypted_pdf_not_encrypted() {
+    let bytes = create_simple_pdf();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert!(!doc.is_encrypted());
+    assert!(doc.is_authenticated());
+    assert!(doc.permissions().is_none());
+}
+
+#[test]
+fn test_encrypt_permissions_flags() {
+    let perms = crypto::Permissions::allow_all();
+    assert!(perms.can_print());
+    assert!(perms.can_modify());
+    assert!(perms.can_copy());
+    assert!(perms.can_annotate());
+    assert!(perms.can_fill_forms());
+    assert!(perms.can_assemble());
+    assert!(perms.can_print_high_quality());
+
+    // No permissions (only required bits set)
+    let no_perms = crypto::Permissions::new(0xFFFFF0C0u32 as i32);
+    assert!(!no_perms.can_print());
+    assert!(!no_perms.can_modify());
+    assert!(!no_perms.can_copy());
+    assert!(!no_perms.can_annotate());
+}

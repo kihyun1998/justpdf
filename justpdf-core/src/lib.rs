@@ -1,6 +1,7 @@
 pub mod annot;
 pub mod color;
 pub mod content;
+pub mod crypto;
 pub mod error;
 pub mod font;
 pub mod form;
@@ -9,6 +10,7 @@ pub mod image;
 pub mod object;
 pub mod page;
 pub mod parser;
+pub mod sign;
 pub mod stream;
 pub mod text;
 pub mod tokenizer;

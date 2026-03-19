@@ -22,6 +22,8 @@ pub struct DocumentBuilder {
     pages_obj_num: u32,
     /// XMP metadata stream reference (attached to Catalog).
     xmp_ref: Option<IndirectRef>,
+    /// Optional encryption configuration.
+    encryption: Option<crate::crypto::EncryptionConfig>,
 }
 
 impl DocumentBuilder {
@@ -39,6 +41,7 @@ impl DocumentBuilder {
             info: PdfDict::new(),
             pages_obj_num,
             xmp_ref: None,
+            encryption: None,
         }
     }
 
@@ -235,6 +238,11 @@ impl DocumentBuilder {
         Ok(resource_name)
     }
 
+    /// Set encryption for the document.
+    pub fn set_encryption(&mut self, config: crate::crypto::EncryptionConfig) {
+        self.encryption = Some(config);
+    }
+
     /// Set XMP metadata on the document catalog.
     ///
     /// Generates an XMP XML metadata stream with the given fields and attaches
@@ -318,12 +326,34 @@ impl DocumentBuilder {
             None
         };
 
-        serialize_pdf(
-            &self.writer.objects,
-            self.writer.version,
-            &catalog_ref,
-            info_ref.as_ref(),
-        )
+        // Handle encryption
+        if let Some(config) = self.encryption {
+            let file_id = crate::crypto::generate_file_id(b"justpdf", 0);
+            let (state, encrypt_dict, id_array) = config.build(&file_id)?;
+
+            let encrypt_ref = self.writer.add_object(PdfObject::Dict(encrypt_dict));
+
+            // Update the state with the encrypt obj num so it won't be encrypted
+            let mut state = state;
+            state.encrypt_obj_num = Some(encrypt_ref.obj_num);
+
+            crate::writer::serialize_pdf_encrypted(
+                &self.writer.objects,
+                self.writer.version,
+                &catalog_ref,
+                info_ref.as_ref(),
+                &encrypt_ref,
+                &state,
+                &id_array,
+            )
+        } else {
+            serialize_pdf(
+                &self.writer.objects,
+                self.writer.version,
+                &catalog_ref,
+                info_ref.as_ref(),
+            )
+        }
     }
 
     /// Build the document and save to a file.

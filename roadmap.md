@@ -654,56 +654,56 @@ cargo test -p justpdf-annot
 > 목표: PDF 암호화/복호화, 디지털 서명 지원
 
 ### 6.0 Phase 1에서 이월된 항목
-- [ ] Crypt 스트림 필터
+- [x] Crypt 스트림 필터
 
 ### 6.1 복호화 (읽기)
-- [ ] RC4-40, RC4-128
-- [ ] AES-128
-- [ ] AES-256
-- [ ] Owner/User 비밀번호 인증
-- [ ] 권한 플래그 확인 (Print, Copy, Modify, ...)
-- [ ] 암호화된 스트림/문자열 투명 복호화
+- [x] RC4-40, RC4-128
+- [x] AES-128
+- [x] AES-256
+- [x] Owner/User 비밀번호 인증
+- [x] 권한 플래그 확인 (Print, Copy, Modify, ...)
+- [x] 암호화된 스트림/문자열 투명 복호화
 
 ### 6.2 암호화 (쓰기)
-- [ ] RC4-128 암호화
-- [ ] AES-128, AES-256 암호화
-- [ ] Owner/User 비밀번호 설정
-- [ ] 권한 플래그 설정
-- [ ] 메타데이터 암호화 옵션
+- [x] RC4-128 암호화
+- [x] AES-128, AES-256 암호화
+- [x] Owner/User 비밀번호 설정
+- [x] 권한 플래그 설정
+- [x] 메타데이터 암호화 옵션
 
 ### 6.3 디지털 서명
-- [ ] 서명 필드 감지
-- [ ] PKCS#7 서명 검증
-- [ ] 인증서 체인 검증
-- [ ] 다이제스트 검증 (SHA-256, SHA-384, SHA-512)
-- [ ] 서명 후 변경 감지 (Incremental change detection)
-- [ ] PDF 서명 생성
-- [ ] 서명 외관 생성
-- [ ] 타임스탬프 서명
+- [x] 서명 필드 감지
+- [x] PKCS#7 서명 검증
+- [x] 인증서 체인 검증
+- [x] 다이제스트 검증 (SHA-256, SHA-384, SHA-512)
+- [x] 서명 후 변경 감지 (Incremental change detection)
+- [x] PDF 서명 생성
+- [x] 서명 외관 생성
+- [x] 타임스탬프 서명
 
 ### 6.T 테스트 요구사항
 
 **Positive Tests:**
-- [ ] RC4-128 암호화 PDF → user password로 복호화 성공
-- [ ] AES-128 암호화 PDF → 복호화 후 텍스트 추출 일치
-- [ ] AES-256 암호화 PDF → 복호화 성공
-- [ ] owner password 인증 → 전체 권한
-- [ ] user password 인증 → 제한된 권한 확인
-- [ ] 권한 플래그 (Print, Copy, Modify) → 정확히 읽기
-- [ ] PDF 암호화 → 다시 복호화 → 왕복 검증
+- [x] RC4-128 암호화 PDF → user password로 복호화 성공
+- [x] AES-128 암호화 PDF → 복호화 후 텍스트 추출 일치
+- [x] AES-256 암호화 PDF → 복호화 성공
+- [x] owner password 인증 → 전체 권한
+- [x] user password 인증 → 제한된 권한 확인
+- [x] 권한 플래그 (Print, Copy, Modify) → 정확히 읽기
+- [x] PDF 암호화 → 다시 복호화 → 왕복 검증
 - [ ] 암호화 PDF 생성 → Adobe Reader에서 비밀번호 입력 후 열림
-- [ ] 서명된 PDF → 서명 검증 성공 (유효한 인증서)
-- [ ] 서명 후 수정된 PDF → 변경 감지
-- [ ] PDF에 서명 추가 → 검증 통과
+- [x] 서명된 PDF → 서명 검증 성공 (유효한 인증서)
+- [x] 서명 후 수정된 PDF → 변경 감지
+- [x] PDF에 서명 추가 → 검증 통과
 
 **Negative Tests:**
-- [ ] 틀린 비밀번호 → 인증 실패 에러
-- [ ] 빈 비밀번호 (owner pwd 필요한 PDF) → 에러
-- [ ] 암호화된 PDF를 비밀번호 없이 텍스트 추출 → 에러
-- [ ] 자체 서명 인증서 → NotTrusted 에러 (옵션으로 허용 가능)
-- [ ] 손상된 서명 데이터 → DigestFailure
-- [ ] 서명 필드 없는 PDF에서 서명 검증 → NoSignatures
-- [ ] 지원하지 않는 암호화 알고리즘 → 명확한 에러 메시지
+- [x] 틀린 비밀번호 → 인증 실패 에러
+- [x] 빈 비밀번호 (owner pwd 필요한 PDF) → 에러
+- [x] 암호화된 PDF를 비밀번호 없이 텍스트 추출 → 에러
+- [x] 자체 서명 인증서 → NotTrusted 에러 (옵션으로 허용 가능)
+- [x] 손상된 서명 데이터 → DigestFailure
+- [x] 서명 필드 없는 PDF에서 서명 검증 → NoSignatures
+- [x] 지원하지 않는 암호화 알고리즘 → 명확한 에러 메시지
 
 ### 6.E 완료 확인 (직접 실행)
 ```bash

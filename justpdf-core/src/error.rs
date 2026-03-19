@@ -42,6 +42,21 @@ pub enum JustPdfError {
 
     #[error("form error: {detail}")]
     FormError { detail: String },
+
+    #[error("encryption error: {detail}")]
+    EncryptionError { detail: String },
+
+    #[error("incorrect password")]
+    IncorrectPassword,
+
+    #[error("unsupported encryption: {detail}")]
+    UnsupportedEncryption { detail: String },
+
+    #[error("document is encrypted, call authenticate() first")]
+    EncryptedDocument,
+
+    #[error("signature error: {detail}")]
+    SignatureError { detail: String },
 }
 
 pub type Result<T> = std::result::Result<T, JustPdfError>;

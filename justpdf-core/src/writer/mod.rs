@@ -8,7 +8,7 @@ pub use document::{DocumentBuilder, embed_jpeg, embed_png};
 pub use encode::{encode_flate, make_stream};
 pub use modify::{merge_documents, incremental_save, DocumentModifier};
 pub use page::PageBuilder;
-pub use serialize::serialize_pdf;
+pub use serialize::{serialize_pdf, serialize_pdf_encrypted};
 
 use crate::error::Result;
 use crate::object::{IndirectRef, PdfObject};

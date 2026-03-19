@@ -15,6 +15,41 @@ pub fn serialize_pdf(
     catalog_ref: &IndirectRef,
     info_ref: Option<&IndirectRef>,
 ) -> Result<Vec<u8>> {
+    serialize_pdf_impl(objects, version, catalog_ref, info_ref, None, None)
+}
+
+/// Serialize a PDF with encryption.
+///
+/// `encrypt_ref` and `encrypt_state` together drive per-object encryption
+/// and add /Encrypt and /ID to the trailer.
+pub fn serialize_pdf_encrypted(
+    objects: &[(u32, PdfObject)],
+    version: (u8, u8),
+    catalog_ref: &IndirectRef,
+    info_ref: Option<&IndirectRef>,
+    encrypt_ref: &IndirectRef,
+    encrypt_state: &crate::crypto::SecurityState,
+    id_array: &[PdfObject],
+) -> Result<Vec<u8>> {
+    serialize_pdf_impl(
+        objects,
+        version,
+        catalog_ref,
+        info_ref,
+        Some((encrypt_ref, encrypt_state, id_array)),
+        None,
+    )
+}
+
+/// Internal implementation handling both encrypted and unencrypted serialization.
+fn serialize_pdf_impl(
+    objects: &[(u32, PdfObject)],
+    version: (u8, u8),
+    catalog_ref: &IndirectRef,
+    info_ref: Option<&IndirectRef>,
+    encryption: Option<(&IndirectRef, &crate::crypto::SecurityState, &[PdfObject])>,
+    _extra_trailer: Option<&PdfDict>,
+) -> Result<Vec<u8>> {
     let mut buf: Vec<u8> = Vec::new();
 
     // --- Header ---
@@ -30,8 +65,20 @@ pub fn serialize_pdf(
         let offset = buf.len();
         offsets.push((*obj_num, offset));
 
+        // Encrypt the object if needed
+        let write_obj = if let Some((encrypt_ref, state, _)) = &encryption {
+            if *obj_num == encrypt_ref.obj_num {
+                // Don't encrypt the encryption dictionary itself
+                obj.clone()
+            } else {
+                crate::crypto::encrypt_object(obj, state, *obj_num, 0)?
+            }
+        } else {
+            obj.clone()
+        };
+
         write!(buf, "{} 0 obj\n", obj_num)?;
-        serialize_object(&mut buf, obj)?;
+        serialize_object(&mut buf, &write_obj)?;
         write!(buf, "\nendobj\n")?;
     }
 
@@ -75,6 +122,18 @@ pub fn serialize_pdf(
         trailer.insert(b"Info".to_vec(), PdfObject::Reference(info.clone()));
     }
 
+    // Add encryption entries to trailer
+    if let Some((encrypt_ref, _, id_array)) = &encryption {
+        trailer.insert(
+            b"Encrypt".to_vec(),
+            PdfObject::Reference((*encrypt_ref).clone()),
+        );
+        trailer.insert(
+            b"ID".to_vec(),
+            PdfObject::Array(id_array.to_vec()),
+        );
+    }
+
     write!(buf, "trailer\n")?;
     serialize_dict(&mut buf, &trailer)?;
     write!(buf, "\n")?;
@@ -86,7 +145,7 @@ pub fn serialize_pdf(
 }
 
 /// Serialize a single PdfObject into the buffer.
-fn serialize_object(buf: &mut Vec<u8>, obj: &PdfObject) -> Result<()> {
+pub(crate) fn serialize_object(buf: &mut Vec<u8>, obj: &PdfObject) -> Result<()> {
     match obj {
         PdfObject::Stream { dict, data } => {
             // Build a dict copy with /Length set
@@ -110,7 +169,7 @@ fn serialize_object(buf: &mut Vec<u8>, obj: &PdfObject) -> Result<()> {
 }
 
 /// Serialize a PdfDict in `<< ... >>` format.
-fn serialize_dict(buf: &mut Vec<u8>, dict: &PdfDict) -> Result<()> {
+pub(crate) fn serialize_dict(buf: &mut Vec<u8>, dict: &PdfDict) -> Result<()> {
     write!(buf, "<< ")?;
     for (key, val) in dict.iter() {
         let key_str = std::str::from_utf8(key).unwrap_or("?");
@@ -198,5 +257,66 @@ mod tests {
         assert!(text.contains("0000000000 65535 f \r\n"));
         // Verify xref contains an in-use entry with 10-digit offset
         assert!(text.contains(" 00000 n \r\n"));
+    }
+
+    #[test]
+    fn test_serialize_encrypted_pdf() {
+        use crate::crypto::{EncryptionConfig, EncryptionMethod, Permissions};
+
+        let config = EncryptionConfig {
+            user_password: b"test".to_vec(),
+            owner_password: b"owner".to_vec(),
+            permissions: Permissions::allow_all(),
+            method: EncryptionMethod::RC4_128,
+            encrypt_metadata: true,
+        };
+
+        let file_id = b"test-serialize-enc";
+        let (state, encrypt_dict, id_array) = config.build(file_id).unwrap();
+
+        // Create a minimal document
+        let mut objects = Vec::new();
+
+        let mut catalog = PdfDict::new();
+        catalog.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
+        objects.push((1, PdfObject::Dict(catalog)));
+
+        // Add encrypt dict
+        let encrypt_ref = IndirectRef {
+            obj_num: 2,
+            gen_num: 0,
+        };
+        objects.push((2, PdfObject::Dict(encrypt_dict)));
+
+        // Add a string object that should get encrypted
+        objects.push((3, PdfObject::String(b"Hello Secret".to_vec())));
+
+        let catalog_ref = IndirectRef {
+            obj_num: 1,
+            gen_num: 0,
+        };
+
+        let bytes = serialize_pdf_encrypted(
+            &objects,
+            (1, 7),
+            &catalog_ref,
+            None,
+            &encrypt_ref,
+            &state,
+            &id_array,
+        )
+        .unwrap();
+
+        let text = String::from_utf8_lossy(&bytes);
+
+        // Trailer should contain /Encrypt and /ID
+        assert!(text.contains("/Encrypt"));
+        assert!(text.contains("/ID"));
+
+        // The string "Hello Secret" should NOT appear in plaintext
+        // (it should be encrypted)
+        // Note: RC4 might produce bytes that happen to look like the original,
+        // but statistically very unlikely for a 12-byte string
+        assert!(!text.contains("Hello Secret"));
     }
 }

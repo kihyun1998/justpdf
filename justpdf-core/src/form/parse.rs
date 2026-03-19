@@ -171,6 +171,7 @@ fn walk_field_tree(
                 FieldType::ListBox
             }
         }
+        Some(b"Sig") => FieldType::Signature,
         _ => return Ok(()), // Unknown or missing field type, skip
     };
 

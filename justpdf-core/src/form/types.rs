@@ -10,6 +10,7 @@ pub enum FieldType {
     PushButton,
     ComboBox,
     ListBox,
+    Signature,
 }
 
 /// Field flags (from /Ff entry).
