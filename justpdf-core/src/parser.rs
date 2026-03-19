@@ -57,6 +57,18 @@ impl PdfDocument {
         Ok(doc)
     }
 
+    /// Construct a `PdfDocument` from pre-built parts (used by the
+    /// repair module when the normal xref/trailer is damaged).
+    pub(crate) fn from_raw_parts(data: Vec<u8>, xref: Xref, version: (u8, u8)) -> Self {
+        Self {
+            version,
+            xref,
+            data,
+            objects: HashMap::new(),
+            security: None,
+        }
+    }
+
     /// Detect and initialize encryption from the trailer.
     fn detect_encryption(&mut self) -> Result<()> {
         // Check for /Encrypt in trailer

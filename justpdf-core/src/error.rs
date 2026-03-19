@@ -57,6 +57,18 @@ pub enum JustPdfError {
 
     #[error("signature error: {detail}")]
     SignatureError { detail: String },
+
+    #[error("outline error: {detail}")]
+    OutlineError { detail: String },
+
+    #[error("embedded file error: {detail}")]
+    EmbeddedFileError { detail: String },
+
+    #[error("optional content error: {detail}")]
+    OptionalContentError { detail: String },
+
+    #[error("repair error: {detail}")]
+    RepairError { detail: String },
 }
 
 pub type Result<T> = std::result::Result<T, JustPdfError>;

@@ -39,6 +39,78 @@ fn decode_raw_deflate(data: &[u8]) -> Result<Vec<u8>> {
     Ok(result)
 }
 
+/// Attempt to decode FlateDecode data, returning whatever was successfully
+/// decompressed even if the stream is truncated or corrupted partway through.
+/// Returns `Ok(data)` with partial data on soft failures, `Err` only if
+/// absolutely nothing could be decoded.
+pub fn decode_partial(data: &[u8]) -> Result<Vec<u8>> {
+    // Try normal decode first
+    if let Ok(result) = decode(data) {
+        return Ok(result);
+    }
+
+    // Try zlib partial first (most PDF streams use zlib headers).
+    // Only fall back to raw deflate if zlib produced nothing, since raw
+    // deflate can misinterpret the zlib header bytes and produce garbage.
+    if let Ok(result) = decode_partial_zlib(data) {
+        return Ok(result);
+    }
+
+    if let Ok(result) = decode_partial_raw(data) {
+        return Ok(result);
+    }
+
+    Err(JustPdfError::StreamDecode {
+        filter: "FlateDecode".into(),
+        detail: "could not recover any data from broken stream".into(),
+    })
+}
+
+/// Read as much as possible from a zlib stream, ignoring trailing errors.
+fn decode_partial_zlib(data: &[u8]) -> Result<Vec<u8>> {
+    let mut decoder = ZlibDecoder::new(data);
+    let mut result = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        match decoder.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => result.extend_from_slice(&buf[..n]),
+            Err(_) => break, // stop on error, keep what we have
+        }
+    }
+    if result.is_empty() {
+        Err(JustPdfError::StreamDecode {
+            filter: "FlateDecode".into(),
+            detail: "zlib partial decode produced no data".into(),
+        })
+    } else {
+        Ok(result)
+    }
+}
+
+/// Read as much as possible from a raw deflate stream, ignoring trailing errors.
+fn decode_partial_raw(data: &[u8]) -> Result<Vec<u8>> {
+    use flate2::read::DeflateDecoder;
+    let mut decoder = DeflateDecoder::new(data);
+    let mut result = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        match decoder.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => result.extend_from_slice(&buf[..n]),
+            Err(_) => break,
+        }
+    }
+    if result.is_empty() {
+        Err(JustPdfError::StreamDecode {
+            filter: "FlateDecode".into(),
+            detail: "raw deflate partial decode produced no data".into(),
+        })
+    } else {
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

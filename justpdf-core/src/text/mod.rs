@@ -1,6 +1,7 @@
 pub mod format;
 pub mod layout;
 pub mod search;
+pub mod text_layout;
 
 use std::collections::HashMap;
 
@@ -1057,6 +1058,7 @@ mod tests {
                     },
                     to_unicode: None,
                     is_standard14: true,
+                    descriptor: None,
                 },
                 cmap: None,
             },
@@ -1116,6 +1118,7 @@ mod tests {
                     },
                     to_unicode: None,
                     is_standard14: true,
+                    descriptor: None,
                 },
                 cmap: None,
             },
@@ -1259,6 +1262,7 @@ mod tests {
                     },
                     to_unicode: None,
                     is_standard14: true,
+                    descriptor: None,
                 },
                 cmap: None,
             },
@@ -1366,6 +1370,7 @@ mod tests {
                     },
                     to_unicode: None,
                     is_standard14: true,
+                    descriptor: None,
                 },
                 cmap: None,
             },
