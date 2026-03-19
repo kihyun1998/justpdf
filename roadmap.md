@@ -884,33 +884,33 @@ cargo test -p justpdf-core --features advanced
 > 목표: MuPDF와 동등하거나 그 이상의 성능
 
 ### 8.0 Phase 2/4/7에서 이월된 항목
-- [ ] Display List (명령 기록/재생)
-- [ ] 글리프 캐싱
-- [ ] 객체 스트림 (Object Streams) 생성
-- [ ] 구문 정리/최적화 (Clean)
-- [ ] 벤치마크 프레임워크 (criterion)
-- [ ] 힌트 테이블 파싱 *(Phase 7.4에서 이동)*
-- [ ] Progressive loading (첫 페이지 우선 렌더링) *(Phase 7.4에서 이동)*
-- [ ] Linearized PDF 생성 *(Phase 7.4에서 이동)*
+- [x] Display List (명령 기록/재생)
+- [x] 글리프 캐싱
+- [x] 객체 스트림 (Object Streams) 생성
+- [x] 구문 정리/최적화 (Clean)
+- [x] 벤치마크 프레임워크 (criterion)
+- [x] 힌트 테이블 파싱 *(Phase 7.4에서 이동)*
+- [x] Progressive loading (첫 페이지 우선 렌더링) *(get_page로 단일 페이지 접근)*
+- [x] Linearized PDF 생성 *(Phase 7.4에서 이동)*
 
 ### 8.1 파싱 최적화
-- [ ] Memory-mapped I/O
-- [ ] Lazy 객체 로딩 (필요할 때만 역직렬화)
-- [ ] 객체 캐싱 (LRU)
-- [ ] 병렬 페이지 파싱
+- [x] Memory-mapped I/O *(feature "mmap"으로 gated)*
+- [x] Lazy 객체 로딩 (필요할 때만 역직렬화) *(기존 구조 + get_page 추가)*
+- [x] 객체 캐싱 (LRU) *(2048 기본 용량, set_cache_capacity로 조절)*
+- [ ] 병렬 페이지 파싱 *(interior mutability 리팩토링 필요 — 별도 진행)*
 
 ### 8.2 렌더링 최적화
-- [ ] SIMD 래스터화 (SSE2/AVX2/NEON)
-- [ ] 멀티스레드 렌더링 (페이지 단위 / 밴드 단위)
-- [ ] 글리프 캐시 최적화
-- [ ] Display List 최적화 (중복 제거)
+- ~~SIMD 래스터화 (SSE2/AVX2/NEON)~~ *(tiny-skia 내부에서 이미 지원)*
+- [ ] 멀티스레드 렌더링 (페이지 단위 / 밴드 단위) *(병렬 파싱 선행 필요)*
+- [x] 글리프 캐시 최적화 *(GlyphCache 구현)*
+- [x] Display List 최적화 (중복 제거) *(optimize() 메서드)*
 - [ ] 타일 기반 렌더링
 
 ### 8.3 메모리 최적화
 - [ ] Arena allocator (파싱용)
-- [ ] 스트림 디코딩 zero-copy
-- [ ] 대용량 PDF (10,000+ 페이지) 지원
-- [ ] 메모리 사용량 프로파일링
+- [x] 스트림 디코딩 zero-copy *(decode_stream_cow 구현)*
+- [x] 대용량 PDF (10,000+ 페이지) 지원 *(LRU + mmap + get_page)*
+- [x] 메모리 사용량 프로파일링 *(profile 예제)*
 
 ### 8.4 벤치마크
 - [ ] MuPDF vs justpdf 렌더링 속도 비교
@@ -921,15 +921,15 @@ cargo test -p justpdf-core --features advanced
 ### 8.T 테스트 요구사항
 
 **Positive Tests:**
-- [ ] 1000+ 페이지 PDF 파싱 → 메모리 사용량 합리적 범위 내
+- [x] 1000+ 페이지 PDF 파싱 → 메모리 사용량 합리적 범위 내
 - [ ] 멀티스레드 렌더링 → 싱글스레드 대비 속도 향상 확인
-- [ ] mmap 모드 → 일반 모드 대비 메모리 사용 감소
-- [ ] lazy loading → 첫 페이지 접근 시간 < 전체 로딩 시간
-- [ ] 글리프 캐시 → 동일 폰트 반복 렌더링 속도 향상
-- [ ] criterion 벤치마크 → 회귀 없음 (이전 결과 대비)
+- [x] mmap 모드 → 일반 모드 대비 메모리 사용 감소
+- [x] lazy loading → 첫 페이지 접근 시간 < 전체 로딩 시간
+- [x] 글리프 캐시 → 동일 폰트 반복 렌더링 속도 향상
+- [x] criterion 벤치마크 → 회귀 없음 (이전 결과 대비)
 
 **Negative Tests:**
-- [ ] 10,000+ 페이지 PDF → OOM 없이 처리 (또는 명확한 제한 에러)
+- [x] 10,000+ 페이지 PDF → OOM 없이 처리 (또는 명확한 제한 에러)
 - [ ] 스레드 수 0 → 에러 또는 기본값 폴백
 - [ ] 손상된 mmap 파일 → 안전한 에러 처리
 

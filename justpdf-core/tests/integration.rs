@@ -1116,3 +1116,236 @@ fn test_encrypt_permissions_flags() {
     assert!(!no_perms.can_copy());
     assert!(!no_perms.can_annotate());
 }
+
+// ============================================================
+// Phase 8 Memory Optimization tests (section 8.3)
+// ============================================================
+
+use justpdf_core::page::{self as page_mod, get_page};
+use justpdf_core::stream::decode_stream_cow;
+use std::borrow::Cow;
+
+/// Create a synthetic multi-page PDF with the given number of pages.
+fn create_multi_page_pdf(num_pages: usize) -> Vec<u8> {
+    let mut w = PdfWriter::new();
+
+    // Font
+    let mut font_dict = PdfDict::new();
+    font_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
+    font_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Type1".to_vec()));
+    font_dict.insert(b"BaseFont".to_vec(), PdfObject::Name(b"Helvetica".to_vec()));
+    let font_ref = w.add_object(PdfObject::Dict(font_dict));
+
+    // Resources
+    let mut font_map = PdfDict::new();
+    font_map.insert(b"F1".to_vec(), PdfObject::Reference(font_ref.clone()));
+    let mut resources = PdfDict::new();
+    resources.insert(b"Font".to_vec(), PdfObject::Dict(font_map));
+    let resources_ref = w.add_object(PdfObject::Dict(resources));
+
+    // Pre-allocate Pages node
+    let pages_num = w.alloc_object_num();
+    let pages_ref = IndirectRef { obj_num: pages_num, gen_num: 0 };
+
+    // Create page objects
+    let mut page_refs = Vec::with_capacity(num_pages);
+    for i in 0..num_pages {
+        let content = format!("BT /F1 12 Tf 72 720 Td (Page {}) Tj ET", i + 1);
+        let content_bytes = content.into_bytes();
+
+        // Content stream (uncompressed for speed)
+        let mut stream_dict = PdfDict::new();
+        stream_dict.insert(
+            b"Length".to_vec(),
+            PdfObject::Integer(content_bytes.len() as i64),
+        );
+        let stream_obj = PdfObject::Stream { dict: stream_dict, data: content_bytes };
+        let content_ref = w.add_object(stream_obj);
+
+        let mut page_dict = PdfDict::new();
+        page_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Page".to_vec()));
+        page_dict.insert(b"Parent".to_vec(), PdfObject::Reference(pages_ref.clone()));
+        page_dict.insert(
+            b"MediaBox".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Integer(0),
+                PdfObject::Integer(0),
+                PdfObject::Integer(612),
+                PdfObject::Integer(792),
+            ]),
+        );
+        page_dict.insert(b"Resources".to_vec(), PdfObject::Reference(resources_ref.clone()));
+        page_dict.insert(b"Contents".to_vec(), PdfObject::Reference(content_ref));
+        let page_ref = w.add_object(PdfObject::Dict(page_dict));
+        page_refs.push(PdfObject::Reference(page_ref));
+    }
+
+    // Pages node
+    let mut pages_dict = PdfDict::new();
+    pages_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Pages".to_vec()));
+    pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(page_refs));
+    pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(num_pages as i64));
+    w.set_object(pages_num, PdfObject::Dict(pages_dict));
+
+    // Catalog
+    let mut catalog = PdfDict::new();
+    catalog.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
+    catalog.insert(b"Pages".to_vec(), PdfObject::Reference(pages_ref));
+    let catalog_ref = w.add_object(PdfObject::Dict(catalog));
+
+    serialize_pdf(&w.objects, (1, 7), &catalog_ref, None).unwrap()
+}
+
+// --- page_count tests ---
+
+#[test]
+fn test_page_count_single() {
+    let bytes = create_simple_pdf();
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert_eq!(page_mod::page_count(&mut doc).unwrap(), 1);
+}
+
+#[test]
+fn test_page_count_multi() {
+    let bytes = create_multi_page_pdf(25);
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert_eq!(page_mod::page_count(&mut doc).unwrap(), 25);
+}
+
+#[test]
+fn test_page_count_large() {
+    let bytes = create_multi_page_pdf(1000);
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert_eq!(page_mod::page_count(&mut doc).unwrap(), 1000);
+}
+
+// --- get_page tests ---
+
+#[test]
+fn test_get_page_first() {
+    let bytes = create_multi_page_pdf(10);
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    let page = get_page(&mut doc, 0).unwrap();
+    assert_eq!(page.index, 0);
+    assert_eq!(page.media_box.width(), 612.0);
+    assert_eq!(page.media_box.height(), 792.0);
+}
+
+#[test]
+fn test_get_page_last() {
+    let bytes = create_multi_page_pdf(10);
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    let page = get_page(&mut doc, 9).unwrap();
+    assert_eq!(page.index, 9);
+}
+
+#[test]
+fn test_get_page_middle() {
+    let bytes = create_multi_page_pdf(50);
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    let page = get_page(&mut doc, 25).unwrap();
+    assert_eq!(page.index, 25);
+}
+
+#[test]
+fn test_get_page_out_of_range() {
+    let bytes = create_multi_page_pdf(5);
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    let result = get_page(&mut doc, 5);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_get_page_out_of_range_large_index() {
+    let bytes = create_multi_page_pdf(3);
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    let result = get_page(&mut doc, 999);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_get_page_matches_collect_pages() {
+    let bytes = create_multi_page_pdf(20);
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    let all_pages = collect_pages(&mut doc).unwrap();
+
+    // Verify get_page returns the same info for each page
+    for (i, expected) in all_pages.iter().enumerate() {
+        let page = get_page(&mut doc, i).unwrap();
+        assert_eq!(page.index, expected.index);
+        assert_eq!(page.page_ref, expected.page_ref);
+        assert_eq!(page.media_box, expected.media_box);
+        assert_eq!(page.rotate, expected.rotate);
+    }
+}
+
+// --- Large PDF support test ---
+
+#[test]
+fn test_large_pdf_1000_pages() {
+    let bytes = create_multi_page_pdf(1000);
+
+    // Parse the document
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+
+    // page_count should be correct without resolving all pages
+    assert_eq!(page_mod::page_count(&mut doc).unwrap(), 1000);
+
+    // Single page access should work
+    let first = get_page(&mut doc, 0).unwrap();
+    assert_eq!(first.index, 0);
+
+    let middle = get_page(&mut doc, 500).unwrap();
+    assert_eq!(middle.index, 500);
+
+    let last = get_page(&mut doc, 999).unwrap();
+    assert_eq!(last.index, 999);
+
+    // Out-of-range should fail
+    assert!(get_page(&mut doc, 1000).is_err());
+}
+
+// --- decode_stream_cow tests (integration) ---
+
+#[test]
+fn test_decode_stream_cow_no_filter_borrowed() {
+    let dict = PdfDict::new();
+    let data = b"plain text content";
+    let result = decode_stream_cow(data, &dict).unwrap();
+    assert!(matches!(result, Cow::Borrowed(_)));
+    assert_eq!(&*result, b"plain text content");
+}
+
+#[test]
+fn test_decode_stream_cow_dct_borrowed() {
+    let mut dict = PdfDict::new();
+    dict.insert(
+        b"Filter".to_vec(),
+        PdfObject::Name(b"DCTDecode".to_vec()),
+    );
+    let data = b"\xFF\xD8\xFF\xE0fake jpeg bytes";
+    let result = decode_stream_cow(data, &dict).unwrap();
+    assert!(matches!(result, Cow::Borrowed(_)));
+}
+
+#[test]
+fn test_decode_stream_cow_flate_owned() {
+    use flate2::Compression;
+    use flate2::write::ZlibEncoder;
+    use std::io::Write;
+
+    let original = b"Compressed content for cow test";
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(original).unwrap();
+    let compressed = encoder.finish().unwrap();
+
+    let mut dict = PdfDict::new();
+    dict.insert(
+        b"Filter".to_vec(),
+        PdfObject::Name(b"FlateDecode".to_vec()),
+    );
+
+    let result = decode_stream_cow(&compressed, &dict).unwrap();
+    assert!(matches!(result, Cow::Owned(_)));
+    assert_eq!(&*result, original.as_slice());
+}

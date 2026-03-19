@@ -1,7 +1,9 @@
 pub mod bbox_device;
 pub mod device;
+pub mod display_list;
 pub mod error;
 pub mod glyph;
+pub mod glyph_cache;
 pub mod graphics_state;
 pub mod interpreter;
 pub mod render;

@@ -6,6 +6,8 @@ mod flate;
 mod predictor;
 mod run_length;
 
+use std::borrow::Cow;
+
 use crate::error::{JustPdfError, Result};
 use crate::object::{PdfDict, PdfObject};
 
@@ -90,6 +92,46 @@ pub fn decode_stream(data: &[u8], dict: &PdfDict) -> Result<Vec<u8>> {
     }
 
     Ok(result)
+}
+
+/// Returns `true` if the given filter name is a pass-through filter that
+/// returns the raw bytes unchanged (e.g. DCTDecode, JPXDecode, JBIG2Decode, Crypt).
+fn is_passthrough_filter(filter: &[u8]) -> bool {
+    matches!(
+        filter,
+        b"DCTDecode" | b"DCT" | b"JPXDecode" | b"JBIG2Decode" | b"Crypt"
+    )
+}
+
+/// Decode a stream, returning borrowed data when possible (zero-copy).
+///
+/// For streams with no filter, or pass-through filters like DCTDecode /
+/// JPXDecode / JBIG2Decode / Crypt (applied as the sole filter), this returns
+/// a reference to the original data without copying.
+///
+/// When actual decompression is needed (FlateDecode, LZWDecode, etc.) or when
+/// a filter chain mixes pass-through and non-pass-through filters, the decoded
+/// data is returned as an owned `Vec`.
+pub fn decode_stream_cow<'a>(data: &'a [u8], dict: &PdfDict) -> Result<Cow<'a, [u8]>> {
+    let filters = get_filters(dict);
+
+    // No filters at all — return borrowed.
+    if filters.is_empty() {
+        return Ok(Cow::Borrowed(data));
+    }
+
+    // Single pass-through filter — return borrowed.
+    if filters.len() == 1 && is_passthrough_filter(&filters[0]) {
+        return Ok(Cow::Borrowed(data));
+    }
+
+    // All filters are pass-through — return borrowed.
+    if filters.iter().all(|f| is_passthrough_filter(f)) {
+        return Ok(Cow::Borrowed(data));
+    }
+
+    // Otherwise, fall back to the allocating decode path.
+    decode_stream(data, dict).map(Cow::Owned)
 }
 
 /// Decode a single filter.
@@ -515,5 +557,101 @@ mod tests {
         }
         result.extend_from_slice(b"~>");
         result
+    }
+
+    // ================================================================
+    // decode_stream_cow tests
+    // ================================================================
+
+    #[test]
+    fn test_cow_no_filter_returns_borrowed() {
+        let dict = PdfDict::new();
+        let data = b"raw stream data";
+        let result = decode_stream_cow(data, &dict).unwrap();
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(&*result, b"raw stream data");
+    }
+
+    #[test]
+    fn test_cow_dct_passthrough_returns_borrowed() {
+        let mut dict = PdfDict::new();
+        dict.insert(
+            b"Filter".to_vec(),
+            PdfObject::Name(b"DCTDecode".to_vec()),
+        );
+        let data = b"\xFF\xD8\xFF\xE0fake jpeg";
+        let result = decode_stream_cow(data, &dict).unwrap();
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(&*result, data.as_slice());
+    }
+
+    #[test]
+    fn test_cow_jpx_passthrough_returns_borrowed() {
+        let mut dict = PdfDict::new();
+        dict.insert(
+            b"Filter".to_vec(),
+            PdfObject::Name(b"JPXDecode".to_vec()),
+        );
+        let data = b"fake jp2 data";
+        let result = decode_stream_cow(data, &dict).unwrap();
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(&*result, data.as_slice());
+    }
+
+    #[test]
+    fn test_cow_jbig2_passthrough_returns_borrowed() {
+        let mut dict = PdfDict::new();
+        dict.insert(
+            b"Filter".to_vec(),
+            PdfObject::Name(b"JBIG2Decode".to_vec()),
+        );
+        let data = b"fake jbig2 data";
+        let result = decode_stream_cow(data, &dict).unwrap();
+        assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn test_cow_crypt_passthrough_returns_borrowed() {
+        let mut dict = PdfDict::new();
+        dict.insert(
+            b"Filter".to_vec(),
+            PdfObject::Name(b"Crypt".to_vec()),
+        );
+        let data = b"already decrypted data";
+        let result = decode_stream_cow(data, &dict).unwrap();
+        assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn test_cow_flate_returns_owned() {
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
+        let original = b"Hello, zero-copy world!";
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(original).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let mut dict = PdfDict::new();
+        dict.insert(
+            b"Filter".to_vec(),
+            PdfObject::Name(b"FlateDecode".to_vec()),
+        );
+
+        let result = decode_stream_cow(&compressed, &dict).unwrap();
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(&*result, original.as_slice());
+    }
+
+    #[test]
+    fn test_cow_unsupported_filter_returns_error() {
+        let mut dict = PdfDict::new();
+        dict.insert(
+            b"Filter".to_vec(),
+            PdfObject::Name(b"UnknownFilter".to_vec()),
+        );
+        let result = decode_stream_cow(b"data", &dict);
+        assert!(result.is_err());
     }
 }

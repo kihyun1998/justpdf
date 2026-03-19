@@ -122,6 +122,146 @@ pub fn page_count(doc: &mut PdfDocument) -> Result<usize> {
     Ok(pages_dict.get_i64(b"Count").unwrap_or(0) as usize)
 }
 
+/// Get a single page by 0-based index without collecting all pages.
+///
+/// This walks the page tree, counting pages as it goes, and returns the
+/// `PageInfo` for the requested page as soon as it is found.  For documents
+/// with many pages this avoids allocating and resolving every page object when
+/// only a single page is needed.
+pub fn get_page(doc: &mut PdfDocument, index: usize) -> Result<PageInfo> {
+    let catalog_ref = doc
+        .catalog_ref()
+        .ok_or(JustPdfError::TrailerNotFound)?
+        .clone();
+
+    let catalog = doc.resolve(&catalog_ref)?.clone();
+    let catalog_dict = catalog.as_dict().ok_or(JustPdfError::InvalidObject {
+        offset: 0,
+        detail: "catalog is not a dict".into(),
+    })?;
+
+    let pages_ref = catalog_dict
+        .get_ref(b"Pages")
+        .ok_or(JustPdfError::InvalidObject {
+            offset: 0,
+            detail: "catalog has no /Pages".into(),
+        })?
+        .clone();
+
+    // Optional: fast-path bounds check via /Count.
+    let pages_obj = doc.resolve(&pages_ref)?.clone();
+    let pages_dict = pages_obj.as_dict().ok_or(JustPdfError::InvalidObject {
+        offset: 0,
+        detail: "Pages is not a dict".into(),
+    })?;
+    let count = pages_dict.get_i64(b"Count").unwrap_or(0) as usize;
+    if index >= count {
+        return Err(JustPdfError::InvalidObject {
+            offset: 0,
+            detail: format!(
+                "page index {index} out of range (document has {count} pages)"
+            ),
+        });
+    }
+
+    let inherited = InheritedAttrs::default();
+    let mut counter: usize = 0;
+    walk_page_tree_find(doc, &pages_ref, &inherited, index, &mut counter)
+        .and_then(|opt| {
+            opt.ok_or(JustPdfError::InvalidObject {
+                offset: 0,
+                detail: format!("page index {index} not found in page tree"),
+            })
+        })
+}
+
+/// Recursively walk the page tree looking for the page at `target` index.
+/// `counter` tracks how many leaf pages have been seen so far.
+/// Returns `Ok(Some(page))` as soon as the target page is found, or
+/// `Ok(None)` after exhausting the subtree without finding it.
+fn walk_page_tree_find(
+    doc: &mut PdfDocument,
+    node_ref: &IndirectRef,
+    inherited: &InheritedAttrs,
+    target: usize,
+    counter: &mut usize,
+) -> Result<Option<PageInfo>> {
+    let node_obj = doc.resolve(node_ref)?.clone();
+    let dict = node_obj.as_dict().ok_or(JustPdfError::InvalidObject {
+        offset: 0,
+        detail: "page tree node is not a dict".into(),
+    })?;
+
+    let node_type = dict.get_name(b"Type").unwrap_or(b"");
+
+    match node_type {
+        b"Pages" => {
+            // Pruning: if this subtree's /Count means the target lies beyond
+            // it, skip the entire subtree.
+            let subtree_count = dict.get_i64(b"Count").unwrap_or(0) as usize;
+            if *counter + subtree_count <= target {
+                *counter += subtree_count;
+                return Ok(None);
+            }
+
+            let updated = inherited.with_overrides(dict);
+            if let Some(kids) = dict.get_array(b"Kids") {
+                let kid_refs: Vec<IndirectRef> = kids
+                    .iter()
+                    .filter_map(|obj| obj.as_reference().cloned())
+                    .collect();
+
+                for kid_ref in kid_refs {
+                    if let Some(page) =
+                        walk_page_tree_find(doc, &kid_ref, &updated, target, counter)?
+                    {
+                        return Ok(Some(page));
+                    }
+                }
+            }
+            Ok(None)
+        }
+        _ if node_type == b"Page"
+            || dict.contains_key(b"MediaBox")
+            || inherited.media_box.is_some() =>
+        {
+            let current_index = *counter;
+            *counter += 1;
+
+            if current_index != target {
+                return Ok(None);
+            }
+
+            let updated = inherited.with_overrides(dict);
+
+            let media_box = updated.media_box.unwrap_or(Rect {
+                llx: 0.0,
+                lly: 0.0,
+                urx: 612.0,
+                ury: 792.0,
+            });
+
+            Ok(Some(PageInfo {
+                index: current_index,
+                page_ref: node_ref.clone(),
+                media_box,
+                crop_box: updated
+                    .crop_box
+                    .or_else(|| dict.get_array(b"CropBox").and_then(Rect::from_pdf_array)),
+                bleed_box: dict.get_array(b"BleedBox").and_then(Rect::from_pdf_array),
+                trim_box: dict.get_array(b"TrimBox").and_then(Rect::from_pdf_array),
+                art_box: dict.get_array(b"ArtBox").and_then(Rect::from_pdf_array),
+                rotate: updated.rotate.unwrap_or(0),
+                contents_ref: dict.get(b"Contents").cloned(),
+                resources_ref: updated
+                    .resources
+                    .or_else(|| dict.get(b"Resources").cloned()),
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+
 /// Attributes that can be inherited from parent Pages nodes.
 #[derive(Debug, Clone, Default)]
 struct InheritedAttrs {

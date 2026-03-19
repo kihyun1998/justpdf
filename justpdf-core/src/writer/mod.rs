@@ -1,12 +1,18 @@
+pub mod clean;
 pub mod document;
 pub mod encode;
+pub mod linearize;
 pub mod modify;
+pub mod object_stream;
 pub mod page;
 pub mod serialize;
 
+pub use clean::{clean_objects, CleanStats};
 pub use document::{DocumentBuilder, embed_jpeg, embed_png};
 pub use encode::{encode_flate, make_stream};
+pub use linearize::linearize as linearize_pdf;
 pub use modify::{merge_documents, incremental_save, DocumentModifier};
+pub use object_stream::pack_object_streams;
 pub use page::PageBuilder;
 pub use serialize::{serialize_pdf, serialize_pdf_encrypted};
 

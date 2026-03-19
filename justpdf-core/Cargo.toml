@@ -3,8 +3,13 @@ name = "justpdf-core"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+mmap = ["memmap2"]
+
 [dependencies]
 thiserror = "2"
+memmap2 = { version = "0.9", optional = true }
 flate2 = "1"
 jpeg-decoder = "0.3"
 ttf-parser = "0.25"
@@ -31,3 +36,12 @@ spki = "0.7"
 [dev-dependencies]
 rand = "0.8"
 rsa = { version = "0.9", features = ["sha2", "pkcs5"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "parse"
+harness = false
+
+[[bench]]
+name = "text"
+harness = false

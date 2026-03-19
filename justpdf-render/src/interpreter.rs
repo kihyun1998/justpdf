@@ -11,6 +11,7 @@ use tiny_skia::{FillRule, Mask, PathBuilder, Pixmap, Transform};
 
 use crate::device::PixmapDevice;
 use crate::error::{RenderError, Result};
+use crate::glyph_cache::GlyphCache;
 use crate::graphics_state::{
     GraphicsState, LineCap, LineJoin, Matrix, PdfBlendMode, SoftMask, SoftMaskSubtype,
 };
@@ -40,6 +41,8 @@ pub struct RenderInterpreter<'a> {
     path_builder: Option<PathBuilder>,
     /// Form XObject recursion depth limit.
     xobject_depth: u32,
+    /// Cache for pre-built glyph paths.
+    glyph_cache: GlyphCache,
 }
 
 impl<'a> RenderInterpreter<'a> {
@@ -57,6 +60,7 @@ impl<'a> RenderInterpreter<'a> {
             page_transform,
             path_builder: None,
             xobject_depth: 0,
+            glyph_cache: GlyphCache::with_default_capacity(),
         }
     }
 
@@ -1081,7 +1085,7 @@ impl<'a> RenderInterpreter<'a> {
             return Ok(());
         }
 
-        // Try to render with real glyph outlines
+        // Try to render with real glyph outlines (using glyph cache)
         if let Some(data) = font_data {
             if let Ok(face) = ttf_parser::Face::parse(data, 0) {
                 let glyph_id = if is_cid {
@@ -1100,7 +1104,12 @@ impl<'a> RenderInterpreter<'a> {
                     crate::glyph::char_code_to_glyph_id(&face, code)
                 };
 
-                if let Some(path) = crate::glyph::glyph_outline(&face, glyph_id) {
+                let gid_raw = glyph_id.0;
+                let cached_path = self.glyph_cache.get_or_insert(data, gid_raw, || {
+                    crate::glyph::glyph_outline(&face, glyph_id)
+                }).cloned();
+
+                if let Some(path) = cached_path {
                     let upem = crate::glyph::units_per_em(&face);
                     if upem > 0.0 {
                         // Glyph coordinates are in font units.
