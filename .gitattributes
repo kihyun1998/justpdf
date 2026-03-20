@@ -1,0 +1,12 @@
+# Prevent line-ending conversion on binary files
+*.pdf binary
+*.bin binary
+*.p12 binary
+*.pfx binary
+*.jpeg binary
+*.jpg binary
+*.png binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary

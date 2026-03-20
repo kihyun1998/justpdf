@@ -1,4 +1,5 @@
 pub mod clean;
+pub mod compress;
 pub mod document;
 pub mod encode;
 pub mod linearize;
@@ -8,6 +9,7 @@ pub mod page;
 pub mod serialize;
 
 pub use clean::{clean_objects, CleanStats};
+pub use compress::{compress_pdf, analyze_pdf, CompressOptions, CompressStats, AnalyzeResult};
 pub use document::{DocumentBuilder, embed_jpeg, embed_png};
 pub use encode::{encode_flate, make_stream};
 pub use linearize::linearize as linearize_pdf;

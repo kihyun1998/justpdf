@@ -658,6 +658,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "justpdf-compress-wasm"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "justpdf-core",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "justpdf-core"
 version = "0.1.2"
 dependencies = [
@@ -669,6 +678,7 @@ dependencies = [
  "criterion",
  "der",
  "flate2",
+ "image",
  "jpeg-decoder",
  "justbig2",
  "justjp2",

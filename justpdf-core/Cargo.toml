@@ -24,6 +24,7 @@ ttf-parser = "0.25"
 png = "0.17"
 justjp2 = "0.1"
 justbig2 = "0.2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # Crypto (Phase 6)
 aes = "0.8"
