@@ -3,6 +3,8 @@ name = "justpdf-wasm"
 version = "0.1.0"
 edition = "2024"
 description = "WebAssembly bindings for justpdf PDF engine"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kihyun1998/justpdf"
 
 [lib]
 crate-type = ["cdylib"]

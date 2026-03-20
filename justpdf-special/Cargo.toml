@@ -3,6 +3,8 @@ name = "justpdf-special"
 version = "0.1.0"
 edition = "2024"
 description = "Special features for justpdf - OCR, barcode, ZUGFeRD, BiDi, deskew"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kihyun1998/justpdf"
 
 [features]
 default = []

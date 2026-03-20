@@ -1,2 +1,8 @@
 /target
 /vendor
+**/*.rs.bk
+*.pdb
+
+# Test artifacts
+encrypted_test.pdf
+encrypted_restricted.pdf
