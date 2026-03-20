@@ -930,8 +930,8 @@ cargo test -p justpdf-core --features advanced
 
 **Negative Tests:**
 - [x] 10,000+ 페이지 PDF → OOM 없이 처리 (또는 명확한 제한 에러)
-- [ ] 스레드 수 0 → 에러 또는 기본값 폴백
-- [ ] 손상된 mmap 파일 → 안전한 에러 처리
+- [x] 스레드 수 0 → 에러 또는 기본값 폴백
+- [x] 손상된 mmap 파일 → 안전한 에러 처리
 
 ### 8.E 완료 확인 (직접 실행)
 ```bash
@@ -1010,7 +1010,7 @@ cargo test --release
 - [x] 손상된 EPUB (ZIP 깨짐) → 에러
 - [x] 잘못된 SVG (XML 에러) → 파싱 에러
 - [x] 지원하지 않는 포맷 확장자 → 명확한 에러
-- [ ] DRM 보호된 EPUB → 지원 불가 에러
+- [x] DRM 보호된 EPUB → 지원 불가 에러
 
 ### 9.E 완료 확인 (직접 실행)
 ```bash

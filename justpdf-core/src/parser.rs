@@ -908,6 +908,37 @@ mod tests {
 
     #[cfg(feature = "mmap")]
     #[test]
+    fn test_mmap_truncated_file() {
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let path = dir.join("justpdf_mmap_truncated.pdf");
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            // Write just the PDF header, not a complete PDF
+            f.write_all(b"%PDF-1.4\n").unwrap();
+        }
+        let result = PdfDocument::open_mmap(&path);
+        // Should be an error, not a panic
+        assert!(result.is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    fn test_mmap_empty_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("justpdf_mmap_empty.pdf");
+        {
+            std::fs::File::create(&path).unwrap();
+        }
+        let result = PdfDocument::open_mmap(&path);
+        // Should be an error, not a panic
+        assert!(result.is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
     fn test_open_mmap() {
         use std::io::Write;
         // Write a minimal PDF to a temp file and open with mmap.

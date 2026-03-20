@@ -11,6 +11,7 @@ use crate::error::FormatError;
 use crate::Result;
 
 /// A parsed EPUB document.
+#[derive(Debug)]
 pub struct EpubDocument {
     /// Chapter content (plain text extracted from XHTML).
     chapters: Vec<EpubChapter>,
@@ -21,6 +22,7 @@ pub struct EpubDocument {
 }
 
 /// A single chapter/content file from the EPUB.
+#[derive(Debug)]
 struct EpubChapter {
     /// Chapter title (from spine order, may be just a filename).
     #[allow(dead_code)]
@@ -41,6 +43,13 @@ impl EpubDocument {
         let reader = Cursor::new(data);
         let mut archive = zip::ZipArchive::new(reader)
             .map_err(|e| FormatError::Zip(format!("{e}")))?;
+
+        // Check for DRM protection (META-INF/encryption.xml)
+        if archive.by_name("META-INF/encryption.xml").is_ok() {
+            return Err(FormatError::Format {
+                detail: "DRM-protected EPUB is not supported".into(),
+            });
+        }
 
         // Step 1: Parse META-INF/container.xml to find OPF path
         let opf_path = find_opf_path(&mut archive)?;
@@ -575,6 +584,37 @@ mod tests {
         let text = doc.text().unwrap();
         assert!(text.contains("Chapter One"));
         assert!(text.contains("Chapter Two"));
+    }
+
+    #[test]
+    fn test_drm_epub_error() {
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let opts = zip::write::SimpleFileOptions::default();
+
+            zip.start_file("mimetype", opts).unwrap();
+            zip.write_all(b"application/epub+zip").unwrap();
+
+            zip.start_file("META-INF/container.xml", opts).unwrap();
+            zip.write_all(b"<?xml version='1.0'?><container xmlns='urn:oasis:names:tc:opendocument:xmlns:container' version='1.0'><rootfiles><rootfile full-path='content.opf' media-type='application/oebps-package+xml'/></rootfiles></container>").unwrap();
+
+            zip.start_file("META-INF/encryption.xml", opts).unwrap();
+            zip.write_all(b"<encryption><EncryptedData/></encryption>").unwrap();
+
+            zip.start_file("content.opf", opts).unwrap();
+            zip.write_all(b"<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' version='3.0'><metadata></metadata><manifest></manifest><spine></spine></package>").unwrap();
+
+            zip.finish().unwrap();
+        }
+
+        let result = EpubDocument::from_bytes(&buf);
+        assert!(result.is_err());
+        let err = match result {
+            Err(e) => format!("{e}"),
+            Ok(_) => panic!("expected DRM error"),
+        };
+        assert!(err.to_lowercase().contains("drm"), "error should mention DRM: {err}");
     }
 
     #[test]

@@ -375,6 +375,23 @@ mod tests {
         assert!(results[0].is_err());
     }
 
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_parallel_render_single_page() {
+        use std::path::Path;
+        let pdf_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testpdf.pdf");
+        if !pdf_path.exists() {
+            eprintln!("skipping: testpdf.pdf not found");
+            return;
+        }
+        let doc = justpdf_core::PdfDocument::open(&pdf_path).expect("failed to open PDF");
+        let opts = RenderOptions::default();
+        // Parallel rendering with a single page should work fine.
+        let results = render_pages_parallel(&doc, &[0], &opts);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_ok(), "single-page parallel render failed: {:?}", results[0].as_ref().err());
+    }
+
     #[test]
     fn test_page_transform_identity_at_72dpi() {
         let media_box = justpdf_core::page::Rect {
