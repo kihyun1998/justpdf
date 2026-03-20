@@ -1,0 +1,14 @@
+[package]
+name = "justpdf-cli"
+version = "0.1.0"
+edition = "2024"
+description = "Command-line PDF tool powered by justpdf"
+
+[[bin]]
+name = "justpdf"
+path = "src/main.rs"
+
+[dependencies]
+justpdf-core = { path = "../justpdf-core" }
+justpdf-render = { path = "../justpdf-render" }
+clap = { version = "4", features = ["derive"] }

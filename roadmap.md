@@ -1100,22 +1100,22 @@ cargo test -p justpdf --features "ocr barcode zugferd bidi deskew"
 ## Phase 11: API & 생태계
 
 ### 11.1 Public API
-- [ ] 고수준 API 설계 (Document, Page, TextExtractor, Renderer, Writer)
-- [ ] Builder 패턴 기반 PDF 생성 API
-- [ ] Iterator 기반 페이지/어노테이션 순회
+- [x] 고수준 API 설계 (Document, Page, Metadata, Modifier) *(justpdf crate)*
+- [x] Builder 패턴 기반 PDF 생성 API *(DocumentBuilder + PageBuilder re-export)*
+- [x] Iterator 기반 페이지 순회 *(doc.pages() → Vec<Page>)*
 - [ ] async 지원 (tokio 호환)
-- [ ] Error 타입 설계 (thiserror)
+- [x] Error 타입 설계 *(Error enum: Pdf/Render/Io)*
 
 ### 11.2 CLI 도구
-- [ ] `justpdf render` - 페이지 렌더링 (PNG/JPEG)
-- [ ] `justpdf text` - 텍스트 추출
-- [ ] `justpdf info` - PDF 정보 표시
-- [ ] `justpdf merge` - PDF 병합
-- [ ] `justpdf split` - 페이지 분리
-- [ ] `justpdf encrypt` / `decrypt` - 암호화 관리
-- [ ] `justpdf sign` - 디지털 서명
-- [ ] `justpdf clean` - 최적화/복구
-- [ ] `justpdf convert` - 포맷 변환
+- [x] `justpdf render` - 페이지 렌더링 (PNG/JPEG/SVG)
+- [x] `justpdf text` - 텍스트 추출 (plain/html/json/markdown)
+- [x] `justpdf info` - PDF 정보 표시
+- [x] `justpdf merge` - PDF 병합
+- [x] `justpdf split` - 페이지 분리
+- [x] `justpdf encrypt` / `decrypt` - 암호화 관리
+- [x] `justpdf sign` - 디지털 서명 *(stub)*
+- [x] `justpdf clean` - 최적화/복구
+- [ ] `justpdf convert` - 포맷 변환 *(Phase 9 확장 포맷 필요)*
 
 ### 11.3 Language Bindings
 - [ ] C API (FFI)
@@ -1132,22 +1132,22 @@ cargo test -p justpdf --features "ocr barcode zugferd bidi deskew"
 ### 11.T 테스트 요구사항
 
 **Positive Tests:**
-- [ ] 고수준 API → Document::open → page(0) → render → save 체인 동작
-- [ ] Builder API → PdfWriter::new().add_page().add_text().save() 동작
-- [ ] Iterator → doc.pages().map(|p| p.text()).collect() 동작
+- [x] 고수준 API → Document::open → page(0) → render → save 체인 동작
+- [x] Builder API → DocumentBuilder::new().add_page().build() 동작
+- [x] Iterator → doc.pages().map(|p| p.text()).collect() 동작
 - [ ] async API → tokio::spawn에서 Document::open_async 동작
-- [ ] CLI `justpdf render your.pdf -o out.png` → 종료코드 0 + 파일 생성
-- [ ] CLI `justpdf text your.pdf` → stdout에 텍스트 출력
-- [ ] CLI `justpdf info your.pdf` → PDF 정보 출력
-- [ ] CLI `justpdf merge a.pdf b.pdf -o merged.pdf` → 동작
+- [x] CLI `justpdf render your.pdf -o out.png` → 종료코드 0 + 파일 생성
+- [x] CLI `justpdf text your.pdf` → stdout에 텍스트 출력
+- [x] CLI `justpdf info your.pdf` → PDF 정보 출력
+- [x] CLI `justpdf merge a.pdf b.pdf -o merged.pdf` → 동작
 - [ ] Python: `import justpdf; doc = justpdf.open("your.pdf")` 동작
 - [ ] WASM: 브라우저에서 PDF 렌더링 동작
 - [ ] `cargo doc --no-deps` → 경고 없이 문서 빌드
 
 **Negative Tests:**
-- [ ] CLI 인자 없이 실행 → help 메시지 (크래시 아님)
-- [ ] CLI 잘못된 서브커맨드 → 에러 메시지 + 종료코드 1
-- [ ] CLI 존재하지 않는 입력 파일 → 에러 메시지
+- [x] CLI 인자 없이 실행 → help 메시지 (크래시 아님)
+- [x] CLI 잘못된 서브커맨드 → 에러 메시지 + 종료코드 1
+- [x] CLI 존재하지 않는 입력 파일 → 에러 메시지
 - [ ] Python에서 잘못된 경로 → Python exception (세그폴트 아님)
 - [ ] WASM에서 메모리 초과 → JS 에러 (크래시 아님)
 

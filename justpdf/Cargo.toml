@@ -1,0 +1,17 @@
+[package]
+name = "justpdf"
+version = "0.1.0"
+edition = "2024"
+description = "Pure Rust PDF engine - read, render, extract, create, modify"
+
+[features]
+default = []
+mmap = ["justpdf-core/mmap"]
+parallel = ["justpdf-render/parallel"]
+arena = ["justpdf-core/arena"]
+
+[dependencies]
+justpdf-core = { path = "../justpdf-core" }
+justpdf-render = { path = "../justpdf-render" }
+
+[dev-dependencies]
