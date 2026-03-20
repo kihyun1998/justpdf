@@ -990,7 +990,7 @@ cargo test --release
 
 ### 9.5 기타
 - [x] CBZ/CBT (Comic Book Archive) *(ZIP + 이미지 정렬 + 렌더링 + PDF 변환)*
-- [ ] MOBI/FB2 eBook
+- [x] MOBI/FB2 eBook *(MOBI PalmDOC + FB2 XML 파서)*
 - [x] Plain Text → PDF *(자동 줄바꿈/페이지네이션 + Courier 폰트)*
 
 ### 9.T 테스트 요구사항
@@ -1043,7 +1043,7 @@ cargo test -p justpdf --features "xps epub svg office"
 ### 10.2 바코드
 - [x] QR Code 생성 *(qrcode crate — generate_qr, generate_qr_png)*
 - [x] 1D 바코드 (Code128, EAN13, Code39) *(순수 Rust 인코더)*
-- [ ] 2D 바코드 (DataMatrix, PDF417, Aztec, ...)
+- [x] 2D 바코드 (DataMatrix, PDF417, Aztec) *(순수 Rust 인코더)*
 
 ### 10.3 ZUGFeRD
 - [x] 전자 인보이스 프로필 감지 *(is_zugferd, detect_profile)*

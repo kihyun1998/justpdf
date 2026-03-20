@@ -12,7 +12,9 @@ svg = ["roxmltree"]
 office = ["zip", "roxmltree"]
 cbz = ["zip"]
 plaintext = []
-all = ["xps", "epub", "svg", "office", "cbz", "plaintext"]
+mobi = []
+fb2 = ["roxmltree"]
+all = ["xps", "epub", "svg", "office", "cbz", "plaintext", "mobi", "fb2"]
 
 [dependencies]
 justpdf-core = { path = "../justpdf-core" }

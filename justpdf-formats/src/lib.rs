@@ -30,5 +30,11 @@ pub mod office;
 #[cfg(feature = "epub")]
 pub mod epub;
 
+#[cfg(feature = "mobi")]
+pub mod mobi;
+
+#[cfg(feature = "fb2")]
+pub mod fb2;
+
 pub use error::{FormatError, Result};
 pub use common::{FormatDocument, FormatPage, FormatMetadata};

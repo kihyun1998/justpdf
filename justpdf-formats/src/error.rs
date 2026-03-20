@@ -8,7 +8,7 @@ pub enum FormatError {
     #[cfg(any(feature = "xps", feature = "epub", feature = "office", feature = "cbz"))]
     Zip(String),
     /// XML parsing error.
-    #[cfg(any(feature = "xps", feature = "epub", feature = "svg", feature = "office"))]
+    #[cfg(any(feature = "xps", feature = "epub", feature = "svg", feature = "office", feature = "fb2"))]
     Xml(String),
     /// PDF generation error.
     Pdf(justpdf_core::JustPdfError),
@@ -30,7 +30,7 @@ impl fmt::Display for FormatError {
             Self::Io(e) => write!(f, "I/O error: {e}"),
             #[cfg(any(feature = "xps", feature = "epub", feature = "office", feature = "cbz"))]
             Self::Zip(e) => write!(f, "ZIP error: {e}"),
-            #[cfg(any(feature = "xps", feature = "epub", feature = "svg", feature = "office"))]
+            #[cfg(any(feature = "xps", feature = "epub", feature = "svg", feature = "office", feature = "fb2"))]
             Self::Xml(e) => write!(f, "XML error: {e}"),
             Self::Pdf(e) => write!(f, "PDF error: {e}"),
             Self::Render(e) => write!(f, "render error: {e}"),

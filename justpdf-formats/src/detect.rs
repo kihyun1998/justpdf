@@ -12,6 +12,8 @@ pub enum DocumentFormat {
     Pptx,
     Cbz,
     PlainText,
+    Mobi,
+    Fb2,
     Unknown,
 }
 
@@ -26,6 +28,8 @@ pub fn detect_format(path: &Path) -> DocumentFormat {
         Some("xlsx") => DocumentFormat::Xlsx,
         Some("pptx") => DocumentFormat::Pptx,
         Some("cbz") => DocumentFormat::Cbz,
+        Some("mobi" | "prc") => DocumentFormat::Mobi,
+        Some("fb2") => DocumentFormat::Fb2,
         Some("txt" | "text" | "md" | "rst" | "log") => DocumentFormat::PlainText,
         _ => DocumentFormat::Unknown,
     }
@@ -74,6 +78,8 @@ impl std::fmt::Display for DocumentFormat {
             Self::Pptx => write!(f, "PPTX"),
             Self::Cbz => write!(f, "CBZ"),
             Self::PlainText => write!(f, "Plain Text"),
+            Self::Mobi => write!(f, "MOBI"),
+            Self::Fb2 => write!(f, "FB2"),
             Self::Unknown => write!(f, "Unknown"),
         }
     }
