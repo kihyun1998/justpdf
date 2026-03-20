@@ -1,24 +1,27 @@
 [package]
 name = "justpdf-render"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "PDF rendering engine for justpdf - rasterize pages to images"
 repository = "https://github.com/kihyun1998/justpdf"
+keywords = ["pdf", "render", "png", "image", "rasterize"]
+categories = ["graphics", "rendering"]
+homepage = "https://github.com/kihyun1998/justpdf"
 
 [features]
 default = []
 parallel = ["rayon"]
 
 [dependencies]
-justpdf-core = { version = "0.1.1", path = "../justpdf-core" }
+justpdf-core = { version = "0.1.2", path = "../justpdf-core" }
 tiny-skia = "0.11"
 ttf-parser = "0.25"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rayon = { version = "1", optional = true }
 
 [dev-dependencies]
-justpdf-core = { version = "0.1.1", path = "../justpdf-core" }
+justpdf-core = { version = "0.1.2", path = "../justpdf-core" }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]

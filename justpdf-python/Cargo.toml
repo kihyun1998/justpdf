@@ -1,6 +1,6 @@
 [package]
 name = "justpdf-python"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Python bindings for justpdf PDF engine"
 license = "MIT OR Apache-2.0"
@@ -11,8 +11,8 @@ name = "justpdf"
 crate-type = ["cdylib"]
 
 [dependencies]
-justpdf-core = { version = "0.1.1", path = "../justpdf-core" }
-justpdf-render = { version = "0.1.1", path = "../justpdf-render" }
+justpdf-core = { version = "0.1.2", path = "../justpdf-core" }
+justpdf-render = { version = "0.1.2", path = "../justpdf-render" }
 pyo3 = { version = "0.23", features = ["extension-module"] }
 
 [workspace]

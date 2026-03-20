@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "justpdf-core",
  "justpdf-render",
@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "justpdf-core",
@@ -659,7 +659,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes",
  "bumpalo",
@@ -688,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-ffi"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "justpdf-core",
  "justpdf-render",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-formats"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "image",
  "justpdf-core",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-render"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "criterion",
  "image",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-special"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "image",
  "justpdf-core",

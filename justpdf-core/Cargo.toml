@@ -1,10 +1,13 @@
 [package]
 name = "justpdf-core"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Core PDF parsing, writing, and manipulation library for justpdf"
 repository = "https://github.com/kihyun1998/justpdf"
+keywords = ["pdf", "parser", "document", "text-extraction", "crypto"]
+categories = ["parser-implementations", "text-processing"]
+homepage = "https://github.com/kihyun1998/justpdf"
 
 [features]
 default = []

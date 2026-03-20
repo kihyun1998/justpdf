@@ -1,6 +1,6 @@
 [package]
 name = "justpdf-node"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Node.js bindings for justpdf PDF engine"
 license = "MIT OR Apache-2.0"
@@ -10,8 +10,8 @@ repository = "https://github.com/kihyun1998/justpdf"
 crate-type = ["cdylib"]
 
 [dependencies]
-justpdf-core = { version = "0.1.1", path = "../justpdf-core" }
-justpdf-render = { version = "0.1.1", path = "../justpdf-render" }
+justpdf-core = { version = "0.1.2", path = "../justpdf-core" }
+justpdf-render = { version = "0.1.2", path = "../justpdf-render" }
 napi = { version = "2", features = ["napi6"] }
 napi-derive = "2"
 

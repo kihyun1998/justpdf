@@ -1,10 +1,13 @@
 [package]
 name = "justpdf"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Pure Rust PDF engine - read, render, extract, create, modify"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kihyun1998/justpdf"
+keywords = ["pdf", "document", "render", "text-extraction", "parser"]
+categories = ["parser-implementations", "text-processing", "graphics"]
+homepage = "https://github.com/kihyun1998/justpdf"
 
 [features]
 default = []
@@ -14,8 +17,8 @@ arena = ["justpdf-core/arena"]
 async = ["tokio"]
 
 [dependencies]
-justpdf-core = { version = "0.1.1", path = "../justpdf-core" }
-justpdf-render = { version = "0.1.1", path = "../justpdf-render" }
+justpdf-core = { version = "0.1.2", path = "../justpdf-core" }
+justpdf-render = { version = "0.1.2", path = "../justpdf-render" }
 tokio = { version = "1", features = ["fs", "rt"], optional = true }
 
 [dev-dependencies]
