@@ -624,9 +624,9 @@ dependencies = [
 
 [[package]]
 name = "justbig2"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e0b687f285d80f6ba0b8986690a46a2639adcfcdeed3f3c46631a9861365025"
+checksum = "df5c6c5e58c1f4865719a8f11143debe4f121a7c18f6a852ec532288b8f53657"
 
 [[package]]
 name = "justjp2"
@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "justpdf-core",
  "justpdf-render",
@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "justpdf-core",
@@ -659,7 +659,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes",
  "bumpalo",
@@ -688,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-ffi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "justpdf-core",
  "justpdf-render",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-formats"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
  "justpdf-core",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-render"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "criterion",
  "image",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "justpdf-special"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
  "justpdf-core",

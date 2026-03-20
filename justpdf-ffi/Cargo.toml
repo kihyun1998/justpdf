@@ -1,6 +1,6 @@
 [package]
 name = "justpdf-ffi"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "C FFI bindings for justpdf PDF engine"
 license = "MIT OR Apache-2.0"
@@ -10,5 +10,5 @@ repository = "https://github.com/kihyun1998/justpdf"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-justpdf-core = { version = "0.1.0", path = "../justpdf-core" }
-justpdf-render = { version = "0.1.0", path = "../justpdf-render" }
+justpdf-core = { version = "0.1.1", path = "../justpdf-core" }
+justpdf-render = { version = "0.1.1", path = "../justpdf-render" }

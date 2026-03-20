@@ -1,6 +1,6 @@
 [package]
 name = "justpdf-formats"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Extended format support for justpdf - XPS, EPUB, SVG, Office, CBZ"
 license = "MIT OR Apache-2.0"
@@ -19,8 +19,8 @@ fb2 = ["roxmltree"]
 all = ["xps", "epub", "svg", "office", "cbz", "plaintext", "mobi", "fb2"]
 
 [dependencies]
-justpdf-core = { version = "0.1.0", path = "../justpdf-core" }
-justpdf-render = { version = "0.1.0", path = "../justpdf-render" }
+justpdf-core = { version = "0.1.1", path = "../justpdf-core" }
+justpdf-render = { version = "0.1.1", path = "../justpdf-render" }
 thiserror = "2"
 zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
 roxmltree = { version = "0.20", optional = true }

@@ -1,6 +1,6 @@
 [package]
 name = "justpdf-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Command-line PDF tool powered by justpdf"
 license = "MIT OR Apache-2.0"
@@ -11,7 +11,7 @@ name = "justpdf"
 path = "src/main.rs"
 
 [dependencies]
-justpdf-core = { version = "0.1.0", path = "../justpdf-core" }
-justpdf-render = { version = "0.1.0", path = "../justpdf-render" }
-justpdf-formats = { version = "0.1.0", path = "../justpdf-formats", features = ["all"] }
+justpdf-core = { version = "0.1.1", path = "../justpdf-core" }
+justpdf-render = { version = "0.1.1", path = "../justpdf-render" }
+justpdf-formats = { version = "0.1.1", path = "../justpdf-formats", features = ["all"] }
 clap = { version = "4", features = ["derive"] }

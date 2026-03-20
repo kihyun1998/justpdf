@@ -1,6 +1,6 @@
 [package]
 name = "justpdf-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Core PDF parsing, writing, and manipulation library for justpdf"
@@ -20,7 +20,7 @@ jpeg-decoder = "0.3"
 ttf-parser = "0.25"
 png = "0.17"
 justjp2 = "0.1"
-justbig2 = "0.1"
+justbig2 = "0.2"
 
 # Crypto (Phase 6)
 aes = "0.8"
