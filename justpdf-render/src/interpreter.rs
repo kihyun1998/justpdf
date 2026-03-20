@@ -5,6 +5,7 @@ use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
 use justpdf_core::font::{FontInfo, ToUnicodeCMap, parse_font_info};
 use justpdf_core::image;
 use justpdf_core::object::{PdfDict, PdfObject};
+use justpdf_core::ocg::{self, OCConfig};
 use justpdf_core::page::PageInfo;
 use justpdf_core::PdfDocument;
 use tiny_skia::{FillRule, Mask, PathBuilder, Pixmap, Transform};
@@ -43,6 +44,11 @@ pub struct RenderInterpreter<'a> {
     xobject_depth: u32,
     /// Cache for pre-built glyph paths.
     glyph_cache: GlyphCache,
+    /// Optional content configuration for layer visibility.
+    oc_config: Option<OCConfig>,
+    /// Marked content skip depth: when > 0, all drawing ops are skipped
+    /// until the matching EMC reduces it back to 0.
+    oc_skip_depth: u32,
 }
 
 impl<'a> RenderInterpreter<'a> {
@@ -51,6 +57,12 @@ impl<'a> RenderInterpreter<'a> {
         device: &'a mut PixmapDevice,
         page_transform: Matrix,
     ) -> Self {
+        // Load optional content config for layer visibility
+        let oc_config = ocg::read_oc_properties(doc)
+            .ok()
+            .flatten()
+            .and_then(|props| props.default_config);
+
         Self {
             doc,
             device,
@@ -61,6 +73,8 @@ impl<'a> RenderInterpreter<'a> {
             path_builder: None,
             xobject_depth: 0,
             glyph_cache: GlyphCache::with_default_capacity(),
+            oc_config,
+            oc_skip_depth: 0,
         }
     }
 
@@ -162,6 +176,94 @@ impl<'a> RenderInterpreter<'a> {
         }
 
         Ok(())
+    }
+
+    /// Check if an OC (Optional Content) marked content block is visible.
+    ///
+    /// BDC operands for OC are: /OC <properties>
+    /// The properties can be:
+    /// - An inline dict with /Type /OCG and we check the OCG ref
+    /// - An inline dict with /Type /OCMD and we check the membership
+    /// - A name referencing a Properties resource (indirect OCG/OCMD)
+    fn check_oc_visibility(&self, operands: &[Operand], config: &OCConfig) -> bool {
+        // The second operand is the properties dict or name
+        let props = match operands.get(1) {
+            Some(o) => o,
+            None => return true,
+        };
+
+        match props {
+            Operand::Dict(dict) => {
+                let pdf_dict = self.operand_dict_to_pdf_dict(dict);
+                self.check_oc_dict_visibility(&pdf_dict, config)
+            }
+            Operand::Name(_name) => {
+                // Name references a Properties resource — resolve it
+                // TODO: look up in page /Resources /Properties dict
+                true
+            }
+            _ => true,
+        }
+    }
+
+    /// Check visibility of an OC dictionary (OCG or OCMD).
+    fn check_oc_dict_visibility(&self, dict: &PdfDict, config: &OCConfig) -> bool {
+        let type_name = dict.get_name(b"Type").unwrap_or(b"");
+
+        if type_name == b"OCG" {
+            // Direct OCG reference — check if this OCG is visible
+            // We need the IndirectRef, but inline dicts don't have one.
+            // OCGs in BDC are usually referenced via Properties resource.
+            // For inline OCG dicts, check by name against the config's groups.
+            true
+        } else if type_name == b"OCMD" {
+            // OCMD — parse and check visibility
+            if let Some(ocmd) = ocg::parse_ocmd(dict) {
+                ocg::is_ocmd_visible(&ocmd, config)
+            } else {
+                true
+            }
+        } else {
+            // Check if it has /OCGs key (OCMD without /Type)
+            if dict.get(b"OCGs").is_some() {
+                if let Some(ocmd) = ocg::parse_ocmd(dict) {
+                    return ocg::is_ocmd_visible(&ocmd, config);
+                }
+            }
+            true
+        }
+    }
+
+    /// Convert operand dict entries to a PdfDict for OCG/OCMD parsing.
+    fn operand_dict_to_pdf_dict(&self, entries: &[(Vec<u8>, Operand)]) -> PdfDict {
+        let mut dict = PdfDict::new();
+        for (key, value) in entries {
+            dict.insert(key.clone(), Self::operand_to_pdf_object(value));
+        }
+        dict
+    }
+
+    /// Convert an Operand to a PdfObject (best-effort for OCG dict parsing).
+    fn operand_to_pdf_object(op: &Operand) -> PdfObject {
+        match op {
+            Operand::Integer(v) => PdfObject::Integer(*v),
+            Operand::Real(v) => PdfObject::Real(*v),
+            Operand::Bool(v) => PdfObject::Bool(*v),
+            Operand::Null => PdfObject::Null,
+            Operand::Name(n) => PdfObject::Name(n.clone()),
+            Operand::String(s) => PdfObject::String(s.clone()),
+            Operand::Array(arr) => {
+                PdfObject::Array(arr.iter().map(Self::operand_to_pdf_object).collect())
+            }
+            Operand::Dict(entries) => {
+                let mut dict = PdfDict::new();
+                for (k, v) in entries {
+                    dict.insert(k.clone(), Self::operand_to_pdf_object(v));
+                }
+                PdfObject::Dict(dict)
+            }
+            Operand::InlineImage { .. } => PdfObject::Null,
+        }
     }
 
     fn resolve_page_fonts(&mut self, page: &PageInfo) -> Result<()> {
@@ -417,6 +519,19 @@ impl<'a> RenderInterpreter<'a> {
 
     fn execute_ops(&mut self, ops: &[ContentOp], page: &PageInfo) -> Result<()> {
         for op in ops {
+            let operator = op.operator_str();
+
+            // Handle OCG skip: when inside a hidden layer, only track
+            // BMC/BDC/EMC nesting to know when to resume.
+            if self.oc_skip_depth > 0 {
+                match operator {
+                    "BMC" | "BDC" => self.oc_skip_depth += 1,
+                    "EMC" => self.oc_skip_depth -= 1,
+                    _ => {}
+                }
+                continue;
+            }
+
             self.execute_op(op, page)?;
         }
         Ok(())
@@ -854,8 +969,25 @@ impl<'a> RenderInterpreter<'a> {
                 }
             }
 
-            // --- Marked content (ignore) ---
-            "BMC" | "BDC" | "EMC" | "MP" | "DP" => {}
+            // --- Marked content / Optional Content ---
+            "BMC" => {}
+            "BDC" => {
+                // Check if this is an OC (Optional Content) marked content
+                // BDC operands: tag properties
+                // If tag is /OC and properties is a dict with /OCGS or /OCGs,
+                // check visibility against the OCG config.
+                if let Some(config) = &self.oc_config {
+                    let tag = operands.first().and_then(|o| o.as_name());
+                    if tag == Some(b"OC") {
+                        let visible = self.check_oc_visibility(operands, config);
+                        if !visible {
+                            self.oc_skip_depth = 1;
+                        }
+                    }
+                }
+            }
+            "EMC" => {}
+            "MP" | "DP" => {}
 
             // --- Shading ---
             "sh" => {
