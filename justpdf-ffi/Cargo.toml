@@ -1,0 +1,12 @@
+[package]
+name = "justpdf-ffi"
+version = "0.1.0"
+edition = "2024"
+description = "C FFI bindings for justpdf PDF engine"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+justpdf-core = { path = "../justpdf-core" }
+justpdf-render = { path = "../justpdf-render" }

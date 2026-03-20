@@ -1,0 +1,16 @@
+[package]
+name = "justpdf-python"
+version = "0.1.0"
+edition = "2024"
+description = "Python bindings for justpdf PDF engine"
+
+[lib]
+name = "justpdf"
+crate-type = ["cdylib"]
+
+[dependencies]
+justpdf-core = { path = "../justpdf-core" }
+justpdf-render = { path = "../justpdf-render" }
+pyo3 = { version = "0.23", features = ["extension-module"] }
+
+[workspace]

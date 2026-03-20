@@ -9,9 +9,11 @@ default = []
 mmap = ["justpdf-core/mmap"]
 parallel = ["justpdf-render/parallel"]
 arena = ["justpdf-core/arena"]
+async = ["tokio"]
 
 [dependencies]
 justpdf-core = { path = "../justpdf-core" }
 justpdf-render = { path = "../justpdf-render" }
+tokio = { version = "1", features = ["fs", "rt"], optional = true }
 
 [dev-dependencies]

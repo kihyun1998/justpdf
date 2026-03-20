@@ -582,6 +582,25 @@ pub fn merge_bytes(pdfs: &[Vec<u8>]) -> Result<Vec<u8>> {
     Ok(justpdf_core::writer::merge_documents(&refs)?)
 }
 
+#[cfg(feature = "async")]
+impl Document {
+    /// Open a PDF file asynchronously.
+    pub async fn open_async(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let data = tokio::fs::read(path.as_ref()).await?;
+        Self::from_bytes(data)
+    }
+}
+
+#[cfg(feature = "async")]
+impl<'a> Page<'a> {
+    /// Render to PNG and save to a file asynchronously.
+    pub async fn render_to_file_async(&self, path: impl AsRef<std::path::Path>, dpi: f64) -> Result<()> {
+        let png = self.render_png(dpi)?;
+        tokio::fs::write(path, &png).await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

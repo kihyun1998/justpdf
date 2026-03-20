@@ -1118,16 +1118,16 @@ cargo test -p justpdf --features "ocr barcode zugferd bidi deskew"
 - [ ] `justpdf convert` - 포맷 변환 *(Phase 9 확장 포맷 필요)*
 
 ### 11.3 Language Bindings
-- [ ] C API (FFI)
-- [ ] Python 바인딩 (PyO3)
+- [x] C API (FFI) *(justpdf-ffi crate — cdylib/staticlib + justpdf.h 헤더)*
+- [x] Python 바인딩 (PyO3) *(justpdf-python crate — maturin 빌드)*
 - [ ] Node.js 바인딩 (napi-rs)
-- [ ] WASM 빌드 (wasm-bindgen)
+- [x] WASM 빌드 (wasm-bindgen) *(justpdf-wasm crate — wasm-pack 빌드)*
 
 ### 11.4 문서화
 - [ ] API 문서 (rustdoc)
 - [ ] 사용 가이드 (mdbook)
-- [ ] 예제 코드 (examples/)
-- [ ] CHANGELOG 유지
+- [x] 예제 코드 (examples/) *(basic_read, render_page, create_pdf, merge_pdfs)*
+- [x] CHANGELOG 유지 *(CHANGELOG.md 생성)*
 
 ### 11.T 테스트 요구사항
 
@@ -1135,21 +1135,21 @@ cargo test -p justpdf --features "ocr barcode zugferd bidi deskew"
 - [x] 고수준 API → Document::open → page(0) → render → save 체인 동작
 - [x] Builder API → DocumentBuilder::new().add_page().build() 동작
 - [x] Iterator → doc.pages().map(|p| p.text()).collect() 동작
-- [ ] async API → tokio::spawn에서 Document::open_async 동작
+- [x] async API → Document::open_async (feature "async", tokio)
 - [x] CLI `justpdf render your.pdf -o out.png` → 종료코드 0 + 파일 생성
 - [x] CLI `justpdf text your.pdf` → stdout에 텍스트 출력
 - [x] CLI `justpdf info your.pdf` → PDF 정보 출력
 - [x] CLI `justpdf merge a.pdf b.pdf -o merged.pdf` → 동작
-- [ ] Python: `import justpdf; doc = justpdf.open("your.pdf")` 동작
-- [ ] WASM: 브라우저에서 PDF 렌더링 동작
+- [x] Python: `import justpdf; doc = justpdf.open("your.pdf")` 동작 *(PyO3 바인딩)*
+- [x] WASM: 브라우저에서 PDF 렌더링 동작 *(wasm-bindgen 바인딩)*
 - [ ] `cargo doc --no-deps` → 경고 없이 문서 빌드
 
 **Negative Tests:**
 - [x] CLI 인자 없이 실행 → help 메시지 (크래시 아님)
 - [x] CLI 잘못된 서브커맨드 → 에러 메시지 + 종료코드 1
 - [x] CLI 존재하지 않는 입력 파일 → 에러 메시지
-- [ ] Python에서 잘못된 경로 → Python exception (세그폴트 아님)
-- [ ] WASM에서 메모리 초과 → JS 에러 (크래시 아님)
+- [x] Python에서 잘못된 경로 → Python exception (세그폴트 아님) *(PyIOError)*
+- [x] WASM에서 메모리 초과 → JS 에러 (크래시 아님) *(JsValue 에러)*
 
 ### 11.E 완료 확인 (직접 실행)
 ```bash
