@@ -16,8 +16,8 @@ deskew = []
 all = ["ocr", "barcode", "zugferd", "bidi", "deskew"]
 
 [dependencies]
-justpdf-core = { path = "../justpdf-core" }
-justpdf-render = { path = "../justpdf-render" }
+justpdf-core = { version = "0.1.0", path = "../justpdf-core" }
+justpdf-render = { version = "0.1.0", path = "../justpdf-render" }
 thiserror = "2"
 qrcode = { version = "0.14", optional = true }
 roxmltree = { version = "0.20", optional = true }

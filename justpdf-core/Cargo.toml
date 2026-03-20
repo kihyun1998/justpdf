@@ -3,6 +3,7 @@ name = "justpdf-core"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Core PDF parsing, writing, and manipulation library for justpdf"
 repository = "https://github.com/kihyun1998/justpdf"
 
 [features]

@@ -11,7 +11,7 @@ name = "justpdf"
 path = "src/main.rs"
 
 [dependencies]
-justpdf-core = { path = "../justpdf-core" }
-justpdf-render = { path = "../justpdf-render" }
-justpdf-formats = { path = "../justpdf-formats", features = ["all"] }
+justpdf-core = { version = "0.1.0", path = "../justpdf-core" }
+justpdf-render = { version = "0.1.0", path = "../justpdf-render" }
+justpdf-formats = { version = "0.1.0", path = "../justpdf-formats", features = ["all"] }
 clap = { version = "4", features = ["derive"] }

@@ -10,8 +10,8 @@ repository = "https://github.com/kihyun1998/justpdf"
 crate-type = ["cdylib"]
 
 [dependencies]
-justpdf-core = { path = "../justpdf-core" }
-justpdf-render = { path = "../justpdf-render" }
+justpdf-core = { version = "0.1.0", path = "../justpdf-core" }
+justpdf-render = { version = "0.1.0", path = "../justpdf-render" }
 napi = { version = "2", features = ["napi6"] }
 napi-derive = "2"
 

@@ -11,8 +11,8 @@ name = "justpdf"
 crate-type = ["cdylib"]
 
 [dependencies]
-justpdf-core = { path = "../justpdf-core" }
-justpdf-render = { path = "../justpdf-render" }
+justpdf-core = { version = "0.1.0", path = "../justpdf-core" }
+justpdf-render = { version = "0.1.0", path = "../justpdf-render" }
 pyo3 = { version = "0.23", features = ["extension-module"] }
 
 [workspace]
