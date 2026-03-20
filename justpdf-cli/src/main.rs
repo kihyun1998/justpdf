@@ -116,6 +116,17 @@ enum Commands {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// Convert between document formats
+    Convert {
+        /// Input file
+        file: PathBuf,
+        /// Output file
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Output format (auto-detected from extension if not specified)
+        #[arg(long, short = 'F')]
+        format: Option<String>,
+    },
     /// Digital signature (not yet fully implemented)
     Sign {
         /// Input PDF file
@@ -186,6 +197,11 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             output,
         } => cmd_decrypt(&file, &password, &output),
         Commands::Clean { file, output } => cmd_clean(&file, &output),
+        Commands::Convert {
+            file,
+            output,
+            format,
+        } => cmd_convert(&file, &output, format.as_deref()),
         Commands::Sign { .. } => {
             eprintln!("Digital signature support is not yet fully implemented.");
             Ok(())
@@ -557,5 +573,99 @@ fn cmd_clean(file: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error
         format_size(new_size),
         reduction
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// convert
+// ---------------------------------------------------------------------------
+
+fn cmd_convert(file: &Path, output: &Path, format: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    use justpdf_formats::detect::{detect_format, DocumentFormat};
+    use justpdf_formats::common::FormatDocument;
+
+    let input_format = detect_format(file);
+    let output_ext = format.unwrap_or_else(|| {
+        output.extension().and_then(|e| e.to_str()).unwrap_or("pdf")
+    });
+
+    match input_format {
+        DocumentFormat::PlainText => {
+            let doc = justpdf_formats::plaintext::PlainTextDocument::open(file)?;
+            match output_ext {
+                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
+                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                _ => return Err(format!("unsupported output format: {output_ext}").into()),
+            }
+        }
+        DocumentFormat::Svg => {
+            let doc = justpdf_formats::svg::SvgDocument::open(file)?;
+            match output_ext {
+                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
+                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                _ => return Err(format!("unsupported output format: {output_ext}").into()),
+            }
+        }
+        DocumentFormat::Epub => {
+            let doc = justpdf_formats::epub::EpubDocument::open(file)?;
+            match output_ext {
+                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
+                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                _ => return Err(format!("unsupported output format: {output_ext}").into()),
+            }
+        }
+        DocumentFormat::Cbz => {
+            let doc = justpdf_formats::cbz::CbzDocument::open(file)?;
+            match output_ext {
+                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
+                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                _ => return Err(format!("unsupported output format: {output_ext}").into()),
+            }
+        }
+        DocumentFormat::Xps => {
+            let doc = justpdf_formats::xps::XpsDocument::open(file)?;
+            match output_ext {
+                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
+                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                _ => return Err(format!("unsupported output format: {output_ext}").into()),
+            }
+        }
+        DocumentFormat::Docx | DocumentFormat::Xlsx | DocumentFormat::Pptx => {
+            let doc = justpdf_formats::office::OfficeDocument::open(file)?;
+            match output_ext {
+                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
+                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                _ => return Err(format!("unsupported output format: {output_ext}").into()),
+            }
+        }
+        DocumentFormat::Pdf => {
+            match output_ext {
+                "svg" => {
+                    let doc = justpdf_core::PdfDocument::open(file)?;
+                    let svg = justpdf_render::render_page_to_svg(&doc, 0)?;
+                    std::fs::write(output, svg)?;
+                }
+                "png" => {
+                    let doc = justpdf_core::PdfDocument::open(file)?;
+                    let opts = justpdf_render::RenderOptions {
+                        dpi: 150.0,
+                        format: justpdf_render::OutputFormat::Png,
+                        ..Default::default()
+                    };
+                    let data = justpdf_render::render_page(&doc, 0, &opts)?;
+                    std::fs::write(output, data)?;
+                }
+                "txt" => {
+                    let doc = justpdf_core::PdfDocument::open(file)?;
+                    let text = justpdf_core::text::extract_all_text_string(&doc)?;
+                    std::fs::write(output, text)?;
+                }
+                _ => return Err(format!("unsupported output: {output_ext}").into()),
+            }
+        }
+        _ => return Err(format!("unsupported input format: {input_format}").into()),
+    }
+
+    eprintln!("Converted {} -> {}", file.display(), output.display());
     Ok(())
 }

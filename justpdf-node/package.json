@@ -1,0 +1,20 @@
+{
+  "name": "justpdf",
+  "version": "0.1.0",
+  "description": "Node.js bindings for justpdf PDF engine",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "justpdf",
+    "triples": {
+      "defaults": true
+    }
+  },
+  "scripts": {
+    "build": "napi build --release",
+    "prepublishOnly": "napi prepublish -t npm"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2"
+  }
+}

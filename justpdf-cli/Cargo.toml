@@ -11,4 +11,5 @@ path = "src/main.rs"
 [dependencies]
 justpdf-core = { path = "../justpdf-core" }
 justpdf-render = { path = "../justpdf-render" }
+justpdf-formats = { path = "../justpdf-formats", features = ["all"] }
 clap = { version = "4", features = ["derive"] }

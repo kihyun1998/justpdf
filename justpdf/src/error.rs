@@ -10,9 +10,15 @@ pub enum Error {
     /// I/O error.
     Io(std::io::Error),
     /// Page index out of range.
-    PageOutOfRange { index: usize, count: usize },
+    PageOutOfRange {
+        /// The requested page index.
+        index: usize,
+        /// Total number of pages in the document.
+        count: usize,
+    },
 }
 
+/// A specialized `Result` type for justpdf operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl fmt::Display for Error {

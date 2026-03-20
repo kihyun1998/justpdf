@@ -1115,17 +1115,17 @@ cargo test -p justpdf --features "ocr barcode zugferd bidi deskew"
 - [x] `justpdf encrypt` / `decrypt` - 암호화 관리
 - [x] `justpdf sign` - 디지털 서명 *(stub)*
 - [x] `justpdf clean` - 최적화/복구
-- [ ] `justpdf convert` - 포맷 변환 *(Phase 9 확장 포맷 필요)*
+- [x] `justpdf convert` - 포맷 변환 *(justpdf-formats 연동 — txt/svg/epub/cbz/xps/office→PDF, PDF→svg/png/txt)*
 
 ### 11.3 Language Bindings
 - [x] C API (FFI) *(justpdf-ffi crate — cdylib/staticlib + justpdf.h 헤더)*
 - [x] Python 바인딩 (PyO3) *(justpdf-python crate — maturin 빌드)*
-- [ ] Node.js 바인딩 (napi-rs)
+- [x] Node.js 바인딩 (napi-rs) *(justpdf-node crate)*
 - [x] WASM 빌드 (wasm-bindgen) *(justpdf-wasm crate — wasm-pack 빌드)*
 
 ### 11.4 문서화
-- [ ] API 문서 (rustdoc)
-- [ ] 사용 가이드 (mdbook)
+- [x] API 문서 (rustdoc) *(cargo doc -p justpdf --no-deps 경고 없음)*
+- [x] 사용 가이드 (mdbook) *(docs/ — 11개 챕터)*
 - [x] 예제 코드 (examples/) *(basic_read, render_page, create_pdf, merge_pdfs)*
 - [x] CHANGELOG 유지 *(CHANGELOG.md 생성)*
 
@@ -1142,7 +1142,7 @@ cargo test -p justpdf --features "ocr barcode zugferd bidi deskew"
 - [x] CLI `justpdf merge a.pdf b.pdf -o merged.pdf` → 동작
 - [x] Python: `import justpdf; doc = justpdf.open("your.pdf")` 동작 *(PyO3 바인딩)*
 - [x] WASM: 브라우저에서 PDF 렌더링 동작 *(wasm-bindgen 바인딩)*
-- [ ] `cargo doc --no-deps` → 경고 없이 문서 빌드
+- [x] `cargo doc --no-deps` → 경고 없이 문서 빌드
 
 **Negative Tests:**
 - [x] CLI 인자 없이 실행 → help 메시지 (크래시 아님)

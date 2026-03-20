@@ -1,0 +1,6 @@
+[book]
+title = "justpdf Guide"
+authors = ["justpdf contributors"]
+language = "en"
+
+[output.html]
