@@ -691,7 +691,7 @@ cargo test -p justpdf-annot
 - [x] user password 인증 → 제한된 권한 확인
 - [x] 권한 플래그 (Print, Copy, Modify) → 정확히 읽기
 - [x] PDF 암호화 → 다시 복호화 → 왕복 검증
-- [ ] 암호화 PDF 생성 → Adobe Reader에서 비밀번호 입력 후 열림
+- [x] 암호화 PDF 생성 → Adobe Reader에서 비밀번호 입력 후 열림
 - [x] 서명된 PDF → 서명 검증 성공 (유효한 인증서)
 - [x] 서명 후 수정된 PDF → 변경 감지
 - [x] PDF에 서명 추가 → 검증 통과
