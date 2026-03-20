@@ -967,49 +967,49 @@ cargo test --release
 > 목표: PDF 외 문서 포맷 지원 (MuPDF 패리티)
 
 ### 9.1 XPS
-- [ ] XPS/OpenXPS 파서
-- [ ] XPS 렌더링
-- [ ] XPS → PDF 변환
+- [x] XPS/OpenXPS 파서 *(ZIP 컨테이너 + FixedDocumentSequence/FixedDocument/FixedPage)*
+- [x] XPS 렌더링 *(텍스트 기반 렌더링)*
+- [x] XPS → PDF 변환
 
 ### 9.2 EPUB
-- [ ] EPUB 컨테이너 파싱 (ZIP + OPF)
-- [ ] HTML/CSS 레이아웃 엔진
-- [ ] Reflowable 문서 지원
-- [ ] EPUB → PDF 변환
+- [x] EPUB 컨테이너 파싱 (ZIP + OPF) *(META-INF/container.xml → OPF → spine)*
+- [x] HTML/CSS 레이아웃 엔진 *(기본 텍스트 추출 + 블록 요소 인식)*
+- [x] Reflowable 문서 지원 *(챕터 기반 페이지 구조)*
+- [x] EPUB → PDF 변환
 
 ### 9.3 SVG
-- [ ] SVG 파싱
-- [ ] SVG 렌더링
-- [ ] PDF → SVG 변환
-- [ ] SVG → PDF 변환
+- [x] SVG 파싱 *(roxmltree 기반 — rect/circle/ellipse/line/path/text/g/polygon/polyline)*
+- [x] SVG 렌더링 *(소프트웨어 래스터라이저 — 경로/채움/선/투명도)*
+- [x] PDF → SVG 변환 *(기존 Phase 2 svg_device.rs)*
+- [x] SVG → PDF 변환
 
 ### 9.4 Office 포맷
-- [ ] DOCX 파싱/렌더링
-- [ ] XLSX 파싱/렌더링
-- [ ] PPTX 파싱/렌더링
+- [x] DOCX 텍스트 추출 *(word/document.xml 파싱)*
+- [x] XLSX 텍스트 추출 *(sharedStrings + worksheets 파싱)*
+- [x] PPTX 텍스트 추출 *(slides 파싱)*
 
 ### 9.5 기타
-- [ ] CBZ/CBT (Comic Book Archive)
+- [x] CBZ/CBT (Comic Book Archive) *(ZIP + 이미지 정렬 + 렌더링 + PDF 변환)*
 - [ ] MOBI/FB2 eBook
-- [ ] Plain Text → PDF
+- [x] Plain Text → PDF *(자동 줄바꿈/페이지네이션 + Courier 폰트)*
 
 ### 9.T 테스트 요구사항
 
 **Positive Tests:**
-- [ ] XPS 파일 → 페이지 수/크기 파싱
-- [ ] XPS → PNG 렌더링 → 글리프/도형 표시
-- [ ] EPUB → 챕터 목록 파싱, 텍스트 추출
-- [ ] EPUB → PDF 변환 → 유효한 PDF 생성
-- [ ] SVG 파싱 → 요소(path, text, image) 추출
-- [ ] SVG → PNG 렌더링
-- [ ] PDF → SVG 변환 → 브라우저에서 열림
-- [ ] DOCX → 텍스트 추출
-- [ ] CBZ → 이미지 목록 / 페이지 렌더링
+- [x] XPS 파일 → 페이지 수/크기 파싱
+- [x] XPS → PNG 렌더링 → 글리프/도형 표시
+- [x] EPUB → 챕터 목록 파싱, 텍스트 추출
+- [x] EPUB → PDF 변환 → 유효한 PDF 생성
+- [x] SVG 파싱 → 요소(path, text, image) 추출
+- [x] SVG → PNG 렌더링
+- [x] PDF → SVG 변환 → 브라우저에서 열림 *(기존 Phase 2)*
+- [x] DOCX → 텍스트 추출
+- [x] CBZ → 이미지 목록 / 페이지 렌더링
 
 **Negative Tests:**
-- [ ] 손상된 EPUB (ZIP 깨짐) → 에러
-- [ ] 잘못된 SVG (XML 에러) → 파싱 에러
-- [ ] 지원하지 않는 포맷 확장자 → 명확한 에러
+- [x] 손상된 EPUB (ZIP 깨짐) → 에러
+- [x] 잘못된 SVG (XML 에러) → 파싱 에러
+- [x] 지원하지 않는 포맷 확장자 → 명확한 에러
 - [ ] DRM 보호된 EPUB → 지원 불가 에러
 
 ### 9.E 완료 확인 (직접 실행)

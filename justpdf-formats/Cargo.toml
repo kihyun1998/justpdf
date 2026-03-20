@@ -1,0 +1,23 @@
+[package]
+name = "justpdf-formats"
+version = "0.1.0"
+edition = "2024"
+description = "Extended format support for justpdf - XPS, EPUB, SVG, Office, CBZ"
+
+[features]
+default = []
+xps = ["zip", "roxmltree"]
+epub = ["zip", "roxmltree"]
+svg = ["roxmltree"]
+office = ["zip", "roxmltree"]
+cbz = ["zip"]
+plaintext = []
+all = ["xps", "epub", "svg", "office", "cbz", "plaintext"]
+
+[dependencies]
+justpdf-core = { path = "../justpdf-core" }
+justpdf-render = { path = "../justpdf-render" }
+thiserror = "2"
+zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
+roxmltree = { version = "0.20", optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
