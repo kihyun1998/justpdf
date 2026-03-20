@@ -1,3 +1,3 @@
 [workspace]
-members = ["justpdf-core", "justpdf-render", "justpdf", "justpdf-cli", "justpdf-ffi", "justpdf-formats"]
+members = ["justpdf-core", "justpdf-render", "justpdf", "justpdf-cli", "justpdf-ffi", "justpdf-formats", "justpdf-special"]
 resolver = "3"
