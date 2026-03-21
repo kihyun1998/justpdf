@@ -289,19 +289,52 @@ impl fmt::Display for PdfObject {
             Self::Integer(v) => write!(f, "{v}"),
             Self::Real(v) => write!(f, "{v}"),
             Self::Name(v) => {
-                write!(f, "/{}", std::str::from_utf8(v).unwrap_or("<non-utf8>"))
+                write!(f, "/")?;
+                for &byte in v {
+                    // PDF spec: Name objects must escape delimiters, whitespace,
+                    // and '#' using #XX hex notation
+                    if byte == b'#'
+                        || byte == b'/'
+                        || byte == b'('
+                        || byte == b')'
+                        || byte == b'<'
+                        || byte == b'>'
+                        || byte == b'['
+                        || byte == b']'
+                        || byte == b'{'
+                        || byte == b'}'
+                        || byte == b'%'
+                        || byte <= b' '
+                        || byte >= 127
+                    {
+                        write!(f, "#{:02X}", byte)?;
+                    } else {
+                        write!(f, "{}", byte as char)?;
+                    }
+                }
+                Ok(())
             }
             Self::String(v) => {
-                // Try to display as UTF-8 text, otherwise hex
-                match std::str::from_utf8(v) {
-                    Ok(s) => write!(f, "({s})"),
-                    Err(_) => {
-                        write!(f, "<")?;
-                        for b in v {
-                            write!(f, "{b:02X}")?;
-                        }
-                        write!(f, ">")
+                // Use literal string with proper escaping if ASCII-safe,
+                // hex string otherwise
+                let needs_hex = v.iter().any(|&b| b == 0 || (b < 32 && b != b'\n' && b != b'\r' && b != b'\t'));
+                if needs_hex {
+                    write!(f, "<")?;
+                    for b in v {
+                        write!(f, "{b:02X}")?;
                     }
+                    write!(f, ">")
+                } else {
+                    write!(f, "(")?;
+                    for &b in v {
+                        match b {
+                            b'(' => write!(f, "\\(")?,
+                            b')' => write!(f, "\\)")?,
+                            b'\\' => write!(f, "\\\\")?,
+                            _ => write!(f, "{}", b as char)?,
+                        }
+                    }
+                    write!(f, ")")
                 }
             }
             Self::Array(v) => {
@@ -317,8 +350,19 @@ impl fmt::Display for PdfObject {
             Self::Dict(d) => {
                 write!(f, "<< ")?;
                 for (key, val) in d.iter() {
-                    let key_str = std::str::from_utf8(key).unwrap_or("?");
-                    write!(f, "/{key_str} {val} ")?;
+                    write!(f, "/")?;
+                    for &byte in key {
+                        if byte == b'#' || byte == b'/' || byte == b'(' || byte == b')'
+                            || byte == b'<' || byte == b'>' || byte == b'['
+                            || byte == b']' || byte == b'{' || byte == b'}'
+                            || byte == b'%' || byte <= b' ' || byte >= 127
+                        {
+                            write!(f, "#{:02X}", byte)?;
+                        } else {
+                            write!(f, "{}", byte as char)?;
+                        }
+                    }
+                    write!(f, " {val} ")?;
                 }
                 write!(f, ">>")
             }
@@ -384,6 +428,101 @@ mod tests {
         assert_eq!(PdfObject::Integer(42).to_string(), "42");
         assert_eq!(PdfObject::Name(b"Type".to_vec()).to_string(), "/Type");
         assert_eq!(PdfObject::String(b"Hello".to_vec()).to_string(), "(Hello)");
+    }
+
+    // ── Name escape tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_name_display_with_space() {
+        // Font names like "Pretendard Black" must escape the space
+        let name = PdfObject::Name(b"Pretendard Black".to_vec());
+        let s = name.to_string();
+        assert_eq!(s, "/Pretendard#20Black");
+        assert!(!s.contains(' '), "Name must not contain raw spaces");
+    }
+
+    #[test]
+    fn test_name_display_with_hash() {
+        let name = PdfObject::Name(b"Font#1".to_vec());
+        assert_eq!(name.to_string(), "/Font#231");
+    }
+
+    #[test]
+    fn test_name_display_with_delimiters() {
+        let name = PdfObject::Name(b"A(B)C".to_vec());
+        let s = name.to_string();
+        assert!(s.contains("#28"), "( should be escaped to #28");
+        assert!(s.contains("#29"), ") should be escaped to #29");
+    }
+
+    #[test]
+    fn test_name_display_with_non_ascii() {
+        let name = PdfObject::Name(vec![0xC0, 0xAF]); // non-ASCII bytes
+        let s = name.to_string();
+        assert!(s.contains("#C0"));
+        assert!(s.contains("#AF"));
+    }
+
+    #[test]
+    fn test_name_display_simple_no_escape() {
+        // Normal names should not be escaped
+        let name = PdfObject::Name(b"BaseFont".to_vec());
+        assert_eq!(name.to_string(), "/BaseFont");
+    }
+
+    #[test]
+    fn test_name_display_with_slash() {
+        let name = PdfObject::Name(b"A/B".to_vec());
+        assert_eq!(name.to_string(), "/A#2FB");
+    }
+
+    #[test]
+    fn test_name_display_with_percent() {
+        let name = PdfObject::Name(b"50%".to_vec());
+        assert_eq!(name.to_string(), "/50#25");
+    }
+
+    // ── String escape tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_string_display_with_parens() {
+        let s = PdfObject::String(b"hello(world)".to_vec());
+        let display = s.to_string();
+        assert!(display.contains("\\(") && display.contains("\\)"),
+            "Parentheses must be escaped: {}", display);
+    }
+
+    #[test]
+    fn test_string_display_with_backslash() {
+        let s = PdfObject::String(b"path\\to".to_vec());
+        let display = s.to_string();
+        assert!(display.contains("\\\\"), "Backslash must be escaped: {}", display);
+    }
+
+    #[test]
+    fn test_string_display_binary_uses_hex() {
+        // Binary data with null bytes should use hex encoding
+        let s = PdfObject::String(vec![0x00, 0xFF, 0x42]);
+        let display = s.to_string();
+        assert!(display.starts_with('<') && display.ends_with('>'),
+            "Binary strings should use hex: {}", display);
+        assert_eq!(display, "<00FF42>");
+    }
+
+    #[test]
+    fn test_string_display_normal_ascii() {
+        let s = PdfObject::String(b"Normal text".to_vec());
+        assert_eq!(s.to_string(), "(Normal text)");
+    }
+
+    // ── Dict display with special name keys ─────────────────────────
+
+    #[test]
+    fn test_dict_display_key_with_space() {
+        let mut d = PdfDict::new();
+        d.insert(b"Base Font".to_vec(), PdfObject::Name(b"Helvetica".to_vec()));
+        let s = format!("{}", PdfObject::Dict(d));
+        assert!(s.contains("/Base#20Font"), "Dict key with space must be escaped: {}", s);
     }
 
     #[test]

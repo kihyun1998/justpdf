@@ -85,7 +85,7 @@ fn dedup_objects(objects: &mut Vec<(u32, PdfObject)>) -> usize {
 }
 
 /// Recursively rewrite indirect references according to the remap table.
-fn rewrite_references(obj: &mut PdfObject, remap: &HashMap<u32, u32>) {
+pub(crate) fn rewrite_references(obj: &mut PdfObject, remap: &HashMap<u32, u32>) {
     match obj {
         PdfObject::Reference(r) => {
             if let Some(&new_num) = remap.get(&r.obj_num) {
@@ -367,5 +367,73 @@ mod tests {
         assert_eq!(stats.total_objects_after, 0);
         assert_eq!(stats.duplicate_objects_removed, 0);
         assert_eq!(stats.empty_objects_removed, 0);
+    }
+
+    // ── Name/String special char tests for dedup ────────────────────
+
+    #[test]
+    fn test_dedup_names_with_spaces() {
+        // Two dicts with the same Name that contains a space
+        // must be correctly identified as duplicates
+        let mut d1 = PdfDict::new();
+        d1.insert(
+            b"BaseFont".to_vec(),
+            PdfObject::Name(b"Pretendard Black".to_vec()),
+        );
+        let mut d2 = PdfDict::new();
+        d2.insert(
+            b"BaseFont".to_vec(),
+            PdfObject::Name(b"Pretendard Black".to_vec()),
+        );
+
+        let mut objects = vec![
+            (1, PdfObject::Dict(d1)),
+            (2, PdfObject::Dict(d2)),
+        ];
+
+        let removed = dedup_objects(&mut objects);
+        assert_eq!(removed, 1, "Identical dicts with space-names should dedup");
+    }
+
+    #[test]
+    fn test_no_false_dedup_similar_names() {
+        // "Pretendard Black" and "Pretendard Bold" must NOT dedup
+        let mut d1 = PdfDict::new();
+        d1.insert(
+            b"BaseFont".to_vec(),
+            PdfObject::Name(b"Pretendard Black".to_vec()),
+        );
+        let mut d2 = PdfDict::new();
+        d2.insert(
+            b"BaseFont".to_vec(),
+            PdfObject::Name(b"Pretendard Bold".to_vec()),
+        );
+
+        let mut objects = vec![
+            (1, PdfObject::Dict(d1)),
+            (2, PdfObject::Dict(d2)),
+        ];
+
+        let removed = dedup_objects(&mut objects);
+        assert_eq!(removed, 0, "Different names must not dedup");
+    }
+
+    #[test]
+    fn test_hash_name_with_special_chars() {
+        // Same name with spaces must hash identically
+        let obj1 = PdfObject::Name(b"Font Name Here".to_vec());
+        let obj2 = PdfObject::Name(b"Font Name Here".to_vec());
+        assert_eq!(hash_object(&obj1), hash_object(&obj2));
+
+        // Different names must hash differently
+        let obj3 = PdfObject::Name(b"Font Name There".to_vec());
+        assert_ne!(hash_object(&obj1), hash_object(&obj3));
+    }
+
+    #[test]
+    fn test_hash_string_with_parens() {
+        let obj1 = PdfObject::String(b"hello(world)".to_vec());
+        let obj2 = PdfObject::String(b"hello(world)".to_vec());
+        assert_eq!(hash_object(&obj1), hash_object(&obj2));
     }
 }
