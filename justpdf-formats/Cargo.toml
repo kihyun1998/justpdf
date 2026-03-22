@@ -22,7 +22,7 @@ fb2 = ["roxmltree"]
 all = ["xps", "epub", "svg", "office", "cbz", "plaintext", "mobi", "fb2"]
 
 [dependencies]
-justpdf-core = { version = "0.1.2", path = "../justpdf-core" }
+justpdf-core = { version = "0.1.3", path = "../justpdf-core" }
 justpdf-render = { version = "0.1.2", path = "../justpdf-render" }
 thiserror = "2"
 zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
