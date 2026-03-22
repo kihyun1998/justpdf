@@ -5,6 +5,9 @@ edition = "2024"
 description = "Python bindings for justpdf PDF engine"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kihyun1998/justpdf"
+homepage = "https://github.com/kihyun1998/justpdf"
+keywords = ["pdf", "python", "pyo3", "document", "text-extraction"]
+categories = ["api-bindings"]
 
 [lib]
 name = "justpdf"

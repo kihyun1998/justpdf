@@ -5,6 +5,9 @@ edition = "2024"
 description = "WebAssembly bindings for justpdf PDF engine"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kihyun1998/justpdf"
+homepage = "https://github.com/kihyun1998/justpdf"
+keywords = ["pdf", "wasm", "webassembly", "render", "text-extraction"]
+categories = ["wasm", "api-bindings"]
 
 [lib]
 crate-type = ["cdylib"]
