@@ -272,8 +272,8 @@ RGB/CMYK 이미지를 Grayscale로 변환하여 대폭 크기 감소.
           images_downscaled, images_skipped, duplicates_removed, objects_removed_gc,
           streams_recompressed, fonts_subsetted, unused_resources_removed,
           metadata_items_stripped, images_grayscaled, ratio)
-  - [ ] I-3. wasm-pack build --target web 검증
-  - [ ] I-4. npm 패키지 준비
+  ✅ I-3. wasm-pack build --target web 검증 (697KB, getrandom js feature 추가)
+  ✅ I-4. npm 패키지 배포 — @kihyun1998/justpdf-compress-wasm@0.1.2
 ```
 
 ---
