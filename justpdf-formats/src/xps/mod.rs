@@ -30,6 +30,7 @@ struct XpsPage {
     /// Text content extracted from Glyphs elements.
     text: String,
     /// Raw XML content for rendering.
+    #[allow(dead_code)]
     xml: String,
 }
 

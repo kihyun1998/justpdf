@@ -31,6 +31,22 @@ pub enum OCGState {
     Off,
 }
 
+impl OCGState {
+    pub fn from_name(name: &[u8]) -> Self {
+        match name {
+            b"OFF" => Self::Off,
+            _ => Self::On, // default per PDF spec
+        }
+    }
+
+    pub fn to_name(&self) -> &'static [u8] {
+        match self {
+            Self::On => b"ON",
+            Self::Off => b"OFF",
+        }
+    }
+}
+
 /// Visibility policy for OCMD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VisibilityPolicy {

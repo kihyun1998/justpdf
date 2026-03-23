@@ -59,17 +59,17 @@ pub fn add_ocg(
         Some(PdfObject::Dict(d)) => d,
         _ => {
             let mut d = PdfDict::new();
-            d.insert(b"BaseState".to_vec(), PdfObject::Name(b"ON".to_vec()));
+            d.insert(b"BaseState".to_vec(), PdfObject::Name(OCGState::On.to_name().to_vec()));
             d
         }
     };
 
-    let base_state = d_config
-        .get_name(b"BaseState")
-        .unwrap_or(b"ON");
+    let base_state = OCGState::from_name(
+        d_config.get_name(b"BaseState").unwrap_or(b"ON"),
+    );
 
     if initially_visible {
-        if base_state == b"OFF" {
+        if base_state == OCGState::Off {
             // Need to add to /ON list
             let mut on_list = match d_config.remove(b"ON") {
                 Some(PdfObject::Array(arr)) => arr,
@@ -80,7 +80,7 @@ pub fn add_ocg(
         }
         // If base_state is ON, no need to add to /ON list (it's on by default)
     } else {
-        if base_state == b"ON" || base_state == b"on" {
+        if base_state == OCGState::On {
             // Need to add to /OFF list
             let mut off_list = match d_config.remove(b"OFF") {
                 Some(PdfObject::Array(arr)) => arr,
@@ -151,10 +151,10 @@ pub fn set_ocg_visibility(
         }
     };
 
-    let base_state = d_config
-        .get_name(b"BaseState")
-        .unwrap_or(b"ON");
-    let base_is_on = base_state != b"OFF";
+    let base_state = OCGState::from_name(
+        d_config.get_name(b"BaseState").unwrap_or(b"ON"),
+    );
+    let base_is_on = base_state == OCGState::On;
 
     // Remove OCG from both /ON and /OFF lists first
     let on_list = remove_ref_from_array(d_config.remove(b"ON"), ocg_ref);

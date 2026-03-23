@@ -16,7 +16,7 @@ pub fn generate_signature_appearance(
 ) -> (PdfDict, Vec<u8>) {
     let font_size = 10.0;
     let margin = 4.0;
-    let mut y = height - margin - font_size;
+    let y = height - margin - font_size;
 
     let mut content = String::new();
 
@@ -37,15 +37,12 @@ pub fn generate_signature_appearance(
         "({}) Tj\n",
         escape_pdf_string(&format!("Digitally signed by: {}", signer_name))
     ));
-    y -= font_size + 2.0;
-
     if let Some(reason) = reason {
         content.push_str(&format!("{} {} Td\n", 0.0, -(font_size + 2.0)));
         content.push_str(&format!(
             "({}) Tj\n",
             escape_pdf_string(&format!("Reason: {}", reason))
         ));
-        y -= font_size + 2.0;
     }
 
     if let Some(date) = date {

@@ -108,7 +108,7 @@ fn verify_password_r5(password: &[u8], validation_salt: &[u8], u_bytes: &[u8]) -
     hasher.update(pw);
     hasher.update(validation_salt);
     hasher.update(u_bytes);
-    let hash = hasher.finalize();
+    let _hash = hasher.finalize();
 
     // Compare first 32 bytes
     // The validation value is the first 32 bytes of /U or /O

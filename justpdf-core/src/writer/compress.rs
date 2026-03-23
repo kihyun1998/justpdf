@@ -414,6 +414,7 @@ fn recompress_images(
 ///
 /// If `display_size` is provided (from CTM analysis), calculates actual DPI.
 /// Otherwise falls back to pixel-budget heuristic.
+#[allow(dead_code)]
 fn compute_target_dimensions(
     decoded: &image::DecodedImage,
     max_dpi: Option<f64>,
@@ -820,6 +821,7 @@ fn recompress_flate_streams(modifier: &mut DocumentModifier, stats: &mut Compres
 ///
 /// This reduces overhead by combining many small dict/integer/etc objects
 /// into compressed object stream containers.
+#[allow(dead_code)]
 fn pack_into_object_streams(
     modifier: &mut DocumentModifier,
 ) -> Vec<crate::writer::object_stream::CompressedObjInfo> {
@@ -1443,7 +1445,7 @@ fn update_font_widths(
         Some(v) => v as u16,
         None => return,
     };
-    let last_char = match font_dict.get_i64(b"LastChar") {
+    let _last_char = match font_dict.get_i64(b"LastChar") {
         Some(v) => v as u16,
         None => return,
     };

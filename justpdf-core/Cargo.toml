@@ -3,9 +3,9 @@ name = "justpdf-core"
 version = "0.1.3"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "Core PDF parsing, writing, and manipulation library for justpdf"
+description = "Pure Rust PDF engine — parsing, writing, compression, text extraction, encryption, digital signatures"
 repository = "https://github.com/kihyun1998/justpdf"
-keywords = ["pdf", "parser", "document", "text-extraction", "crypto"]
+keywords = ["pdf", "parser", "compression", "text-extraction", "digital-signature"]
 categories = ["parser-implementations", "text-processing"]
 homepage = "https://github.com/kihyun1998/justpdf"
 

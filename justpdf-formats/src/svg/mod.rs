@@ -12,6 +12,7 @@ use crate::Result;
 /// A parsed SVG document.
 pub struct SvgDocument {
     /// Raw SVG source.
+    #[allow(dead_code)]
     source: String,
     /// Document width in points.
     width: f64,
@@ -70,6 +71,7 @@ enum SvgElement {
     Text {
         x: f64,
         y: f64,
+        #[allow(dead_code)]
         content: String,
         style: ElementStyle,
     },
