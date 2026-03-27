@@ -33,32 +33,7 @@ pub fn create_timestamp_request(
         DigestAlgorithm::Sha512 => const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3"),
     };
 
-    // Use der crate to build the structure
-    let alg_id = spki::AlgorithmIdentifierRef {
-        oid: hash_oid,
-        parameters: None,
-    };
-
-    // Encode MessageImprint
-    let hashed_message = der::asn1::OctetStringRef::new(digest)
-        .map_err(|e| JustPdfError::SignatureError {
-            detail: format!("failed to create OctetString: {}", e),
-        })?;
-
-    // Build the full request as raw DER
-    let mut msg_imprint_buf = Vec::new();
-    alg_id.encode_to_vec(&mut msg_imprint_buf)
-        .map_err(|e| JustPdfError::SignatureError {
-            detail: format!("DER encode error: {}", e),
-        })?;
-    // We need to wrap this manually. For simplicity, build the raw bytes.
-    // A full implementation would use a proper ASN.1 builder.
-
-    // For now, return a simplified structure
-    let mut request = Vec::new();
-
-    // This is a simplified timestamp request builder.
-    // A production implementation would use a full ASN.1 library.
+    // Build the TimeStampReq as raw DER.
     // The structure is:
     // SEQUENCE {
     //   INTEGER 1,  -- version
@@ -94,7 +69,7 @@ pub fn create_timestamp_request(
     tsr_content.extend_from_slice(&msg_imprint_tlv);
     // certReq BOOLEAN TRUE (context tag [0] IMPLICIT)
     tsr_content.extend_from_slice(&[0x01, 0x01, 0xFF]);
-    request = wrap_sequence(&tsr_content);
+    let request = wrap_sequence(&tsr_content);
 
     Ok(request)
 }

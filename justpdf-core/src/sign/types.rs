@@ -105,6 +105,16 @@ pub struct SigningOptions {
     pub contact_info: Option<String>,
     /// Digest algorithm (default: SHA-256).
     pub digest_algorithm: DigestAlgorithm,
+    /// RFC 3161 timestamp token (DER-encoded).
+    /// Caller is responsible for obtaining this from a TSA server.
+    /// Use `create_timestamp_request()` to build the request,
+    /// send it via HTTP to a TSA, then `parse_timestamp_response()` to extract the token.
+    pub timestamp_token: Option<Vec<u8>>,
+    /// Whether to create a visible signature appearance.
+    pub visible: bool,
+    /// Rectangle for visible signature [llx, lly, urx, ury] in points.
+    /// Defaults to [0, 0, 200, 80] if visible=true and rect is None.
+    pub appearance_rect: Option<[f64; 4]>,
 }
 
 impl Default for SigningOptions {
@@ -115,6 +125,9 @@ impl Default for SigningOptions {
             location: None,
             contact_info: None,
             digest_algorithm: DigestAlgorithm::Sha256,
+            timestamp_token: None,
+            visible: false,
+            appearance_rect: None,
         }
     }
 }

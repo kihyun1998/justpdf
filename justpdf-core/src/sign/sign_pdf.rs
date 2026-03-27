@@ -72,6 +72,7 @@ pub fn sign_pdf(
         cert_chain_der,
         &digest,
         options.digest_algorithm,
+        options.timestamp_token.as_deref(),
     )?;
 
     if cms_blob.len() > PLACEHOLDER_SIZE {
@@ -112,7 +113,7 @@ fn build_pdf_with_placeholder(
     let old_startxref = crate::xref::find_startxref(pdf_data)?;
 
     // Parse the existing document to get catalog info
-    let mut doc = crate::parser::PdfDocument::from_bytes(pdf_data.to_vec())?;
+    let doc = crate::parser::PdfDocument::from_bytes(pdf_data.to_vec())?;
     let catalog_ref = doc
         .catalog_ref()
         .ok_or(JustPdfError::TrailerNotFound)?
@@ -122,6 +123,7 @@ fn build_pdf_with_placeholder(
     let max_existing = doc.object_count() as u32 + 10;
     let sig_value_num = max_existing + 1;
     let sig_field_num = max_existing + 2;
+    let ap_stream_num = max_existing + 3; // for visible signature appearance
 
     // Create the signature value dictionary content
     let signer_name = options
@@ -166,11 +168,47 @@ fn build_pdf_with_placeholder(
     write!(buf, "<< /Type /Annot /Subtype /Widget /FT /Sig ")?;
     write!(buf, "/T (Signature1) ")?;
     write!(buf, "/V {} 0 R ", sig_value_num)?;
-    write!(buf, "/Rect [0 0 0 0] ")?;
-    // Invisible signature (no appearance needed for invisible)
-    write!(buf, "/F 132 ")?; // Print + Hidden
+
+    if options.visible {
+        let rect = options.appearance_rect.unwrap_or([0.0, 0.0, 200.0, 80.0]);
+        write!(buf, "/Rect [{} {} {} {}] ", rect[0], rect[1], rect[2], rect[3])?;
+        write!(buf, "/AP << /N {} 0 R >> ", ap_stream_num)?;
+        write!(buf, "/F 4 ")?; // Print (visible)
+    } else {
+        write!(buf, "/Rect [0 0 0 0] ")?;
+        write!(buf, "/F 132 ")?; // Print + Hidden
+    }
+
     write!(buf, ">>\nendobj\n")?;
     offsets.push((sig_field_num, sig_field_offset));
+
+    // Write appearance stream (if visible)
+    if options.visible {
+        let rect = options.appearance_rect.unwrap_or([0.0, 0.0, 200.0, 80.0]);
+        let ap_width = rect[2] - rect[0];
+        let ap_height = rect[3] - rect[1];
+        let (ap_dict, ap_data) = super::appearance::generate_signature_appearance(
+            signer_name,
+            if reason.is_empty() { None } else { Some(reason) },
+            None, // date is embedded in the CMS signing time
+            ap_width,
+            ap_height,
+        );
+
+        let ap_offset = buf.len();
+        write!(buf, "{} 0 obj\n", ap_stream_num)?;
+        // Write dict entries (make_stream already includes /Length and /Filter)
+        write!(buf, "<< ")?;
+        for (key, value) in ap_dict.iter() {
+            write!(buf, "/{} ", String::from_utf8_lossy(key))?;
+            write_pdf_value(&mut buf, value);
+        }
+        write!(buf, ">>\n")?;
+        write!(buf, "stream\r\n")?;
+        buf.extend_from_slice(&ap_data);
+        write!(buf, "\r\nendstream\nendobj\n")?;
+        offsets.push((ap_stream_num, ap_offset));
+    }
 
     // Write new xref
     let xref_offset = buf.len();
@@ -183,7 +221,7 @@ fn build_pdf_with_placeholder(
     }
 
     // Trailer
-    let xref_size = sig_field_num + 1;
+    let xref_size = if options.visible { ap_stream_num + 1 } else { sig_field_num + 1 };
     write!(buf, "trailer\n")?;
     write!(buf, "<< /Size {} /Root {} 0 R /Prev {} >>\n",
         xref_size, catalog_ref.obj_num, old_startxref)?;
@@ -208,6 +246,7 @@ fn create_cms_signed_data(
     cert_chain_der: &[&[u8]],
     digest: &[u8],
     algorithm: DigestAlgorithm,
+    timestamp_token: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     use rsa::pkcs1v15::SigningKey;
     use signature::Signer;
@@ -243,6 +282,9 @@ fn create_cms_signed_data(
 
     // contentType attribute
     append_attribute(&mut signed_attrs_content, &content_type_oid, &content_type_attr_value)?;
+    // signingTime attribute (UTCTime)
+    let signing_time_der = build_utctime_now();
+    append_attribute(&mut signed_attrs_content, &signing_time_oid, &signing_time_der)?;
     // messageDigest attribute
     append_attribute(&mut signed_attrs_content, &message_digest_oid, &digest_attr_value)?;
 
@@ -306,6 +348,7 @@ fn create_cms_signed_data(
         &rsa_oid,
         &signed_attrs_content,
         &sig_bytes,
+        timestamp_token,
     )?;
     let signer_infos_set = wrap_der_set(&signer_info);
     signed_data_content.extend_from_slice(&signer_infos_set);
@@ -338,6 +381,7 @@ fn build_signer_info(
     sig_oid: &const_oid::ObjectIdentifier,
     signed_attrs_content: &[u8],
     sig_bytes: &[u8],
+    timestamp_token: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     let mut si_content = Vec::new();
 
@@ -375,10 +419,123 @@ fn build_signer_info(
     sig_octet.extend_from_slice(sig_bytes);
     si_content.extend_from_slice(&sig_octet);
 
+    // unsignedAttrs [1] IMPLICIT — timestamp token
+    if let Some(token) = timestamp_token {
+        let ts_token_oid = const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.14");
+        let mut unsigned_attrs_content = Vec::new();
+        append_attribute(&mut unsigned_attrs_content, &ts_token_oid, token)?;
+        // Context tag [1] CONSTRUCTED for unsignedAttrs
+        let mut unsigned_attrs_tlv = vec![0xA1];
+        encode_der_length(unsigned_attrs_content.len(), &mut unsigned_attrs_tlv);
+        unsigned_attrs_tlv.extend_from_slice(&unsigned_attrs_content);
+        si_content.extend_from_slice(&unsigned_attrs_tlv);
+    }
+
     Ok(wrap_der_sequence(&si_content))
 }
 
+// --- PDF helpers ---
+
+/// Write a PdfObject value to a byte buffer (for inline dict serialization).
+fn write_pdf_value(buf: &mut Vec<u8>, value: &crate::object::PdfObject) {
+    use crate::object::PdfObject;
+    match value {
+        PdfObject::Name(n) => {
+            buf.extend_from_slice(b"/");
+            buf.extend_from_slice(n);
+            buf.push(b' ');
+        }
+        PdfObject::Integer(i) => {
+            buf.extend_from_slice(format!("{} ", i).as_bytes());
+        }
+        PdfObject::Real(f) => {
+            buf.extend_from_slice(format!("{} ", f).as_bytes());
+        }
+        PdfObject::Array(arr) => {
+            buf.extend_from_slice(b"[");
+            for item in arr {
+                write_pdf_value(buf, item);
+            }
+            buf.extend_from_slice(b"] ");
+        }
+        PdfObject::Dict(d) => {
+            buf.extend_from_slice(b"<< ");
+            for (k, v) in d.iter() {
+                buf.extend_from_slice(b"/");
+                buf.extend_from_slice(k);
+                buf.push(b' ');
+                write_pdf_value(buf, v);
+            }
+            buf.extend_from_slice(b">> ");
+        }
+        PdfObject::String(s) => {
+            buf.extend_from_slice(b"(");
+            buf.extend_from_slice(s);
+            buf.extend_from_slice(b") ");
+        }
+        PdfObject::Reference(r) => {
+            buf.extend_from_slice(format!("{} {} R ", r.obj_num, r.gen_num).as_bytes());
+        }
+        PdfObject::Bool(b_val) => {
+            buf.extend_from_slice(if *b_val { b"true " } else { b"false " });
+        }
+        PdfObject::Null => {
+            buf.extend_from_slice(b"null ");
+        }
+        _ => {} // Stream and other complex types not needed here
+    }
+}
+
 // --- DER helpers ---
+
+/// Build a DER-encoded UTCTime for the current time.
+/// Format: YYMMDDHHMMSSZ (13 bytes), tag 0x17.
+fn build_utctime_now() -> Vec<u8> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Convert epoch seconds to date/time components
+    // Simple conversion without external crate
+    let days = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    // Days since 1970-01-01 to (year, month, day)
+    let mut y = 1970u64;
+    let mut remaining_days = days;
+    loop {
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        y += 1;
+    }
+    let is_leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let month_days = [31, if is_leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0u64;
+    for md in &month_days {
+        if remaining_days < *md as u64 {
+            break;
+        }
+        remaining_days -= *md as u64;
+        m += 1;
+    }
+    let month = m + 1;
+    let day = remaining_days + 1;
+
+    // UTCTime uses 2-digit year (YY)
+    let yy = y % 100;
+    let utc_str = format!("{:02}{:02}{:02}{:02}{:02}{:02}Z", yy, month, day, hours, minutes, seconds);
+    let mut result = vec![0x17, utc_str.len() as u8];
+    result.extend_from_slice(utc_str.as_bytes());
+    result
+}
 
 fn build_algorithm_identifier(oid: &const_oid::ObjectIdentifier) -> Result<Vec<u8>> {
     let oid_der = oid.to_der()

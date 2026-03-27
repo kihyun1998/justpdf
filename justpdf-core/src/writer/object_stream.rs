@@ -15,13 +15,32 @@ use crate::writer::serialize::serialize_object;
 ///
 /// `encrypt_obj_num` optionally identifies the encryption dictionary, which
 /// must also remain unpacked.
+/// Information about compressed objects for xref stream generation.
+#[derive(Debug, Clone)]
+pub struct CompressedObjInfo {
+    /// Object number of the compressed object.
+    pub obj_num: u32,
+    /// Object number of the ObjStm that contains it.
+    pub objstm_num: u32,
+    /// Index of this object within the ObjStm.
+    pub index: u32,
+}
+
+/// Result of packing objects into object streams.
+pub struct PackResult {
+    /// The resulting objects (ineligible + ObjStm containers).
+    pub objects: Vec<(u32, PdfObject)>,
+    /// Info about objects compressed into ObjStms (for xref stream type 2 entries).
+    pub compressed: Vec<CompressedObjInfo>,
+}
+
 pub fn pack_object_streams(
     objects: &[(u32, PdfObject)],
     max_objects_per_stream: usize,
     catalog_obj_num: u32,
     pages_root_obj_num: Option<u32>,
     encrypt_obj_num: Option<u32>,
-) -> Result<Vec<(u32, PdfObject)>> {
+) -> Result<PackResult> {
     let mut eligible: Vec<(u32, &PdfObject)> = Vec::new();
     let mut ineligible: Vec<(u32, PdfObject)> = Vec::new();
 
@@ -34,7 +53,10 @@ pub fn pack_object_streams(
     }
 
     if eligible.is_empty() {
-        return Ok(objects.to_vec());
+        return Ok(PackResult {
+            objects: objects.to_vec(),
+            compressed: Vec::new(),
+        });
     }
 
     // Determine next available object number for the new object stream containers.
@@ -42,14 +64,25 @@ pub fn pack_object_streams(
 
     // Pack eligible objects in batches
     let mut result = ineligible;
+    let mut compressed = Vec::new();
 
     for chunk in eligible.chunks(max_objects_per_stream) {
+        let objstm_num = next_obj_num;
         let objstm = build_object_stream(chunk)?;
-        result.push((next_obj_num, objstm));
+        result.push((objstm_num, objstm));
+
+        for (index, (obj_num, _)) in chunk.iter().enumerate() {
+            compressed.push(CompressedObjInfo {
+                obj_num: *obj_num,
+                objstm_num,
+                index: index as u32,
+            });
+        }
+
         next_obj_num += 1;
     }
 
-    Ok(result)
+    Ok(PackResult { objects: result, compressed })
 }
 
 /// Check whether an object is eligible for packing into an object stream.
@@ -168,6 +201,7 @@ fn build_object_stream(objects: &[(u32, &PdfObject)]) -> Result<PdfObject> {
 pub fn write_xref_stream(
     buf: &mut Vec<u8>,
     offsets: &[(u32, usize)],
+    compressed: &[CompressedObjInfo],
     catalog_ref: &crate::object::IndirectRef,
     info_ref: Option<&crate::object::IndirectRef>,
     xref_stm_obj_num: u32,
@@ -177,13 +211,21 @@ pub fn write_xref_stream(
         .map(|(n, _)| *n)
         .max()
         .unwrap_or(0)
-        .max(xref_stm_obj_num);
+        .max(xref_stm_obj_num)
+        .max(compressed.iter().map(|c| c.obj_num).max().unwrap_or(0));
     let size = max_obj_num + 1;
 
-    // Build offset map
+    // Build offset map for type 1 entries
     let mut offset_map = std::collections::HashMap::new();
     for (num, off) in offsets {
         offset_map.insert(*num, *off);
+    }
+
+    // Build compressed object map for type 2 entries
+    let mut compressed_map: std::collections::HashMap<u32, (u32, u32)> =
+        std::collections::HashMap::new();
+    for info in compressed {
+        compressed_map.insert(info.obj_num, (info.objstm_num, info.index));
     }
 
     // Determine field widths.
@@ -192,9 +234,11 @@ pub fn write_xref_stream(
     //   field 2: offset or obj stream number
     //   field 3: generation number or index within obj stream
     let max_offset = offsets.iter().map(|(_, o)| *o).max().unwrap_or(0);
-    let w2 = bytes_needed(max_offset as u64);
+    let max_objstm_num = compressed.iter().map(|c| c.objstm_num as usize).max().unwrap_or(0);
+    let w2 = bytes_needed(max_offset.max(max_objstm_num) as u64);
     let w1 = 1u8;
-    let w3 = 1u8; // gen number, typically 0
+    let max_index = compressed.iter().map(|c| c.index).max().unwrap_or(0);
+    let w3 = bytes_needed(max_index.max(255) as u64);
 
     // Build stream data
     let entry_size = (w1 + w2 + w3) as usize;
@@ -205,23 +249,27 @@ pub fn write_xref_stream(
             // Free entry: type=0, next free=0, gen=255
             stream_data.push(0u8);
             write_field(&mut stream_data, 0, w2);
-            stream_data.push(255);
+            write_field(&mut stream_data, 255, w3);
         } else if let Some(&off) = offset_map.get(&obj_num) {
             // In-use entry: type=1, offset, gen=0
             stream_data.push(1u8);
             write_field(&mut stream_data, off as u64, w2);
-            stream_data.push(0);
+            write_field(&mut stream_data, 0, w3);
+        } else if let Some(&(objstm_num, index)) = compressed_map.get(&obj_num) {
+            // Compressed entry: type=2, objstm number, index within stream
+            stream_data.push(2u8);
+            write_field(&mut stream_data, objstm_num as u64, w2);
+            write_field(&mut stream_data, index as u64, w3);
         } else if obj_num == xref_stm_obj_num {
-            // The xref stream itself: type=1, offset will be current buf position
-            // We write a placeholder; the caller writes the stream at the current pos.
+            // The xref stream itself: type=1, offset = current buf position
             stream_data.push(1u8);
             write_field(&mut stream_data, buf.len() as u64, w2);
-            stream_data.push(0);
+            write_field(&mut stream_data, 0, w3);
         } else {
             // Free entry
             stream_data.push(0u8);
             write_field(&mut stream_data, 0, w2);
-            stream_data.push(0);
+            write_field(&mut stream_data, 0, w3);
         }
     }
 
@@ -372,20 +420,20 @@ mod tests {
         let packed = pack_object_streams(&objects, 100, 1, Some(2), None).unwrap();
 
         // Catalog and pages root should remain as separate objects
-        let catalog_entry = packed.iter().find(|(n, _)| *n == 1);
+        let catalog_entry = packed.objects.iter().find(|(n, _)| *n == 1);
         assert!(catalog_entry.is_some());
-        let pages_entry = packed.iter().find(|(n, _)| *n == 2);
+        let pages_entry = packed.objects.iter().find(|(n, _)| *n == 2);
         assert!(pages_entry.is_some());
 
         // Objects 3, 4, 5 should be packed into an object stream
         // So we shouldn't find them as standalone objects anymore
-        let obj3 = packed.iter().find(|(n, _)| *n == 3);
+        let obj3 = packed.objects.iter().find(|(n, _)| *n == 3);
         assert!(obj3.is_none(), "object 3 should be packed");
-        let obj4 = packed.iter().find(|(n, _)| *n == 4);
+        let obj4 = packed.objects.iter().find(|(n, _)| *n == 4);
         assert!(obj4.is_none(), "object 4 should be packed");
 
         // There should be an object stream (new obj num = 6)
-        let objstm = packed.iter().find(|(_, obj)| {
+        let objstm = packed.objects.iter().find(|(_, obj)| {
             if let PdfObject::Stream { dict, .. } = obj {
                 dict.get_name(b"Type") == Some(b"ObjStm")
             } else {
@@ -417,7 +465,7 @@ mod tests {
         let packed = pack_object_streams(&objects, 2, 1, None, None).unwrap();
 
         // 5 eligible objects split into batches of 2 => 3 object streams
-        let objstm_count = packed
+        let objstm_count = packed.objects
             .iter()
             .filter(|(_, obj)| {
                 if let PdfObject::Stream { dict, .. } = obj {
@@ -442,7 +490,7 @@ mod tests {
         ];
 
         let packed = pack_object_streams(&objects, 100, 1, None, None).unwrap();
-        assert_eq!(packed.len(), 2); // unchanged
+        assert_eq!(packed.objects.len(), 2); // unchanged
     }
 
     #[test]
@@ -511,7 +559,7 @@ mod tests {
         let offsets = vec![(1, 20), (2, 100)];
         let catalog_ref = IndirectRef { obj_num: 1, gen_num: 0 };
 
-        write_xref_stream(&mut buf, &offsets, &catalog_ref, None, 3).unwrap();
+        write_xref_stream(&mut buf, &offsets, &[], &catalog_ref, None, 3).unwrap();
 
         let text = String::from_utf8_lossy(&buf);
         assert!(text.contains("3 0 obj"));

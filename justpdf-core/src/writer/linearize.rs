@@ -415,7 +415,7 @@ fn write_linearized_pdf(
         main_xref_offset: pass2_layout.main_xref_offset as i64,
     };
 
-    let (final_buf, final_layout) = write_linearized_inner(
+    let (final_buf, _final_layout) = write_linearized_inner(
         version,
         catalog_ref,
         info_ref,

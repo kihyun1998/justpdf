@@ -104,6 +104,7 @@ impl<K: Eq + Hash + Clone, V> LruCache<K, V> {
         self.map.insert(key, value);
     }
 
+    #[allow(dead_code)]
     fn contains_key(&self, key: &K) -> bool {
         self.map.contains_key(key)
     }

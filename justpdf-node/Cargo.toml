@@ -5,12 +5,15 @@ edition = "2024"
 description = "Node.js bindings for justpdf PDF engine"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kihyun1998/justpdf"
+homepage = "https://github.com/kihyun1998/justpdf"
+keywords = ["pdf", "nodejs", "napi", "document", "text-extraction"]
+categories = ["api-bindings"]
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-justpdf-core = { version = "0.1.2", path = "../justpdf-core" }
+justpdf-core = { version = "0.1.3", path = "../justpdf-core" }
 justpdf-render = { version = "0.1.2", path = "../justpdf-render" }
 napi = { version = "2", features = ["napi6"] }
 napi-derive = "2"

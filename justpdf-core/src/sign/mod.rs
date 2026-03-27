@@ -13,6 +13,7 @@ mod verify;
 
 pub use detect::detect_signatures;
 pub use sign_pdf::sign_pdf;
+pub use timestamp::{create_timestamp_request, parse_timestamp_response};
 pub use types::*;
 pub use verify::verify_signature;
 

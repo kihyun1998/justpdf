@@ -230,6 +230,21 @@ impl DocumentModifier {
         )
     }
 
+    /// Serialize to PDF bytes using xref streams (PDF 1.5+).
+    /// `compressed` contains info about objects packed into object streams.
+    pub fn build_with_xref_stream(
+        self,
+        compressed: &[crate::writer::object_stream::CompressedObjInfo],
+    ) -> Result<Vec<u8>> {
+        crate::writer::serialize::serialize_pdf_with_xref_stream(
+            &self.writer.objects,
+            compressed,
+            self.writer.version,
+            &self.catalog_ref,
+            self.info_ref.as_ref(),
+        )
+    }
+
     /// Save to file.
     pub fn save(self, path: &Path) -> Result<()> {
         let bytes = self.build()?;

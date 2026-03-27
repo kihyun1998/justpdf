@@ -5,9 +5,17 @@ use std::io::Write;
 use crate::error::Result;
 use crate::object::{PdfDict, PdfObject};
 
-/// Compress data using zlib (FlateDecode).
+/// Compress data using zlib (FlateDecode) at default compression level.
 pub fn encode_flate(data: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(data)?;
+    let compressed = encoder.finish()?;
+    Ok(compressed)
+}
+
+/// Compress data using zlib (FlateDecode) at maximum compression level.
+pub fn encode_flate_best(data: &[u8]) -> Result<Vec<u8>> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
     encoder.write_all(data)?;
     let compressed = encoder.finish()?;
     Ok(compressed)

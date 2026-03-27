@@ -172,13 +172,93 @@ pub(crate) fn serialize_object(buf: &mut Vec<u8>, obj: &PdfObject) -> Result<()>
 pub(crate) fn serialize_dict(buf: &mut Vec<u8>, dict: &PdfDict) -> Result<()> {
     write!(buf, "<< ")?;
     for (key, val) in dict.iter() {
-        let key_str = std::str::from_utf8(key).unwrap_or("?");
-        write!(buf, "/{} ", key_str)?;
+        buf.push(b'/');
+        write_escaped_name(buf, key);
+        buf.push(b' ');
         serialize_object(buf, val)?;
         write!(buf, " ")?;
     }
     write!(buf, ">>")?;
     Ok(())
+}
+
+/// Serialize a PDF using cross-reference stream (PDF 1.5+).
+///
+/// This variant is used when object streams are present. It writes the body
+/// objects normally, then writes a cross-reference stream instead of a
+/// traditional xref table + trailer.
+pub fn serialize_pdf_with_xref_stream(
+    objects: &[(u32, PdfObject)],
+    compressed: &[crate::writer::object_stream::CompressedObjInfo],
+    version: (u8, u8),
+    catalog_ref: &IndirectRef,
+    info_ref: Option<&IndirectRef>,
+) -> Result<Vec<u8>> {
+    let mut buf: Vec<u8> = Vec::new();
+
+    // --- Header ---
+    let ver_major = version.0.max(1);
+    let ver_minor = version.1.max(5); // at least 1.5 for object streams
+    write!(buf, "%PDF-{}.{}\n", ver_major, ver_minor)?;
+    buf.extend_from_slice(b"%\xe2\xe3\xcf\xd3\n");
+
+    // --- Body: write each indirect object ---
+    let mut offsets: Vec<(u32, usize)> = Vec::with_capacity(objects.len());
+
+    for (obj_num, obj) in objects {
+        let offset = buf.len();
+        offsets.push((*obj_num, offset));
+
+        write!(buf, "{} 0 obj\n", obj_num)?;
+        serialize_object(&mut buf, obj)?;
+        write!(buf, "\nendobj\n")?;
+    }
+
+    // --- Cross-reference stream ---
+    let max_obj_num = offsets
+        .iter()
+        .map(|(n, _)| *n)
+        .max()
+        .unwrap_or(0)
+        .max(compressed.iter().map(|c| c.obj_num).max().unwrap_or(0));
+    let xref_stm_obj_num = max_obj_num + 1;
+
+    crate::writer::object_stream::write_xref_stream(
+        &mut buf,
+        &offsets,
+        compressed,
+        catalog_ref,
+        info_ref,
+        xref_stm_obj_num,
+    )?;
+
+    Ok(buf)
+}
+
+/// Write a PDF name with proper #XX escaping for special characters.
+fn write_escaped_name(buf: &mut Vec<u8>, name: &[u8]) {
+    for &byte in name {
+        if byte == b'#'
+            || byte == b'/'
+            || byte == b'('
+            || byte == b')'
+            || byte == b'<'
+            || byte == b'>'
+            || byte == b'['
+            || byte == b']'
+            || byte == b'{'
+            || byte == b'}'
+            || byte == b'%'
+            || byte <= b' '
+            || byte >= 127
+        {
+            buf.push(b'#');
+            let hex = format!("{:02X}", byte);
+            buf.extend_from_slice(hex.as_bytes());
+        } else {
+            buf.push(byte);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -318,5 +398,136 @@ mod tests {
         // Note: RC4 might produce bytes that happen to look like the original,
         // but statistically very unlikely for a 12-byte string
         assert!(!text.contains("Hello Secret"));
+    }
+
+    // ── Name escaping in serialization ──────────────────────────────
+
+    #[test]
+    fn test_serialize_dict_with_space_in_name_value() {
+        // Simulate a font dict with BaseFont "Pretendard Black"
+        let mut font_dict = PdfDict::new();
+        font_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
+        font_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Type0".to_vec()));
+        font_dict.insert(
+            b"BaseFont".to_vec(),
+            PdfObject::Name(b"Pretendard Black".to_vec()),
+        );
+
+        let mut buf = Vec::new();
+        serialize_dict(&mut buf, &font_dict).unwrap();
+        let text = String::from_utf8_lossy(&buf);
+
+        // The space in "Pretendard Black" must be escaped
+        assert!(
+            text.contains("Pretendard#20Black"),
+            "BaseFont name must escape space: {}",
+            text,
+        );
+        assert!(
+            !text.contains("Pretendard Black"),
+            "Raw space must not appear in serialized Name",
+        );
+    }
+
+    #[test]
+    fn test_serialize_dict_key_with_space() {
+        let mut d = PdfDict::new();
+        d.insert(b"My Key".to_vec(), PdfObject::Integer(42));
+
+        let mut buf = Vec::new();
+        serialize_dict(&mut buf, &d).unwrap();
+        let text = String::from_utf8_lossy(&buf);
+
+        assert!(
+            text.contains("/My#20Key"),
+            "Dict key with space must be escaped: {}",
+            text,
+        );
+    }
+
+    #[test]
+    fn test_serialize_name_escape_function() {
+        let mut buf = Vec::new();
+        write_escaped_name(&mut buf, b"Hello World");
+        assert_eq!(String::from_utf8(buf).unwrap(), "Hello#20World");
+
+        let mut buf = Vec::new();
+        write_escaped_name(&mut buf, b"Normal");
+        assert_eq!(String::from_utf8(buf).unwrap(), "Normal");
+
+        let mut buf = Vec::new();
+        write_escaped_name(&mut buf, b"A#B");
+        assert_eq!(String::from_utf8(buf).unwrap(), "A#23B");
+
+        let mut buf = Vec::new();
+        write_escaped_name(&mut buf, &[0xFF, 0x00]);
+        assert_eq!(String::from_utf8(buf).unwrap(), "#FF#00");
+    }
+
+    #[test]
+    fn test_serialize_pdf_with_space_font_roundtrip() {
+        // Create a PDF with a font whose BaseFont has a space
+        let mut font_dict = PdfDict::new();
+        font_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
+        font_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Type0".to_vec()));
+        font_dict.insert(
+            b"BaseFont".to_vec(),
+            PdfObject::Name(b"Noto Sans KR".to_vec()),
+        );
+        font_dict.insert(
+            b"Encoding".to_vec(),
+            PdfObject::Name(b"Identity-H".to_vec()),
+        );
+
+        let mut catalog = PdfDict::new();
+        catalog.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
+
+        let catalog_ref = IndirectRef { obj_num: 1, gen_num: 0 };
+        let objects = vec![
+            (1, PdfObject::Dict(catalog)),
+            (2, PdfObject::Dict(font_dict)),
+        ];
+
+        let bytes = serialize_pdf(&objects, (1, 7), &catalog_ref, None).unwrap();
+
+        // Re-parse
+        let doc = crate::parser::PdfDocument::from_bytes(bytes).unwrap();
+        let font_ref = IndirectRef { obj_num: 2, gen_num: 0 };
+        let font_obj = doc.resolve(&font_ref).unwrap();
+
+        if let PdfObject::Dict(d) = &font_obj {
+            let basefont = d.get_name(b"BaseFont").unwrap();
+            assert_eq!(
+                basefont,
+                b"Noto Sans KR",
+                "BaseFont with spaces must survive roundtrip",
+            );
+        } else {
+            panic!("Font object should be a Dict");
+        }
+    }
+
+    #[test]
+    fn test_serialize_string_with_parens_roundtrip() {
+        let mut catalog = PdfDict::new();
+        catalog.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
+
+        let catalog_ref = IndirectRef { obj_num: 1, gen_num: 0 };
+        let objects = vec![
+            (1, PdfObject::Dict(catalog)),
+            (2, PdfObject::String(b"hello(world)end".to_vec())),
+        ];
+
+        let bytes = serialize_pdf(&objects, (1, 7), &catalog_ref, None).unwrap();
+
+        let doc = crate::parser::PdfDocument::from_bytes(bytes).unwrap();
+        let ref2 = IndirectRef { obj_num: 2, gen_num: 0 };
+        let obj = doc.resolve(&ref2).unwrap();
+
+        if let PdfObject::String(s) = &obj {
+            assert_eq!(s, b"hello(world)end", "String with parens must survive roundtrip");
+        } else {
+            panic!("Expected String, got {:?}", obj);
+        }
     }
 }
