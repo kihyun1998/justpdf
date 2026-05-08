@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - 2026-05-08 (justpdf-core)
+
+### Fixed
+- **ObjStm `/First` off-by-one** — `load_compressed_object` inferred the
+  data-section start from `tokenizer.pos()` after consuming the index
+  pairs, which was off by the whitespace padding before the first
+  object. Compressed objects' `abs_offset` landed one byte short
+  (typically on the previous object's closing `>`), producing an
+  `unexpected '>'` parse error. Affected PDFs that use object streams
+  with whitespace padding before the data section — common in files
+  with incremental updates. Now reads `/First` and `/N` from the dict.
+
 ## [0.1.3] - 2026-03-23 (justpdf-core)
 
 ### Added
