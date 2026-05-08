@@ -2621,13 +2621,14 @@ mod tests {
         doc.add_page(page);
         let pdf = doc.build().unwrap();
 
-        let (_, stats) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
 
-        // The two different images should NOT be deduped
-        // (they may share some other identical streams though)
-        // Verify by checking the PDF still has 2 images
-        let analysis = analyze_pdf(&pdf).unwrap();
+        // The two different images must survive in the COMPRESSED output —
+        // analyze the result, not the input, so a buggy dedup that merges
+        // distinct streams gets caught.
+        let analysis = analyze_pdf(&compressed).unwrap();
         assert_eq!(analysis.images, 2);
+        assert_eq!(stats.duplicates_removed, 0);
     }
 
     /// C-T4: Dedup + re-parse → page count and text extraction intact.
