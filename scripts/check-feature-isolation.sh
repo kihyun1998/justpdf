@@ -61,16 +61,30 @@ assert_build_ok() {
   fi
 }
 
-# Cycle 1: default features must NOT pull justpdf-render
+# --- justpdf-special (issue #1) ---
+# Default features must NOT pull justpdf-render
 assert_dep_absent justpdf-special justpdf-render "" "special/default"
-
-# Cycle 2: ocr feature must pull justpdf-render
+# ocr feature must pull justpdf-render
 assert_dep_present justpdf-special justpdf-render "ocr" "special/ocr"
-
-# Cycle 3: non-ocr feature subset must build without render stack
+# Non-ocr feature subset must build without render stack
 assert_build_ok justpdf-special "barcode" "special/barcode-only"
-
-# Cycle 4: all features must still build
+# All features must still build
 assert_build_ok justpdf-special "all" "special/all"
+
+# --- justpdf-formats (issue #2) ---
+# Default features must NOT pull justpdf-render
+assert_dep_absent justpdf-formats justpdf-render "" "formats/default"
+# Conversion-only feature subsets must NOT pull justpdf-render
+assert_dep_absent justpdf-formats justpdf-render "xps" "formats/xps"
+assert_dep_absent justpdf-formats justpdf-render "epub" "formats/epub"
+assert_dep_absent justpdf-formats justpdf-render "svg" "formats/svg"
+assert_dep_absent justpdf-formats justpdf-render "office" "formats/office"
+assert_dep_absent justpdf-formats justpdf-render "cbz" "formats/cbz"
+# Preview-generating features MUST pull justpdf-render
+assert_dep_present justpdf-formats justpdf-render "fb2" "formats/fb2"
+assert_dep_present justpdf-formats justpdf-render "mobi" "formats/mobi"
+assert_dep_present justpdf-formats justpdf-render "plaintext" "formats/plaintext"
+# All features must still build
+assert_build_ok justpdf-formats "all" "formats/all"
 
 exit "$fail"

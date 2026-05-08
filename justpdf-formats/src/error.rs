@@ -13,6 +13,7 @@ pub enum FormatError {
     /// PDF generation error.
     Pdf(justpdf_core::JustPdfError),
     /// Render error.
+    #[cfg(any(feature = "fb2", feature = "mobi", feature = "plaintext"))]
     Render(justpdf_render::error::RenderError),
     /// Format-specific error.
     Format { detail: String },
@@ -33,6 +34,7 @@ impl fmt::Display for FormatError {
             #[cfg(any(feature = "xps", feature = "epub", feature = "svg", feature = "office", feature = "fb2"))]
             Self::Xml(e) => write!(f, "XML error: {e}"),
             Self::Pdf(e) => write!(f, "PDF error: {e}"),
+            #[cfg(any(feature = "fb2", feature = "mobi", feature = "plaintext"))]
             Self::Render(e) => write!(f, "render error: {e}"),
             Self::Format { detail } => write!(f, "format error: {detail}"),
             Self::UnsupportedFormat { extension } => write!(f, "unsupported format: .{extension}"),
@@ -51,6 +53,7 @@ impl From<justpdf_core::JustPdfError> for FormatError {
     fn from(e: justpdf_core::JustPdfError) -> Self { Self::Pdf(e) }
 }
 
+#[cfg(any(feature = "fb2", feature = "mobi", feature = "plaintext"))]
 impl From<justpdf_render::error::RenderError> for FormatError {
     fn from(e: justpdf_render::error::RenderError) -> Self { Self::Render(e) }
 }
