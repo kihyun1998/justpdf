@@ -3305,4 +3305,185 @@ mod tests {
         let pages = crate::page::collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 1);
     }
+
+    // ── Preset identity (issue #6) ──────────────────────────────────
+    //
+    // Each preset promises a tier of behavior to its users. These tests
+    // pin those promises down by checking externally-visible effects, not
+    // internal flag values, so the tests survive implementation changes.
+
+    /// `low` preset is non-destructive: page count, image count, and text
+    /// are preserved, no images re-encoded, no metadata stripped, and the
+    /// output stays within a small size envelope of the input.
+    #[test]
+    fn test_preset_low_identity() {
+        let pdf = create_pdf_with_jpeg(200, 200, 95);
+        let original_size = pdf.len();
+        let original_analysis = analyze_pdf(&pdf).unwrap();
+
+        let (compressed, stats) =
+            compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
+
+        assert!(compressed.starts_with(b"%PDF"));
+        // Size envelope: low must not blow up the file
+        assert!(
+            compressed.len() <= original_size * 105 / 100,
+            "low must stay within +5% of input ({} vs {})",
+            compressed.len(),
+            original_size,
+        );
+        // Page and image count preserved
+        let new_analysis = analyze_pdf(&compressed).unwrap();
+        assert_eq!(new_analysis.pages, original_analysis.pages);
+        assert_eq!(new_analysis.images, original_analysis.images);
+        // low does not touch images or metadata
+        assert_eq!(stats.images_recompressed, 0, "low must not re-encode images");
+        assert_eq!(stats.metadata_items_stripped, 0, "low must not strip metadata");
+        assert_eq!(stats.images_grayscaled, 0, "low must not grayscale images");
+    }
+
+    /// `medium` preset adds image re-encoding on top of low's promises.
+    /// Input must be above preset_medium's skip_below_bytes threshold (10_000).
+    #[test]
+    fn test_preset_medium_identity() {
+        let pdf = create_pdf_with_jpeg(1000, 1000, 95);
+        let original_size = pdf.len();
+        let original_analysis = analyze_pdf(&pdf).unwrap();
+
+        let (compressed, stats) =
+            compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
+
+        assert!(compressed.starts_with(b"%PDF"));
+        // Re-encoding must yield a smaller file
+        assert!(
+            compressed.len() < original_size,
+            "medium must shrink the file ({} vs {})",
+            compressed.len(),
+            original_size,
+        );
+        // Page and image count preserved
+        let new_analysis = analyze_pdf(&compressed).unwrap();
+        assert_eq!(new_analysis.pages, original_analysis.pages);
+        assert_eq!(new_analysis.images, original_analysis.images);
+        // medium's defining promise: at least one image re-encoded
+        assert!(
+            stats.images_recompressed > 0,
+            "medium must re-encode at least one image"
+        );
+        // medium does not strip metadata or grayscale
+        assert_eq!(stats.metadata_items_stripped, 0, "medium must not strip metadata");
+        assert_eq!(stats.images_grayscaled, 0, "medium must not grayscale images");
+    }
+
+    /// Like `create_pdf_with_jpeg` but renders the image at a smaller
+    /// display size so its effective DPI exceeds preset_high's 150 DPI cap.
+    fn create_pdf_with_jpeg_at(
+        image_w: u32,
+        image_h: u32,
+        quality: u8,
+        draw_w_pt: f64,
+        draw_h_pt: f64,
+    ) -> Vec<u8> {
+        let jpeg_data = create_test_jpeg(image_w, image_h, quality);
+        let mut doc = DocumentBuilder::new();
+        let font = doc.add_standard_font("Helvetica");
+        let (_img_name, img_ref) =
+            crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.add_font(&font, "Helvetica");
+        page.add_image("Im1", img_ref);
+        page.draw_image("Im1", 72.0, 400.0, draw_w_pt, draw_h_pt);
+        doc.add_page(page);
+        doc.build().unwrap()
+    }
+
+    /// `high` preset adds downscaling on top of medium's promises.
+    /// Input image is large enough (2000×2000) and rendered at a small display
+    /// size (200×200 pt → ~720 DPI effective) so high's 150 DPI cap triggers.
+    #[test]
+    fn test_preset_high_identity() {
+        let pdf = create_pdf_with_jpeg_at(2000, 2000, 95, 200.0, 200.0);
+        let original_size = pdf.len();
+        let original_analysis = analyze_pdf(&pdf).unwrap();
+
+        let (compressed, stats) =
+            compress_pdf(&pdf, &CompressOptions::preset_high()).unwrap();
+
+        assert!(compressed.starts_with(b"%PDF"));
+        assert!(
+            compressed.len() < original_size,
+            "high must shrink the file ({} vs {})",
+            compressed.len(),
+            original_size,
+        );
+        // Page and image count preserved
+        let new_analysis = analyze_pdf(&compressed).unwrap();
+        assert_eq!(new_analysis.pages, original_analysis.pages);
+        assert_eq!(new_analysis.images, original_analysis.images);
+        // Re-encoding still happens (carried from medium)
+        assert!(stats.images_recompressed > 0);
+        // high's defining promise: at least one image downscaled
+        assert!(
+            stats.images_downscaled > 0,
+            "high must downscale at least one image"
+        );
+    }
+
+    /// Like `create_pdf_with_jpeg` but adds an XMP metadata stream in the
+    /// catalog so preset_extreme has something to strip. (The strip pass
+    /// targets the catalog `/Metadata` key, not the trailer Info dict.)
+    fn create_pdf_with_metadata_and_jpeg(image_w: u32, image_h: u32, quality: u8) -> Vec<u8> {
+        let jpeg_data = create_test_jpeg(image_w, image_h, quality);
+        let mut doc = DocumentBuilder::new();
+        doc.set_xmp_metadata(
+            "Identity Test PDF",
+            "Compression Test Author",
+            "Preset identity verification",
+            "compress.rs test suite",
+        );
+        let font = doc.add_standard_font("Helvetica");
+        let (_img_name, img_ref) =
+            crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.add_font(&font, "Helvetica");
+        page.add_image("Im1", img_ref);
+        page.draw_image("Im1", 72.0, 400.0, image_w as f64, image_h as f64);
+        doc.add_page(page);
+        doc.build().unwrap()
+    }
+
+    /// `extreme` preset adds metadata stripping and/or grayscale conversion
+    /// on top of medium's image re-encoding. Either signal is sufficient
+    /// because extreme's character is "drop everything non-essential".
+    #[test]
+    fn test_preset_extreme_identity() {
+        let pdf = create_pdf_with_metadata_and_jpeg(1000, 1000, 95);
+        let original_size = pdf.len();
+        let original_analysis = analyze_pdf(&pdf).unwrap();
+
+        let (compressed, stats) =
+            compress_pdf(&pdf, &CompressOptions::preset_extreme()).unwrap();
+
+        assert!(compressed.starts_with(b"%PDF"));
+        assert!(
+            compressed.len() < original_size,
+            "extreme must shrink the file ({} vs {})",
+            compressed.len(),
+            original_size,
+        );
+        // Page and image count preserved
+        let new_analysis = analyze_pdf(&compressed).unwrap();
+        assert_eq!(new_analysis.pages, original_analysis.pages);
+        assert_eq!(new_analysis.images, original_analysis.images);
+        // Re-encoding still happens (carried from medium)
+        assert!(stats.images_recompressed > 0);
+        // extreme's defining promise: aggressive stripping — either metadata
+        // items removed or images grayscaled (or both).
+        assert!(
+            stats.metadata_items_stripped > 0 || stats.images_grayscaled > 0,
+            "extreme must strip metadata or grayscale images (got stripped={}, grayscaled={})",
+            stats.metadata_items_stripped,
+            stats.images_grayscaled,
+        );
+    }
 }
