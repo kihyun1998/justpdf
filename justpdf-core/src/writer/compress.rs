@@ -2282,21 +2282,23 @@ mod tests {
 
     #[test]
     fn test_compress_medium_with_image() {
-        let pdf = create_pdf_with_jpeg(200, 200, 95);
+        // 1000×1000 keeps the JPEG stream above preset_medium's
+        // skip_below_bytes (10_000) so re-encoding is exercised.
+        let pdf = create_pdf_with_jpeg(1000, 1000, 95);
         let original_size = pdf.len();
 
         let (compressed, stats) =
             compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
 
-        assert!(compressed.len() > 0);
         assert!(compressed.starts_with(b"%PDF"));
         assert_eq!(stats.original_size, original_size);
         assert!(stats.images_found >= 1);
-
-        // The re-encoded image at q75 should be smaller than q95
-        if stats.images_recompressed > 0 {
-            assert!(stats.compressed_size < original_size);
-        }
+        // medium preset must re-encode the image (q95 source → q75 target)
+        assert!(
+            stats.images_recompressed > 0,
+            "expected medium preset to re-encode the image"
+        );
+        assert!(stats.compressed_size < original_size);
     }
 
     #[test]
@@ -2310,24 +2312,39 @@ mod tests {
 
         assert!(compressed.starts_with(b"%PDF"));
         assert_eq!(stats.original_size, original_size);
-
-        // Should compress significantly
-        if stats.images_recompressed > 0 {
-            assert!(stats.compressed_size < original_size);
-        }
+        // high preset must re-encode (and likely downscale) the large image
+        assert!(
+            stats.images_recompressed > 0,
+            "expected high preset to re-encode the large image"
+        );
+        assert!(stats.compressed_size < original_size);
     }
 
     #[test]
     fn test_compress_extreme() {
-        let pdf = create_pdf_with_jpeg(500, 500, 95);
+        // 1000×1000 keeps the JPEG stream above preset_extreme's
+        // skip_below_bytes (2_000) and provides headroom for compression.
+        let pdf = create_pdf_with_jpeg(1000, 1000, 95);
+        let original_size = pdf.len();
 
         let (compressed, stats) =
             compress_pdf(&pdf, &CompressOptions::preset_extreme()).unwrap();
 
         assert!(compressed.starts_with(b"%PDF"));
-        if stats.images_recompressed > 0 {
-            assert!(stats.compressed_size < stats.original_size);
-        }
+        // extreme preset must re-encode the image
+        assert!(
+            stats.images_recompressed > 0,
+            "expected extreme preset to re-encode the image"
+        );
+        // External baseline: compressed bytes must be smaller than input bytes
+        assert!(
+            compressed.len() < original_size,
+            "compressed {} should be smaller than input {}",
+            compressed.len(),
+            original_size,
+        );
+        // Internal stat consistency
+        assert!(stats.compressed_size < stats.original_size);
     }
 
     #[test]
@@ -2659,7 +2676,7 @@ mod tests {
     fn test_subset_skips_standard_fonts() {
         let pdf = create_text_pdf(3);
 
-        let mut options = CompressOptions::preset_medium(); // font_subsetting: true
+        let options = CompressOptions::preset_medium(); // font_subsetting: true
         let (compressed, stats) = compress_pdf(&pdf, &options).unwrap();
 
         // Standard fonts have no FontFile2, so subsetting should be skipped
@@ -2677,7 +2694,7 @@ mod tests {
     fn test_subset_disabled() {
         let pdf = create_text_pdf(2);
 
-        let mut options = CompressOptions::preset_low(); // font_subsetting: false
+        let options = CompressOptions::preset_low(); // font_subsetting: false
         assert!(!options.font_subsetting);
 
         let (_, stats) = compress_pdf(&pdf, &options).unwrap();
