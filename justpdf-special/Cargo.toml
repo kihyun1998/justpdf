@@ -11,7 +11,7 @@ homepage = "https://github.com/kihyun1998/justpdf"
 
 [features]
 default = []
-ocr = []
+ocr = ["dep:justpdf-render"]
 barcode = ["qrcode"]
 zugferd = ["roxmltree"]
 bidi = ["unicode-bidi"]
@@ -20,7 +20,7 @@ all = ["ocr", "barcode", "zugferd", "bidi", "deskew"]
 
 [dependencies]
 justpdf-core = { version = "0.1.3", path = "../justpdf-core" }
-justpdf-render = { version = "0.1.2", path = "../justpdf-render" }
+justpdf-render = { version = "0.1.2", path = "../justpdf-render", optional = true }
 thiserror = "2"
 qrcode = { version = "0.14", optional = true }
 roxmltree = { version = "0.20", optional = true }
