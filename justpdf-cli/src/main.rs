@@ -116,6 +116,17 @@ enum Commands {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// Compress a PDF (re-encode images, optimize structure)
+    Compress {
+        /// Input PDF file
+        file: PathBuf,
+        /// Compression preset: low, medium, high, extreme
+        #[arg(long, default_value = "medium")]
+        preset: String,
+        /// Output file
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Convert between document formats
     Convert {
         /// Input file
@@ -169,7 +180,16 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             quality,
             output,
             password,
-        } => cmd_render(&file, page, all, dpi, &format, quality, output, password.as_deref()),
+        } => cmd_render(
+            &file,
+            page,
+            all,
+            dpi,
+            &format,
+            quality,
+            output,
+            password.as_deref(),
+        ),
         Commands::Merge { files, output } => cmd_merge(&files, &output),
         Commands::Split {
             file,
@@ -197,6 +217,11 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             output,
         } => cmd_decrypt(&file, &password, &output),
         Commands::Clean { file, output } => cmd_clean(&file, &output),
+        Commands::Compress {
+            file,
+            preset,
+            output,
+        } => cmd_compress(&file, &preset, &output),
         Commands::Convert {
             file,
             output,
@@ -299,14 +324,19 @@ fn cmd_text(
         "markdown" | "md" => justpdf_core::text::format::OutputFormat::Markdown,
         "plain" => justpdf_core::text::format::OutputFormat::PlainText,
         other => {
-            return Err(format!("Unknown format: {other}. Use plain, html, json, or markdown.").into());
+            return Err(
+                format!("Unknown format: {other}. Use plain, html, json, or markdown.").into(),
+            );
         }
     };
 
     if let Some(page_num) = page {
         let page_info = justpdf_core::page::get_page(&doc, page_num - 1)?;
         let page_text = justpdf_core::text::extract_page_text(&doc, &page_info)?;
-        print!("{}", justpdf_core::text::format::format_page(&page_text, output_format));
+        print!(
+            "{}",
+            justpdf_core::text::format::format_page(&page_text, output_format)
+        );
     } else {
         let pages_text = justpdf_core::text::extract_all_text(&doc)?;
         print!(
@@ -406,7 +436,11 @@ fn cmd_merge(files: &[PathBuf], output: &Path) -> Result<(), Box<dyn std::error:
 // split
 // ---------------------------------------------------------------------------
 
-fn cmd_split(file: &Path, pages_str: &str, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_split(
+    file: &Path,
+    pages_str: &str,
+    output: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let doc = justpdf_core::PdfDocument::open(file)?;
     let total = justpdf_core::page::page_count(&doc)?;
     let indices = parse_page_range(pages_str, total)?;
@@ -419,11 +453,7 @@ fn cmd_split(file: &Path, pages_str: &str, output: &Path) -> Result<(), Box<dyn 
     modifier.reorder_pages(&indices)?;
     let result = modifier.build()?;
     std::fs::write(output, result)?;
-    eprintln!(
-        "Extracted {} pages -> {}",
-        indices.len(),
-        output.display()
-    );
+    eprintln!("Extracted {} pages -> {}", indices.len(), output.display());
     Ok(())
 }
 
@@ -577,92 +607,147 @@ fn cmd_clean(file: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error
 }
 
 // ---------------------------------------------------------------------------
+// compress
+// ---------------------------------------------------------------------------
+
+fn cmd_compress(
+    file: &Path,
+    preset: &str,
+    output: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let options = justpdf_core::writer::CompressOptions::from_preset(preset)
+        .ok_or_else(|| format!("Unknown preset: {preset}. Use low, medium, high, or extreme."))?;
+
+    let data = std::fs::read(file)?;
+    let (compressed, stats) = justpdf_core::writer::compress_pdf(&data, &options)?;
+    std::fs::write(output, &compressed)?;
+
+    let reduction = if stats.original_size > 0 {
+        (1.0 - stats.compressed_size as f64 / stats.original_size as f64) * 100.0
+    } else {
+        0.0
+    };
+    eprintln!(
+        "Compressed: {} -> {} ({:.1}% reduction)",
+        format_size(stats.original_size as u64),
+        format_size(stats.compressed_size as u64),
+        reduction
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // convert
 // ---------------------------------------------------------------------------
 
-fn cmd_convert(file: &Path, output: &Path, format: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    use justpdf_formats::detect::{detect_format, DocumentFormat};
+fn cmd_convert(
+    file: &Path,
+    output: &Path,
+    format: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use justpdf_formats::common::FormatDocument;
+    use justpdf_formats::detect::{DocumentFormat, detect_format};
 
     let input_format = detect_format(file);
-    let output_ext = format.unwrap_or_else(|| {
-        output.extension().and_then(|e| e.to_str()).unwrap_or("pdf")
-    });
+    let output_ext =
+        format.unwrap_or_else(|| output.extension().and_then(|e| e.to_str()).unwrap_or("pdf"));
 
     match input_format {
         DocumentFormat::PlainText => {
             let doc = justpdf_formats::plaintext::PlainTextDocument::open(file)?;
             match output_ext {
-                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
-                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                "pdf" => {
+                    std::fs::write(output, doc.to_pdf()?)?;
+                }
+                "png" => {
+                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
+                }
                 _ => return Err(format!("unsupported output format: {output_ext}").into()),
             }
         }
         DocumentFormat::Svg => {
             let doc = justpdf_formats::svg::SvgDocument::open(file)?;
             match output_ext {
-                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
-                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                "pdf" => {
+                    std::fs::write(output, doc.to_pdf()?)?;
+                }
+                "png" => {
+                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
+                }
                 _ => return Err(format!("unsupported output format: {output_ext}").into()),
             }
         }
         DocumentFormat::Epub => {
             let doc = justpdf_formats::epub::EpubDocument::open(file)?;
             match output_ext {
-                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
-                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                "pdf" => {
+                    std::fs::write(output, doc.to_pdf()?)?;
+                }
+                "png" => {
+                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
+                }
                 _ => return Err(format!("unsupported output format: {output_ext}").into()),
             }
         }
         DocumentFormat::Cbz => {
             let doc = justpdf_formats::cbz::CbzDocument::open(file)?;
             match output_ext {
-                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
-                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                "pdf" => {
+                    std::fs::write(output, doc.to_pdf()?)?;
+                }
+                "png" => {
+                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
+                }
                 _ => return Err(format!("unsupported output format: {output_ext}").into()),
             }
         }
         DocumentFormat::Xps => {
             let doc = justpdf_formats::xps::XpsDocument::open(file)?;
             match output_ext {
-                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
-                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                "pdf" => {
+                    std::fs::write(output, doc.to_pdf()?)?;
+                }
+                "png" => {
+                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
+                }
                 _ => return Err(format!("unsupported output format: {output_ext}").into()),
             }
         }
         DocumentFormat::Docx | DocumentFormat::Xlsx | DocumentFormat::Pptx => {
             let doc = justpdf_formats::office::OfficeDocument::open(file)?;
             match output_ext {
-                "pdf" => { std::fs::write(output, doc.to_pdf()?)?; }
-                "png" => { std::fs::write(output, doc.render_page_png(0, 150.0)?)?; }
+                "pdf" => {
+                    std::fs::write(output, doc.to_pdf()?)?;
+                }
+                "png" => {
+                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
+                }
                 _ => return Err(format!("unsupported output format: {output_ext}").into()),
             }
         }
-        DocumentFormat::Pdf => {
-            match output_ext {
-                "svg" => {
-                    let doc = justpdf_core::PdfDocument::open(file)?;
-                    let svg = justpdf_render::render_page_to_svg(&doc, 0)?;
-                    std::fs::write(output, svg)?;
-                }
-                "png" => {
-                    let doc = justpdf_core::PdfDocument::open(file)?;
-                    let opts = justpdf_render::RenderOptions {
-                        dpi: 150.0,
-                        format: justpdf_render::OutputFormat::Png,
-                        ..Default::default()
-                    };
-                    let data = justpdf_render::render_page(&doc, 0, &opts)?;
-                    std::fs::write(output, data)?;
-                }
-                "txt" => {
-                    let doc = justpdf_core::PdfDocument::open(file)?;
-                    let text = justpdf_core::text::extract_all_text_string(&doc)?;
-                    std::fs::write(output, text)?;
-                }
-                _ => return Err(format!("unsupported output: {output_ext}").into()),
+        DocumentFormat::Pdf => match output_ext {
+            "svg" => {
+                let doc = justpdf_core::PdfDocument::open(file)?;
+                let svg = justpdf_render::render_page_to_svg(&doc, 0)?;
+                std::fs::write(output, svg)?;
             }
-        }
+            "png" => {
+                let doc = justpdf_core::PdfDocument::open(file)?;
+                let opts = justpdf_render::RenderOptions {
+                    dpi: 150.0,
+                    format: justpdf_render::OutputFormat::Png,
+                    ..Default::default()
+                };
+                let data = justpdf_render::render_page(&doc, 0, &opts)?;
+                std::fs::write(output, data)?;
+            }
+            "txt" => {
+                let doc = justpdf_core::PdfDocument::open(file)?;
+                let text = justpdf_core::text::extract_all_text_string(&doc)?;
+                std::fs::write(output, text)?;
+            }
+            _ => return Err(format!("unsupported output: {output_ext}").into()),
+        },
         _ => return Err(format!("unsupported input format: {input_format}").into()),
     }
 
