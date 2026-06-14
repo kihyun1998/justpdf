@@ -315,9 +315,15 @@ impl fmt::Display for PdfObject {
                 Ok(())
             }
             Self::String(v) => {
-                // Use literal string with proper escaping if ASCII-safe,
-                // hex string otherwise
-                let needs_hex = v.iter().any(|&b| b == 0 || (b < 32 && b != b'\n' && b != b'\r' && b != b'\t'));
+                // Use a literal string with proper escaping only when every
+                // byte is safely representable there: printable ASCII or one of
+                // tab/newline/carriage-return. Anything else (control bytes, and
+                // crucially bytes >= 0x7F) must use hex — otherwise the literal
+                // path's `b as char` would UTF-8-encode high bytes into multiple
+                // bytes and corrupt binary strings like /O and /U.
+                let needs_hex = v.iter().any(|&b| {
+                    !(b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7E).contains(&b))
+                });
                 if needs_hex {
                     write!(f, "<")?;
                     for b in v {
@@ -513,6 +519,21 @@ mod tests {
     fn test_string_display_normal_ascii() {
         let s = PdfObject::String(b"Normal text".to_vec());
         assert_eq!(s.to_string(), "(Normal text)");
+    }
+
+    #[test]
+    fn test_string_display_high_byte_uses_hex() {
+        // High bytes (>= 0x7F) must use hex. The literal path's `b as char`
+        // would UTF-8-encode them into multiple bytes and corrupt the string
+        // (this broke binary /O and /U entries, blocking decryption).
+        let s = PdfObject::String(vec![b'A', 0xE9, b'B']);
+        assert_eq!(s.to_string(), "<41E942>");
+    }
+
+    #[test]
+    fn test_string_display_high_byte_only() {
+        let s = PdfObject::String(vec![0xFF, 0x80]);
+        assert_eq!(s.to_string(), "<FF80>");
     }
 
     // ── Dict display with special name keys ─────────────────────────
