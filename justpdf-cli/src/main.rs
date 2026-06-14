@@ -163,6 +163,9 @@ struct CompressArgs {
     /// Preview what the PDF contains without compressing or writing anything
     #[arg(long)]
     analyze: bool,
+    /// Print a detailed breakdown of what compression changed
+    #[arg(short, long)]
+    verbose: bool,
     /// Password for encrypted PDFs (output is written WITHOUT encryption)
     #[arg(long)]
     password: Option<String>,
@@ -776,10 +779,35 @@ fn cmd_compress(args: &CompressArgs) -> Result<(), Box<dyn std::error::Error>> {
         format_size(stats.compressed_size as u64),
         reduction
     );
+    if args.verbose {
+        print_compress_breakdown(&stats);
+    }
     if was_encrypted {
         eprintln!("Warning: input was encrypted; output is unencrypted (encryption removed).");
     }
     Ok(())
+}
+
+/// Print the non-zero fields of `CompressStats` to stderr, one per line.
+fn print_compress_breakdown(stats: &justpdf_core::writer::CompressStats) {
+    let rows = [
+        ("Images found", stats.images_found),
+        ("Images recompressed", stats.images_recompressed),
+        ("Images downscaled", stats.images_downscaled),
+        ("Images grayscaled", stats.images_grayscaled),
+        ("Images skipped", stats.images_skipped),
+        ("Fonts subsetted", stats.fonts_subsetted),
+        ("Streams recompressed", stats.streams_recompressed),
+        ("Duplicates removed", stats.duplicates_removed),
+        ("Objects removed (GC)", stats.objects_removed_gc),
+        ("Unused resources removed", stats.unused_resources_removed),
+        ("Metadata items stripped", stats.metadata_items_stripped),
+    ];
+    for (label, value) in rows {
+        if value > 0 {
+            eprintln!("  {label}: {value}");
+        }
+    }
 }
 
 /// Preview a PDF's compressible content without compressing or writing.
@@ -931,6 +959,7 @@ mod tests {
             preset: preset.to_string(),
             output: Some(PathBuf::from("out.pdf")),
             analyze: false,
+            verbose: false,
             password: None,
             structural: false,
             no_structural: false,

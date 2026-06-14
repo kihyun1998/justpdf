@@ -260,3 +260,54 @@ fn analyze_needs_no_output_flag_and_writes_nothing() {
     let sibling = image_fixture().with_file_name("with_image.out.pdf");
     assert!(!sibling.exists());
 }
+
+#[test]
+fn verbose_prints_breakdown_on_stderr() {
+    let out = std::env::temp_dir().join("justpdf_cli_verbose_out.pdf");
+    let _ = std::fs::remove_file(&out);
+
+    let output = bin()
+        .arg("compress")
+        .arg(image_fixture())
+        .arg("--preset")
+        .arg("high")
+        .arg("--verbose")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty(), "stdout must stay clean, got: {stdout}");
+    assert!(stderr.contains("Compressed:"), "summary missing: {stderr}");
+    assert!(
+        stderr.contains("Images found: 1"),
+        "verbose breakdown should report the image, got: {stderr}"
+    );
+}
+
+#[test]
+fn non_verbose_omits_breakdown() {
+    let out = std::env::temp_dir().join("justpdf_cli_nonverbose_out.pdf");
+    let _ = std::fs::remove_file(&out);
+
+    let output = bin()
+        .arg("compress")
+        .arg(image_fixture())
+        .arg("--preset")
+        .arg("high")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Compressed:"), "summary missing: {stderr}");
+    assert!(
+        !stderr.contains("Images found:"),
+        "no breakdown without --verbose, got: {stderr}"
+    );
+}
