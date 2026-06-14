@@ -210,3 +210,53 @@ fn overrides_layer_onto_preset_and_still_compress() {
         "override output should be a valid PDF"
     );
 }
+
+fn image_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/with_image.pdf")
+}
+
+#[test]
+fn analyze_reports_pages_and_images_on_stdout() {
+    let output = bin()
+        .arg("compress")
+        .arg(image_fixture())
+        .arg("--analyze")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "analyze should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Pages: 1"),
+        "expected 1 page, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Images: 1"),
+        "expected 1 image, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Encrypted: No"),
+        "expected encrypted status, got: {stdout}"
+    );
+    // Image data is shown human-readably (KB/MB).
+    assert!(
+        stdout.contains("Image data:") && stdout.contains("KB"),
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn analyze_needs_no_output_flag_and_writes_nothing() {
+    // No -o is given; analyze must neither require it nor write any file.
+    let status = bin()
+        .arg("compress")
+        .arg(image_fixture())
+        .arg("--analyze")
+        .status()
+        .unwrap();
+    assert!(status.success(), "analyze without -o should succeed");
+
+    // No output appeared next to the input.
+    let sibling = image_fixture().with_file_name("with_image.out.pdf");
+    assert!(!sibling.exists());
+}

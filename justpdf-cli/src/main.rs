@@ -157,9 +157,12 @@ struct CompressArgs {
     /// Compression preset: low, medium, high, extreme
     #[arg(long, default_value = "medium")]
     preset: String,
-    /// Output file
-    #[arg(short, long)]
-    output: PathBuf,
+    /// Output file (not needed with --analyze)
+    #[arg(short, long, required_unless_present = "analyze")]
+    output: Option<PathBuf>,
+    /// Preview what the PDF contains without compressing or writing anything
+    #[arg(long)]
+    analyze: bool,
     /// Password for encrypted PDFs (output is written WITHOUT encryption)
     #[arg(long)]
     password: Option<String>,
@@ -737,7 +740,17 @@ fn resolve_options(args: &CompressArgs) -> Result<justpdf_core::writer::Compress
 }
 
 fn cmd_compress(args: &CompressArgs) -> Result<(), Box<dyn std::error::Error>> {
+    if args.analyze {
+        return cmd_compress_analyze(&args.file);
+    }
+
     let options = resolve_options(args)?;
+
+    // clap guarantees --output is present unless --analyze was given.
+    let output = args
+        .output
+        .as_deref()
+        .ok_or("Output file is required. Use -o/--output.")?;
 
     // compress_pdf rejects encrypted PDFs, so decrypt first when needed.
     // open_doc authenticates with --password and errors if it is missing/wrong.
@@ -750,7 +763,7 @@ fn cmd_compress(args: &CompressArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let (compressed, stats) = justpdf_core::writer::compress_pdf(&data, &options)?;
-    std::fs::write(&args.output, &compressed)?;
+    std::fs::write(output, &compressed)?;
 
     let reduction = if stats.original_size > 0 {
         (1.0 - stats.compressed_size as f64 / stats.original_size as f64) * 100.0
@@ -766,6 +779,25 @@ fn cmd_compress(args: &CompressArgs) -> Result<(), Box<dyn std::error::Error>> {
     if was_encrypted {
         eprintln!("Warning: input was encrypted; output is unencrypted (encryption removed).");
     }
+    Ok(())
+}
+
+/// Preview a PDF's compressible content without compressing or writing.
+fn cmd_compress_analyze(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read(file)?;
+    let result = justpdf_core::writer::analyze_pdf(&data)?;
+
+    println!("File: {}", file.display());
+    println!("Pages: {}", result.pages);
+    println!("Images: {}", result.images);
+    println!(
+        "Image data: {}",
+        format_size(result.total_image_bytes as u64)
+    );
+    println!(
+        "Encrypted: {}",
+        if result.is_encrypted { "Yes" } else { "No" }
+    );
     Ok(())
 }
 
@@ -897,7 +929,8 @@ mod tests {
         CompressArgs {
             file: PathBuf::from("in.pdf"),
             preset: preset.to_string(),
-            output: PathBuf::from("out.pdf"),
+            output: Some(PathBuf::from("out.pdf")),
+            analyze: false,
             password: None,
             structural: false,
             no_structural: false,
