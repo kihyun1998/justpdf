@@ -29,5 +29,5 @@
 - [compress-wasm](compress-wasm.md), [CLI](cli.md) — `CompressStats`·`AnalyzeResult` 필드를 그대로 노출한다. 필드 추가·삭제는 두 표면의 getter/출력에 닿는다.
 
 ## Known holes / open
-- core는 여전히 암호화 입력을 거부한다. CLI `--password`는 인증 후 `DocumentModifier`로 재직렬화한 바이트를 넘기므로, 보고되는 원본 크기가 파일 크기가 아니라 복호화·재직렬화된 크기다(추론). R5 파일은 틀린 비밀번호도 통과한다(#30).
+- core는 여전히 암호화 입력을 거부한다. CLI `--password`는 인증 후 `DocumentModifier`로 재직렬화한 바이트를 넘기므로, 보고되는 원본 크기가 파일 크기가 아니라 복호화·재직렬화된 크기다(추론).
 - `justpdf-core/tests/`에는 `compress_pdf` 통합 테스트가 없다(단위 테스트는 `compress.rs` 안에만).

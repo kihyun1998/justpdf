@@ -1026,6 +1026,61 @@ fn test_encrypt_aes256_roundtrip() {
     assert_eq!(pages.len(), 1);
 }
 
+/// Text of the first page of `doc`.
+fn first_page_text(doc: &PdfDocument) -> String {
+    let pages = collect_pages(doc).unwrap();
+    text::extract_page_text_string(doc, &pages[0]).unwrap()
+}
+
+/// `aes256_r5_user_owner.pdf`: AES-256 R5 written by qpdf, user password
+/// `userpw`, owner password `ownerpw`, one page reading "R5 secret text".
+fn r5_user_owner_bytes() -> Vec<u8> {
+    std::fs::read(fixture("aes256_r5_user_owner.pdf")).unwrap()
+}
+
+#[test]
+fn test_r5_is_not_authenticated_on_open_when_user_password_set() {
+    let doc = PdfDocument::from_bytes(r5_user_owner_bytes()).unwrap();
+    assert!(doc.is_encrypted());
+    assert!(!doc.is_authenticated());
+}
+
+#[test]
+fn test_r5_wrong_password_rejected() {
+    let mut doc = PdfDocument::from_bytes(r5_user_owner_bytes()).unwrap();
+    let err = doc.authenticate(b"totally-wrong").unwrap_err();
+    assert!(
+        matches!(err, JustPdfError::IncorrectPassword),
+        "got {err:?}"
+    );
+    assert!(!doc.is_authenticated());
+}
+
+#[test]
+fn test_r5_user_password_decrypts() {
+    let mut doc = PdfDocument::from_bytes(r5_user_owner_bytes()).unwrap();
+    doc.authenticate(b"userpw").unwrap();
+    assert!(doc.is_authenticated());
+    assert_eq!(first_page_text(&doc).trim(), "R5 secret text");
+}
+
+#[test]
+fn test_r5_owner_password_decrypts() {
+    let mut doc = PdfDocument::from_bytes(r5_user_owner_bytes()).unwrap();
+    doc.authenticate(b"ownerpw").unwrap();
+    assert!(doc.is_authenticated());
+    assert_eq!(first_page_text(&doc).trim(), "R5 secret text");
+}
+
+/// `aes256_r5_empty_user.pdf`: as above with an empty user password.
+#[test]
+fn test_r5_empty_user_password_opens() {
+    let data = std::fs::read(fixture("aes256_r5_empty_user.pdf")).unwrap();
+    let doc = PdfDocument::from_bytes(data).unwrap();
+    assert!(doc.is_authenticated());
+    assert_eq!(first_page_text(&doc).trim(), "R5 secret text");
+}
+
 #[test]
 fn test_encrypt_empty_user_password() {
     // Many real PDFs use empty user password (open access but restricted permissions)

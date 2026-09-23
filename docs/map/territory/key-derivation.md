@@ -26,4 +26,4 @@
 - [객체 직렬화](object-serialization.md) — 값이 hex로 나가야 한다.
 
 ## Known holes / open
-- 자기 출력으로만 검증한다(생성 → 인증). R2·R5 테스트, 외부 암호화 픽스처가 없다.
+- R3·R4·R6은 자기 출력으로만 검증한다(생성 → 인증). R5는 qpdf가 쓴 외부 픽스처로 검증한다([비밀번호 인증](password-authentication.md#known-holes--open)). R2 테스트는 없다.
