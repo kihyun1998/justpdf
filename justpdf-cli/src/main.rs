@@ -160,6 +160,9 @@ struct CompressArgs {
     /// Output file
     #[arg(short, long)]
     output: PathBuf,
+    /// Password for encrypted PDFs (output is written WITHOUT encryption)
+    #[arg(long)]
+    password: Option<String>,
 
     // --- on/off knobs (each overrides the preset in either direction) ---
     /// Run structural optimization (GC + dedup + object streams)
@@ -736,7 +739,16 @@ fn resolve_options(args: &CompressArgs) -> Result<justpdf_core::writer::Compress
 fn cmd_compress(args: &CompressArgs) -> Result<(), Box<dyn std::error::Error>> {
     let options = resolve_options(args)?;
 
-    let data = std::fs::read(&args.file)?;
+    // compress_pdf rejects encrypted PDFs, so decrypt first when needed.
+    // open_doc authenticates with --password and errors if it is missing/wrong.
+    let doc = open_doc(&args.file, args.password.as_deref())?;
+    let was_encrypted = doc.is_encrypted();
+    let data = if was_encrypted {
+        justpdf_core::writer::DocumentModifier::from_document(&doc)?.build()?
+    } else {
+        std::fs::read(&args.file)?
+    };
+
     let (compressed, stats) = justpdf_core::writer::compress_pdf(&data, &options)?;
     std::fs::write(&args.output, &compressed)?;
 
@@ -751,6 +763,9 @@ fn cmd_compress(args: &CompressArgs) -> Result<(), Box<dyn std::error::Error>> {
         format_size(stats.compressed_size as u64),
         reduction
     );
+    if was_encrypted {
+        eprintln!("Warning: input was encrypted; output is unencrypted (encryption removed).");
+    }
     Ok(())
 }
 
@@ -883,6 +898,7 @@ mod tests {
             file: PathBuf::from("in.pdf"),
             preset: preset.to_string(),
             output: PathBuf::from("out.pdf"),
+            password: None,
             structural: false,
             no_structural: false,
             compress_streams: false,
