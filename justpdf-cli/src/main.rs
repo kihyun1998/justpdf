@@ -117,16 +117,7 @@ enum Commands {
         output: PathBuf,
     },
     /// Compress a PDF (re-encode images, optimize structure)
-    Compress {
-        /// Input PDF file
-        file: PathBuf,
-        /// Compression preset: low, medium, high, extreme
-        #[arg(long, default_value = "medium")]
-        preset: String,
-        /// Output file
-        #[arg(short, long)]
-        output: PathBuf,
-    },
+    Compress(CompressArgs),
     /// Convert between document formats
     Convert {
         /// Input file
@@ -152,6 +143,78 @@ enum Commands {
         #[arg(short, long)]
         output: PathBuf,
     },
+}
+
+/// Arguments for the `compress` subcommand.
+///
+/// A `--preset` supplies the base values; each knob flag below overrides its
+/// preset value when given. On/off knobs use the `--x` / `--no-x` convention,
+/// and clap rejects supplying both sides of a pair at once.
+#[derive(clap::Args)]
+struct CompressArgs {
+    /// Input PDF file
+    file: PathBuf,
+    /// Compression preset: low, medium, high, extreme
+    #[arg(long, default_value = "medium")]
+    preset: String,
+    /// Output file
+    #[arg(short, long)]
+    output: PathBuf,
+
+    // --- on/off knobs (each overrides the preset in either direction) ---
+    /// Run structural optimization (GC + dedup + object streams)
+    #[arg(long, conflicts_with = "no_structural")]
+    structural: bool,
+    /// Disable structural optimization
+    #[arg(long)]
+    no_structural: bool,
+    /// Apply FlateDecode to uncompressed streams
+    #[arg(long, conflicts_with = "no_compress_streams")]
+    compress_streams: bool,
+    /// Disable stream compression
+    #[arg(long)]
+    no_compress_streams: bool,
+    /// Subset embedded fonts (drop unused glyphs)
+    #[arg(long, conflicts_with = "no_font_subsetting")]
+    font_subsetting: bool,
+    /// Disable font subsetting
+    #[arg(long)]
+    no_font_subsetting: bool,
+    /// Strip metadata (XMP, thumbnails, OutputIntents, ...)
+    #[arg(long, conflicts_with = "no_strip_metadata")]
+    strip_metadata: bool,
+    /// Keep metadata
+    #[arg(long)]
+    no_strip_metadata: bool,
+    /// Strip embedded files, JavaScript, and other extras
+    #[arg(long, conflicts_with = "no_strip_extras")]
+    strip_extras: bool,
+    /// Keep embedded files and extras
+    #[arg(long)]
+    no_strip_extras: bool,
+    /// Convert color images to grayscale
+    #[arg(long, conflicts_with = "no_grayscale")]
+    grayscale: bool,
+    /// Keep image color
+    #[arg(long)]
+    no_grayscale: bool,
+
+    // --- numeric knobs ---
+    /// JPEG quality for image re-encoding (1-100)
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100), conflicts_with = "no_image_recompress")]
+    jpeg_quality: Option<u8>,
+    /// Disable image re-encoding entirely
+    #[arg(long)]
+    no_image_recompress: bool,
+    /// Maximum image DPI (downscale above this)
+    #[arg(long, conflicts_with = "no_downscale")]
+    max_dpi: Option<f64>,
+    /// Disable image downscaling entirely
+    #[arg(long)]
+    no_downscale: bool,
+    /// Skip images smaller than this many bytes
+    #[arg(long)]
+    skip_below: Option<usize>,
 }
 
 fn main() {
@@ -217,11 +280,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             output,
         } => cmd_decrypt(&file, &password, &output),
         Commands::Clean { file, output } => cmd_clean(&file, &output),
-        Commands::Compress {
-            file,
-            preset,
-            output,
-        } => cmd_compress(&file, &preset, &output),
+        Commands::Compress(args) => cmd_compress(&args),
         Commands::Convert {
             file,
             output,
@@ -610,17 +669,76 @@ fn cmd_clean(file: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error
 // compress
 // ---------------------------------------------------------------------------
 
-fn cmd_compress(
-    file: &Path,
-    preset: &str,
-    output: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let options = justpdf_core::writer::CompressOptions::from_preset(preset)
-        .ok_or_else(|| format!("Unknown preset: {preset}. Use low, medium, high, or extreme."))?;
+/// Resolve an on/off knob: an explicit flag wins, otherwise the preset stands.
+/// clap guarantees `on` and `off` are never both set.
+fn resolve_bool(base: bool, on: bool, off: bool) -> bool {
+    if on {
+        true
+    } else if off {
+        false
+    } else {
+        base
+    }
+}
 
-    let data = std::fs::read(file)?;
+/// Build the effective `CompressOptions` from a preset plus knob overrides.
+/// Each override wins over the preset; absent knobs leave the preset value.
+fn resolve_options(args: &CompressArgs) -> Result<justpdf_core::writer::CompressOptions, String> {
+    let mut options =
+        justpdf_core::writer::CompressOptions::from_preset(&args.preset).ok_or_else(|| {
+            format!(
+                "Unknown preset: {}. Use low, medium, high, or extreme.",
+                args.preset
+            )
+        })?;
+
+    // Apply knob overrides on top of the preset.
+    options.structural = resolve_bool(options.structural, args.structural, args.no_structural);
+    options.compress_streams = resolve_bool(
+        options.compress_streams,
+        args.compress_streams,
+        args.no_compress_streams,
+    );
+    options.font_subsetting = resolve_bool(
+        options.font_subsetting,
+        args.font_subsetting,
+        args.no_font_subsetting,
+    );
+    options.strip_metadata = resolve_bool(
+        options.strip_metadata,
+        args.strip_metadata,
+        args.no_strip_metadata,
+    );
+    options.strip_extras = resolve_bool(
+        options.strip_extras,
+        args.strip_extras,
+        args.no_strip_extras,
+    );
+    options.grayscale = resolve_bool(options.grayscale, args.grayscale, args.no_grayscale);
+
+    if args.no_image_recompress {
+        options.jpeg_quality = None;
+    } else if let Some(q) = args.jpeg_quality {
+        options.jpeg_quality = Some(q);
+    }
+    if args.no_downscale {
+        options.max_image_dpi = None;
+    } else if let Some(dpi) = args.max_dpi {
+        options.max_image_dpi = Some(dpi);
+    }
+    if let Some(bytes) = args.skip_below {
+        options.skip_below_bytes = bytes;
+    }
+
+    Ok(options)
+}
+
+fn cmd_compress(args: &CompressArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let options = resolve_options(args)?;
+
+    let data = std::fs::read(&args.file)?;
     let (compressed, stats) = justpdf_core::writer::compress_pdf(&data, &options)?;
-    std::fs::write(output, &compressed)?;
+    std::fs::write(&args.output, &compressed)?;
 
     let reduction = if stats.original_size > 0 {
         (1.0 - stats.compressed_size as f64 / stats.original_size as f64) * 100.0
@@ -753,4 +871,118 @@ fn cmd_convert(
 
     eprintln!("Converted {} -> {}", file.display(), output.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `CompressArgs` with every knob left unset (preset values pass through).
+    fn args_for(preset: &str) -> CompressArgs {
+        CompressArgs {
+            file: PathBuf::from("in.pdf"),
+            preset: preset.to_string(),
+            output: PathBuf::from("out.pdf"),
+            structural: false,
+            no_structural: false,
+            compress_streams: false,
+            no_compress_streams: false,
+            font_subsetting: false,
+            no_font_subsetting: false,
+            strip_metadata: false,
+            no_strip_metadata: false,
+            strip_extras: false,
+            no_strip_extras: false,
+            grayscale: false,
+            no_grayscale: false,
+            jpeg_quality: None,
+            no_image_recompress: false,
+            max_dpi: None,
+            no_downscale: false,
+            skip_below: None,
+        }
+    }
+
+    #[test]
+    fn unset_knobs_preserve_the_preset() {
+        let preset = justpdf_core::writer::CompressOptions::preset_high();
+        let resolved = resolve_options(&args_for("high")).unwrap();
+
+        assert_eq!(resolved.jpeg_quality, preset.jpeg_quality);
+        assert_eq!(resolved.max_image_dpi, preset.max_image_dpi);
+        assert_eq!(resolved.skip_below_bytes, preset.skip_below_bytes);
+        assert_eq!(resolved.structural, preset.structural);
+        assert_eq!(resolved.compress_streams, preset.compress_streams);
+        assert_eq!(resolved.font_subsetting, preset.font_subsetting);
+        assert_eq!(
+            resolved.remove_unused_resources,
+            preset.remove_unused_resources
+        );
+        assert_eq!(resolved.strip_metadata, preset.strip_metadata);
+        assert_eq!(resolved.strip_extras, preset.strip_extras);
+        assert_eq!(resolved.grayscale, preset.grayscale);
+    }
+
+    #[test]
+    fn high_with_two_overrides_changes_only_those_two() {
+        // The acceptance example: high base, keep metadata, bump quality to 80.
+        let base = justpdf_core::writer::CompressOptions::preset_high();
+        let mut args = args_for("high");
+        args.no_strip_metadata = true;
+        args.jpeg_quality = Some(80);
+
+        let resolved = resolve_options(&args).unwrap();
+
+        // The two overridden fields differ from the preset...
+        assert_eq!(resolved.jpeg_quality, Some(80));
+        assert!(!resolved.strip_metadata);
+        assert!(base.strip_metadata, "high should strip metadata by default");
+
+        // ...and everything else still matches high.
+        assert_eq!(resolved.max_image_dpi, base.max_image_dpi);
+        assert_eq!(resolved.skip_below_bytes, base.skip_below_bytes);
+        assert_eq!(resolved.structural, base.structural);
+        assert_eq!(resolved.compress_streams, base.compress_streams);
+        assert_eq!(resolved.font_subsetting, base.font_subsetting);
+        assert_eq!(resolved.strip_extras, base.strip_extras);
+        assert_eq!(resolved.grayscale, base.grayscale);
+    }
+
+    #[test]
+    fn on_off_knobs_override_in_both_directions() {
+        // low leaves font_subsetting off; turn it on.
+        let mut on = args_for("low");
+        on.font_subsetting = true;
+        assert!(resolve_options(&on).unwrap().font_subsetting);
+
+        // high turns font_subsetting on; turn it off.
+        let mut off = args_for("high");
+        off.no_font_subsetting = true;
+        assert!(!resolve_options(&off).unwrap().font_subsetting);
+    }
+
+    #[test]
+    fn disable_flags_clear_the_image_options() {
+        let mut args = args_for("high");
+        args.no_image_recompress = true;
+        args.no_downscale = true;
+        let resolved = resolve_options(&args).unwrap();
+        assert_eq!(resolved.jpeg_quality, None);
+        assert_eq!(resolved.max_image_dpi, None);
+    }
+
+    #[test]
+    fn numeric_overrides_replace_preset_values() {
+        let mut args = args_for("medium");
+        args.max_dpi = Some(200.0);
+        args.skip_below = Some(123);
+        let resolved = resolve_options(&args).unwrap();
+        assert_eq!(resolved.max_image_dpi, Some(200.0));
+        assert_eq!(resolved.skip_below_bytes, 123);
+    }
+
+    #[test]
+    fn unknown_preset_is_rejected() {
+        assert!(resolve_options(&args_for("bogus")).is_err());
+    }
 }

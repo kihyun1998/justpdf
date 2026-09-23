@@ -128,3 +128,85 @@ fn missing_output_flag_is_an_error() {
     let output = bin().arg("compress").arg(fixture()).output().unwrap();
     assert!(!output.status.success(), "missing -o should fail");
 }
+
+#[test]
+fn conflicting_on_off_pair_is_rejected() {
+    let out = std::env::temp_dir().join("justpdf_cli_compress_conflict.pdf");
+    let _ = std::fs::remove_file(&out);
+    let output = bin()
+        .arg("compress")
+        .arg(fixture())
+        .arg("-o")
+        .arg(&out)
+        .arg("--grayscale")
+        .arg("--no-grayscale")
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "--x with --no-x should fail");
+    assert!(!out.exists(), "no output on a conflicting invocation");
+}
+
+#[test]
+fn jpeg_quality_conflicts_with_no_image_recompress() {
+    let out = std::env::temp_dir().join("justpdf_cli_compress_jpeg_conflict.pdf");
+    let _ = std::fs::remove_file(&out);
+    let output = bin()
+        .arg("compress")
+        .arg(fixture())
+        .arg("-o")
+        .arg(&out)
+        .arg("--jpeg-quality")
+        .arg("80")
+        .arg("--no-image-recompress")
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "quality + disable should conflict"
+    );
+}
+
+#[test]
+fn jpeg_quality_out_of_range_is_rejected() {
+    let out = std::env::temp_dir().join("justpdf_cli_compress_range.pdf");
+    let _ = std::fs::remove_file(&out);
+    for bad in ["0", "101"] {
+        let output = bin()
+            .arg("compress")
+            .arg(fixture())
+            .arg("-o")
+            .arg(&out)
+            .arg("--jpeg-quality")
+            .arg(bad)
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "jpeg-quality {bad} should be rejected"
+        );
+    }
+}
+
+#[test]
+fn overrides_layer_onto_preset_and_still_compress() {
+    let out = std::env::temp_dir().join("justpdf_cli_compress_override.pdf");
+    let _ = std::fs::remove_file(&out);
+    let status = bin()
+        .arg("compress")
+        .arg(fixture())
+        .arg("--preset")
+        .arg("high")
+        .arg("--no-strip-metadata")
+        .arg("--jpeg-quality")
+        .arg("80")
+        .arg("-o")
+        .arg(&out)
+        .status()
+        .unwrap();
+    assert!(status.success(), "high + overrides should succeed");
+    let result = std::fs::read(&out).unwrap();
+    assert!(
+        is_valid_pdf(&result),
+        "override output should be a valid PDF"
+    );
+}
