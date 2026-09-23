@@ -78,7 +78,7 @@ fn detect_column_boundaries(lines: &[TextLine]) -> Vec<ColumnBound> {
     }
 
     // Look for significant gaps between clusters of X starts
-    // Use a simple clustering: if gap between consecutive X starts > page_width * 0.1, it's a column break
+    // Use a simple clustering: if gap between consecutive X starts > max(page_width * 0.15, 30), it's a column break
     let page_width = x_starts.last().unwrap_or(&612.0) - x_starts.first().unwrap_or(&0.0);
     let gap_threshold = (page_width * 0.15).max(30.0);
 

@@ -162,11 +162,11 @@ fn decode_single(data: &[u8], filter: &[u8], params: Option<&PdfDict>) -> Result
             Ok(data.to_vec())
         }
         b"JPXDecode" => {
-            // JPEG2000: not yet implemented, pass through raw bytes
+            // JPEG2000: passed through raw; pixels are decoded at the image layer (image::decode_image)
             Ok(data.to_vec())
         }
         b"JBIG2Decode" => {
-            // JBIG2: not yet implemented, pass through raw bytes
+            // JBIG2: passed through raw; pixels are decoded at the image layer (image::decode_image)
             Ok(data.to_vec())
         }
         b"CCITTFaxDecode" | b"CCF" => {

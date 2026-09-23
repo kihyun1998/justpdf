@@ -205,7 +205,7 @@ pub struct PageText {
 }
 
 impl PageText {
-    /// Get plain text, joining lines with newlines.
+    /// Get plain text, joining blocks with blank lines.
     pub fn plain_text(&self) -> String {
         self.blocks
             .iter()
@@ -959,7 +959,7 @@ pub fn extract_page_text_string(doc: &PdfDocument, page: &PageInfo) -> Result<St
     Ok(page_text.plain_text())
 }
 
-/// Extract plain text from all pages, joining with form feeds.
+/// Extract plain text from all pages, joining pages with blank lines.
 pub fn extract_all_text_string(doc: &PdfDocument) -> Result<String> {
     let pages = extract_all_text(doc)?;
     let texts: Vec<String> = pages.iter().map(|p| p.plain_text()).collect();

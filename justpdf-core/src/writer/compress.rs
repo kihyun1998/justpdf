@@ -27,7 +27,7 @@ pub struct CompressOptions {
     pub max_image_dpi: Option<f64>,
     /// Skip images smaller than this many bytes.
     pub skip_below_bytes: usize,
-    /// Run structural optimization (GC + dedup + object streams).
+    /// Run structural optimization (GC + stream dedup).
     pub structural: bool,
     /// Apply FlateDecode to uncompressed streams.
     pub compress_streams: bool,
@@ -991,8 +991,9 @@ fn encode_jpeg_gray(gray_data: &[u8], width: u32, height: u32, quality: u8) -> R
 /// - `r g b RG` → `gray G` (stroking RGB)
 /// - `c m y k k` → `gray g` (non-stroking CMYK)
 /// - `c m y k K` → `gray G` (stroking CMYK)
-/// - `r g b sc` (DeviceRGB) → `gray sc`
-/// - `r g b SC` (DeviceRGB) → `gray SC`
+///
+/// `sc`/`SC`/`scn`/`SCN` are left unchanged. Only page `/Contents` streams are
+/// rewritten, not Form XObjects.
 fn rewrite_color_operators_to_gray(modifier: &mut DocumentModifier) {
     // Find all content stream objects (pages' /Contents)
     let content_obj_nums: Vec<u32> = modifier
@@ -2990,8 +2991,8 @@ mod tests {
     }
 
     // ── Phase H: Object stream packing tests ────────────────────────
-    // NOTE: Object stream packing is implemented (pack_object_streams) but not
-    // yet wired into compress_pdf because it requires xref stream serialization.
+    // NOTE: Object stream packing is implemented (pack_object_streams) but is
+    // disabled in compress_pdf (see Step 5: xref stream viewer compatibility).
     // These tests verify the packing function works in isolation.
 
     /// H-T1: pack_object_streams correctly packs eligible objects.
