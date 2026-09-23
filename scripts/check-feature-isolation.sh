@@ -14,11 +14,11 @@ assert_dep_absent() {
   local pkg=$1 dep=$2 features=$3 label=$4
   local out
   if [ -n "$features" ]; then
-    out=$(cargo tree -p "$pkg" --depth 1 --edges no-dev --no-default-features --features "$features" 2>/dev/null) || { echo "FAIL [$label]: cargo tree failed" >&2; fail=1; return; }
+    out=$(cargo tree -p "$pkg" --depth 1 --edges no-dev --prefix none --no-default-features --features "$features" 2>/dev/null) || { echo "FAIL [$label]: cargo tree failed" >&2; fail=1; return; }
   else
-    out=$(cargo tree -p "$pkg" --depth 1 --edges no-dev 2>/dev/null) || { echo "FAIL [$label]: cargo tree failed" >&2; fail=1; return; }
+    out=$(cargo tree -p "$pkg" --depth 1 --edges no-dev --prefix none 2>/dev/null) || { echo "FAIL [$label]: cargo tree failed" >&2; fail=1; return; }
   fi
-  if printf '%s\n' "$out" | grep -q "^[├└]── ${dep} "; then
+  if printf '%s\n' "$out" | grep -q "^${dep} v"; then
     echo "FAIL [$label]: $pkg has unexpected dependency on $dep" >&2
     fail=1
   else
@@ -30,11 +30,11 @@ assert_dep_present() {
   local pkg=$1 dep=$2 features=$3 label=$4
   local out
   if [ -n "$features" ]; then
-    out=$(cargo tree -p "$pkg" --depth 1 --edges no-dev --no-default-features --features "$features" 2>/dev/null) || { echo "FAIL [$label]: cargo tree failed" >&2; fail=1; return; }
+    out=$(cargo tree -p "$pkg" --depth 1 --edges no-dev --prefix none --no-default-features --features "$features" 2>/dev/null) || { echo "FAIL [$label]: cargo tree failed" >&2; fail=1; return; }
   else
-    out=$(cargo tree -p "$pkg" --depth 1 --edges no-dev 2>/dev/null) || { echo "FAIL [$label]: cargo tree failed" >&2; fail=1; return; }
+    out=$(cargo tree -p "$pkg" --depth 1 --edges no-dev --prefix none 2>/dev/null) || { echo "FAIL [$label]: cargo tree failed" >&2; fail=1; return; }
   fi
-  if printf '%s\n' "$out" | grep -q "^[├└]── ${dep} "; then
+  if printf '%s\n' "$out" | grep -q "^${dep} v"; then
     echo "PASS [$label]: $dep present in $pkg"
   else
     echo "FAIL [$label]: $pkg should depend on $dep but does not" >&2
