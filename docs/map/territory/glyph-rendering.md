@@ -26,7 +26,7 @@
 
 ## Blast radius
 - [폰트 로딩](font-loading.md), [CID 폰트](cid-fonts.md), [폰트 인코딩](font-encodings.md) — 입력(일부 우회).
-- [폰트 서브세팅](font-subsetting.md) — 서브셋 폰트의 복사된 cmap이 옛 GID를 가리킨다.
+- [폰트 서브세팅](font-subsetting.md) — 서브셋 폰트는 GID를 유지하므로 `char_code_to_glyph_id`의 cmap 조회와 코드 == GID 대체 경로가 원본과 같은 글리프에 닿는다(서브세팅은 두 경로의 글리프를 모두 남긴다).
 - [폰트 대체](font-recovery.md), [CFF 파서](cff.md) — 자리표시 사각형 대신 쓸 수 있는 연결 안 된 모듈.
 - [SVG 렌더러](svg-renderer.md) — 별도 텍스트 경로.
 

@@ -115,7 +115,7 @@ fn parse_char_procs(dict: &PdfDict) -> Option<Vec<(Vec<u8>, IndirectRef)>> {
 /// The `/Differences` array has the form: `[code name1 name2 ... code name1 ...]`
 /// where each integer sets the current code, and subsequent names are assigned
 /// incrementing codes.
-fn parse_encoding_differences(dict: &PdfDict) -> Vec<(u8, Vec<u8>)> {
+pub(crate) fn parse_encoding_differences(dict: &PdfDict) -> Vec<(u8, Vec<u8>)> {
     let enc_dict = match dict.get(b"Encoding") {
         Some(PdfObject::Dict(d)) => d,
         _ => return Vec::new(),

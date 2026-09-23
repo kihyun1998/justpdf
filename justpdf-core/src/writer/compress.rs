@@ -4,7 +4,7 @@
 //! downscaling oversized images, and performing structural optimization
 //! (garbage collection, deduplication, object stream packing).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use sha2::{Digest, Sha256};
 
@@ -1225,7 +1225,12 @@ fn write_operand(buf: &mut Vec<u8>, operand: &crate::content::Operand) {
 /// Subset embedded TrueType fonts to contain only used glyphs.
 ///
 /// Walks all pages to collect used character codes per font, then subsets
-/// each TrueType font's FontFile2 stream using only those glyphs.
+/// each TrueType font's FontFile2 stream using only those glyphs. Glyph IDs
+/// are kept, so the font dictionaries are left as they are. A font is left
+/// whole when its used codes cannot be collected or resolved with confidence:
+/// it is reachable from anything other than a page's own `/Resources`, it is
+/// shown with the `"` operator, or [`simple_font_glyph_ids`] /
+/// [`cid_font_glyph_ids`] return `None`.
 fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressStats) {
     // Step 1: Find all Page objects and collect content refs + resource refs.
     // We collect raw data first to avoid borrow conflicts.
@@ -1265,6 +1270,7 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
 
     // Step 2: Parse content streams and collect used char codes per font obj_num
     let mut font_char_codes: HashMap<u32, HashSet<u16>> = HashMap::new();
+    let mut unsafe_fonts: HashSet<u32> = HashSet::new();
 
     for (content_obj_nums, font_map) in &page_data {
         // Concatenate content stream data
@@ -1287,19 +1293,35 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
         };
 
         let mut current_font_name: Option<Vec<u8>> = None;
+        let mut saved_font_names: Vec<Option<Vec<u8>>> = Vec::new();
 
         for op in &ops {
             match op.operator.as_slice() {
+                b"q" => saved_font_names.push(current_font_name.clone()),
+                b"Q" => {
+                    if let Some(name) = saved_font_names.pop() {
+                        current_font_name = name;
+                    }
+                }
                 b"Tf" => {
                     // Tf: font_name font_size
                     if let Some(name) = op.operands.first().and_then(|o| o.as_name()) {
                         current_font_name = Some(name.to_vec());
                     }
                 }
-                b"Tj" | b"'" | b"\"" => {
-                    if let (Some(font_name), Some(s)) =
-                        (&current_font_name, op.operands.first().and_then(|o| o.as_str()))
+                b"\"" => {
+                    if let Some(&font_obj_num) = current_font_name
+                        .as_ref()
+                        .and_then(|name| font_map.get(name.as_slice()))
                     {
+                        unsafe_fonts.insert(font_obj_num);
+                    }
+                }
+                b"Tj" | b"'" => {
+                    if let (Some(font_name), Some(s)) = (
+                        &current_font_name,
+                        op.operands.first().and_then(|o| o.as_str()),
+                    ) {
                         if let Some(&font_obj_num) = font_map.get(font_name.as_slice()) {
                             let codes = font_char_codes.entry(font_obj_num).or_default();
                             extract_char_codes(s, font_obj_num, modifier, codes);
@@ -1327,8 +1349,16 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
 
     // Step 3: For each font with collected char codes, find FontFile2 and subset
     let font_obj_nums: Vec<u32> = font_char_codes.keys().copied().collect();
+    let candidates: HashSet<u32> = font_obj_nums.iter().copied().collect();
+    unsafe_fonts.extend(fonts_reachable_outside_page_resources(
+        &candidates,
+        modifier,
+    ));
 
     for font_obj_num in font_obj_nums {
+        if unsafe_fonts.contains(&font_obj_num) {
+            continue;
+        }
         let char_codes = match font_char_codes.get(&font_obj_num) {
             Some(codes) if !codes.is_empty() => codes,
             _ => continue,
@@ -1356,22 +1386,14 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
             Err(_) => continue,
         };
 
-        // Convert char codes to glyph IDs
-        // For CID fonts with CIDToGIDMap, map CID → GID first
-        let glyph_ids: Vec<u16> = if is_cid_font(font_obj_num, modifier) {
-            let cid_to_gid = load_cid_to_gid_map(font_obj_num, modifier);
-            if cid_to_gid.is_empty() {
-                // Identity mapping or no map — CID = GID
-                char_codes.iter().copied().collect()
-            } else {
-                char_codes
-                    .iter()
-                    .filter_map(|&cid| cid_to_gid.get(&cid).copied())
-                    .collect()
-            }
+        let glyph_ids = if is_cid_font(font_obj_num, modifier) {
+            cid_font_glyph_ids(font_obj_num, char_codes, modifier)
         } else {
-            // Simple TrueType: char code ≈ glyph ID
-            char_codes.iter().copied().collect()
+            simple_font_glyph_ids(font_obj_num, char_codes, &decoded_font, modifier)
+        };
+        let glyph_ids = match glyph_ids {
+            Some(ids) => ids,
+            None => continue,
         };
 
         // Subset the font
@@ -1414,161 +1436,8 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
             },
         );
 
-        // D-4: Update Widths array in the Font dict (simple TrueType only)
-        if !is_cid_font(font_obj_num, modifier) {
-            update_font_widths(font_obj_num, &subset_result.gid_map, modifier);
-        } else {
-            // For CID fonts, update the CIDToGIDMap
-            update_cid_to_gid_map(font_obj_num, &subset_result.gid_map, modifier);
-        }
-
         stats.fonts_subsetted += 1;
     }
-}
-
-/// Update the Widths array in a Font dict after subsetting.
-///
-/// The gid_map maps old glyph IDs to new ones. For each character code
-/// in [FirstChar, LastChar], if the old glyph ID has a new mapping,
-/// the width stays the same (the glyph shape is preserved, just renumbered).
-/// If a glyph was removed, its width becomes 0.
-fn update_font_widths(
-    font_obj_num: u32,
-    gid_map: &HashMap<u16, u16>,
-    modifier: &mut DocumentModifier,
-) {
-    let font_dict = match find_object_dict(font_obj_num, modifier) {
-        Some(d) => d,
-        None => return,
-    };
-
-    let first_char = match font_dict.get_i64(b"FirstChar") {
-        Some(v) => v as u16,
-        None => return,
-    };
-    let _last_char = match font_dict.get_i64(b"LastChar") {
-        Some(v) => v as u16,
-        None => return,
-    };
-
-    let old_widths: Vec<i64> = match font_dict.get(b"Widths") {
-        Some(PdfObject::Array(arr)) => arr
-            .iter()
-            .map(|o| match o {
-                PdfObject::Integer(v) => *v,
-                PdfObject::Real(v) => *v as i64,
-                _ => 0,
-            })
-            .collect(),
-        _ => return,
-    };
-
-    // Build new widths: for each char code, check if its glyph survived subsetting
-    let mut new_widths = Vec::with_capacity(old_widths.len());
-    for (i, &width) in old_widths.iter().enumerate() {
-        let char_code = first_char as usize + i;
-        if char_code > u16::MAX as usize {
-            break;
-        }
-        // For simple TrueType fonts, char code ≈ glyph ID
-        let old_gid = char_code as u16;
-        if gid_map.contains_key(&old_gid) {
-            new_widths.push(PdfObject::Integer(width));
-        } else {
-            new_widths.push(PdfObject::Integer(0));
-        }
-    }
-
-    // Update font dict with new widths
-    let mut new_font_dict = font_dict;
-    new_font_dict.insert(b"Widths".to_vec(), PdfObject::Array(new_widths));
-
-    modifier.set_object(font_obj_num, PdfObject::Dict(new_font_dict));
-}
-
-/// Update CIDToGIDMap in a CID font after subsetting.
-///
-/// The gid_map maps old GID → new GID. We rebuild the CIDToGIDMap stream
-/// with the updated mappings.
-fn update_cid_to_gid_map(
-    font_obj_num: u32,
-    gid_map: &HashMap<u16, u16>,
-    modifier: &mut DocumentModifier,
-) {
-    let font_dict = match find_object_dict(font_obj_num, modifier) {
-        Some(d) => d,
-        None => return,
-    };
-
-    // Get DescendantFonts[0]
-    let descendants = match font_dict.get(b"DescendantFonts") {
-        Some(PdfObject::Array(arr)) => arr.clone(),
-        _ => return,
-    };
-    let cid_font_obj_num = match descendants.first() {
-        Some(PdfObject::Reference(r)) => r.obj_num,
-        _ => return,
-    };
-    let cid_font_dict = match find_object_dict(cid_font_obj_num, modifier) {
-        Some(d) => d,
-        None => return,
-    };
-
-    // Get current CIDToGIDMap reference
-    let map_obj_num = match cid_font_dict.get(b"CIDToGIDMap") {
-        Some(PdfObject::Reference(r)) => r.obj_num,
-        Some(PdfObject::Name(name)) if name == b"Identity" => {
-            // Identity mapping — build a new explicit map with remapped GIDs
-            // For simplicity, set CIDToGIDMap to Identity (GIDs already remapped in font)
-            return;
-        }
-        _ => return,
-    };
-
-    // Load old map
-    let old_map = load_cid_to_gid_map(font_obj_num, modifier);
-    if old_map.is_empty() {
-        return;
-    }
-
-    // Find the max CID to determine map size
-    let max_cid = old_map.keys().max().copied().unwrap_or(0) as usize;
-
-    // Build new map: 2 bytes per CID entry
-    let mut new_map_data = vec![0u8; (max_cid + 1) * 2];
-    for (&cid, &old_gid) in &old_map {
-        if let Some(&new_gid) = gid_map.get(&old_gid) {
-            let offset = (cid as usize) * 2;
-            if offset + 1 < new_map_data.len() {
-                new_map_data[offset] = (new_gid >> 8) as u8;
-                new_map_data[offset + 1] = (new_gid & 0xFF) as u8;
-            }
-        }
-    }
-
-    // Compress and replace the CIDToGIDMap stream
-    let compressed = match encode_flate_best(&new_map_data) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let mut new_dict = PdfDict::new();
-    new_dict.insert(
-        b"Filter".to_vec(),
-        PdfObject::Name(b"FlateDecode".to_vec()),
-    );
-    new_dict.insert(
-        b"Length".to_vec(),
-        PdfObject::Integer(compressed.len() as i64),
-    );
-
-    modifier.set_object(
-        map_obj_num,
-        PdfObject::Stream {
-            dict: new_dict,
-            data: compressed,
-        },
-    );
 }
 
 /// Extract font resource name → font obj_num mapping from a Page dict.
@@ -1602,7 +1471,6 @@ fn extract_font_map(page_dict: &PdfDict, modifier: &DocumentModifier) -> HashMap
     map
 }
 
-/// Find FontFile2 obj_num by walking Font → FontDescriptor → FontFile2.
 /// Extract character codes from a string operand, handling both 1-byte (simple)
 /// and 2-byte (CID) encodings based on the font type.
 fn extract_char_codes(
@@ -1632,58 +1500,254 @@ fn extract_char_codes(
     }
 }
 
-/// Load CIDToGIDMap from a Type0 font's descendant CIDFontType2.
-/// Returns a map from CID → GID. Empty map means Identity mapping.
-fn load_cid_to_gid_map(font_obj_num: u32, modifier: &DocumentModifier) -> HashMap<u16, u16> {
-    let font_dict = match find_object_dict(font_obj_num, modifier) {
-        Some(d) => d,
-        None => return HashMap::new(),
-    };
+/// Glyph IDs a viewer may draw for `codes` in a simple TrueType font.
+///
+/// Keeps every glyph any lookup path reaches — each `cmap` subtable (with the
+/// symbolic `0xF000`/`0xF100`/`0xF200` prefixes), the `/Differences` glyph
+/// names through `post`, the WinAnsi reading of the code through the font's
+/// Unicode `cmap`, and the code taken as a glyph ID — so the kept set does not
+/// depend on which path a viewer takes. Returns `None` when a used code cannot
+/// be resolved: a `/Differences` name found by neither `post` nor its Unicode
+/// value, or a code at or above `0x80` in a non-symbolic font whose base
+/// encoding is not WinAnsi.
+fn simple_font_glyph_ids(
+    font_obj_num: u32,
+    codes: &HashSet<u16>,
+    font_program: &[u8],
+    modifier: &DocumentModifier,
+) -> Option<Vec<u16>> {
+    let face = ttf_parser::Face::parse(font_program, 0).ok()?;
+    let font_dict = find_object_dict(font_obj_num, modifier)?;
 
-    // Get DescendantFonts[0]
-    let descendants = match font_dict.get(b"DescendantFonts") {
-        Some(PdfObject::Array(arr)) => arr.clone(),
-        _ => return HashMap::new(),
-    };
-    let cid_font_obj_num = match descendants.first() {
-        Some(PdfObject::Reference(r)) => r.obj_num,
-        _ => return HashMap::new(),
-    };
-    let cid_font_dict = match find_object_dict(cid_font_obj_num, modifier) {
-        Some(d) => d,
-        None => return HashMap::new(),
-    };
-
-    // Get CIDToGIDMap
-    match cid_font_dict.get(b"CIDToGIDMap") {
-        Some(PdfObject::Name(name)) if name == b"Identity" => {
-            // Identity mapping: CID = GID
-            HashMap::new()
-        }
+    let (base_encoding, differences) = match font_dict.get(b"Encoding") {
+        None => (None, Vec::new()),
+        Some(PdfObject::Name(name)) => (Some(name.clone()), Vec::new()),
+        Some(PdfObject::Dict(enc)) => (
+            enc.get_name(b"BaseEncoding").map(|n| n.to_vec()),
+            crate::font::type3::parse_encoding_differences(&font_dict),
+        ),
         Some(PdfObject::Reference(r)) => {
-            // Stream containing the mapping: 2 bytes per CID, value = GID
-            if let Some(PdfObject::Stream { dict, data }) =
-                modifier.find_object_pub(r.obj_num).cloned()
-            {
-                let decoded = match crate::stream::decode_stream(&data, &dict) {
-                    Ok(d) => d,
-                    Err(_) => return HashMap::new(),
-                };
-                let mut map = HashMap::new();
-                for (cid, chunk) in decoded.chunks(2).enumerate() {
-                    if chunk.len() == 2 {
-                        let gid = ((chunk[0] as u16) << 8) | (chunk[1] as u16);
-                        if gid != 0 {
-                            map.insert(cid as u16, gid);
-                        }
+            let enc = find_object_dict(r.obj_num, modifier)?;
+            let mut inline = PdfDict::new();
+            inline.insert(b"Encoding".to_vec(), PdfObject::Dict(enc.clone()));
+            (
+                enc.get_name(b"BaseEncoding").map(|n| n.to_vec()),
+                crate::font::type3::parse_encoding_differences(&inline),
+            )
+        }
+        Some(_) => return None,
+    };
+    let winansi = base_encoding.as_deref() == Some(b"WinAnsiEncoding".as_slice());
+
+    let flags = match font_dict.get(b"FontDescriptor") {
+        Some(PdfObject::Reference(r)) => find_object_dict(r.obj_num, modifier)
+            .and_then(|fd| fd.get_i64(b"Flags"))
+            .unwrap_or(0),
+        _ => 0,
+    };
+    let symbolic = flags & 4 != 0;
+
+    let mut gids: BTreeSet<u16> = BTreeSet::new();
+    for &code in codes {
+        let byte = u8::try_from(code).ok()?;
+
+        if let Some(cmap) = face.tables().cmap {
+            for subtable in cmap.subtables {
+                for prefix in [0u32, 0xF000, 0xF100, 0xF200] {
+                    if let Some(gid) = subtable.glyph_index(prefix | u32::from(byte)) {
+                        gids.insert(gid.0);
                     }
                 }
-                map
-            } else {
-                HashMap::new()
             }
         }
-        _ => HashMap::new(),
+        if code < face.number_of_glyphs() {
+            gids.insert(code);
+        }
+
+        if let Some((_, name)) = differences.iter().rev().find(|(c, _)| *c == byte) {
+            let by_name = std::str::from_utf8(name)
+                .ok()
+                .and_then(|n| face.glyph_index_by_name(n));
+            let by_unicode = glyph_name_to_char(name).and_then(|c| face.glyph_index(c));
+            if by_name.is_none() && by_unicode.is_none() {
+                return None;
+            }
+            gids.extend(by_name.map(|g| g.0));
+            gids.extend(by_unicode.map(|g| g.0));
+        } else {
+            if byte >= 0x80 && !symbolic && !winansi {
+                return None;
+            }
+            let decoded = crate::font::decode_text(&[byte], crate::font::Encoding::WinAnsiEncoding);
+            let standard_quote = match byte {
+                b'\'' => Some('\u{2019}'),
+                b'`' => Some('\u{2018}'),
+                _ => None,
+            };
+            for c in decoded.chars().chain(standard_quote) {
+                if let Some(gid) = face.glyph_index(c) {
+                    gids.insert(gid.0);
+                }
+            }
+        }
+    }
+
+    Some(gids.into_iter().collect())
+}
+
+/// The character a glyph name stands for, where the name spells it out:
+/// `uniXXXX`, `uXXXX`–`uXXXXXX`, or a single ASCII letter.
+fn glyph_name_to_char(name: &[u8]) -> Option<char> {
+    let name = std::str::from_utf8(name).ok()?;
+    let hex = name
+        .strip_prefix("uni")
+        .filter(|h| h.len() == 4)
+        .or_else(|| {
+            name.strip_prefix('u')
+                .filter(|h| (4..=6).contains(&h.len()))
+        });
+    if let Some(hex) = hex {
+        return u32::from_str_radix(hex, 16).ok().and_then(char::from_u32);
+    }
+    let mut chars = name.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_alphabetic() => Some(c),
+        _ => None,
+    }
+}
+
+/// Glyph IDs for `cids` in an `Identity-H`/`Identity-V` Type0 font, through the
+/// descendant's `/CIDToGIDMap` (absent or `/Identity` means CID = GID).
+/// Returns `None` for any other encoding, or a map that cannot be read.
+fn cid_font_glyph_ids(
+    font_obj_num: u32,
+    cids: &HashSet<u16>,
+    modifier: &DocumentModifier,
+) -> Option<Vec<u16>> {
+    let font_dict = find_object_dict(font_obj_num, modifier)?;
+    match font_dict.get_name(b"Encoding") {
+        Some(b"Identity-H") | Some(b"Identity-V") => {}
+        _ => return None,
+    }
+    let cid_font_obj_num = match font_dict.get(b"DescendantFonts") {
+        Some(PdfObject::Array(arr)) => match arr.first() {
+            Some(PdfObject::Reference(r)) => r.obj_num,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let cid_font_dict = find_object_dict(cid_font_obj_num, modifier)?;
+
+    match cid_font_dict.get(b"CIDToGIDMap") {
+        None => Some(cids.iter().copied().collect()),
+        Some(PdfObject::Name(name)) if name == b"Identity" => Some(cids.iter().copied().collect()),
+        Some(PdfObject::Reference(r)) => {
+            let map = get_stream_decoded_data(r.obj_num, modifier)?;
+            Some(
+                cids.iter()
+                    .map(|&cid| {
+                        let offset = cid as usize * 2;
+                        match map.get(offset..offset + 2) {
+                            Some(b) => u16::from_be_bytes([b[0], b[1]]),
+                            None => 0,
+                        }
+                    })
+                    .collect(),
+            )
+        }
+        Some(_) => None,
+    }
+}
+
+/// Fonts among `candidates` that are referenced from anything other than a
+/// page's own `/Resources` — a form XObject, an annotation appearance, the
+/// `/Resources` a page inherits from the page tree, the AcroForm `/DR`.
+///
+/// The objects allowed to hold a page-owned font reference are the page itself
+/// (inline `/Resources` and `/Font`), the page's indirect `/Resources`, and its
+/// indirect `/Font` dictionary — each referenced only by pages (or, for a
+/// `/Font` dictionary, by such `/Resources`).
+fn fonts_reachable_outside_page_resources(
+    candidates: &HashSet<u32>,
+    modifier: &mut DocumentModifier,
+) -> HashSet<u32> {
+    let mut referrers: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut page_dicts: Vec<(u32, PdfDict)> = Vec::new();
+    for (obj_num, obj) in modifier.writer().objects.iter() {
+        if let PdfObject::Dict(d) = obj
+            && d.get_name(b"Type") == Some(b"Page")
+        {
+            page_dicts.push((*obj_num, d.clone()));
+        }
+        let mut refs = Vec::new();
+        collect_reference_targets(obj, &mut refs);
+        for target in refs {
+            referrers.entry(target).or_default().push(*obj_num);
+        }
+    }
+    let pages: HashSet<u32> = page_dicts.iter().map(|(n, _)| *n).collect();
+    let referenced_only_by = |obj_num: u32, allowed: &HashSet<u32>| {
+        referrers
+            .get(&obj_num)
+            .is_some_and(|refs| refs.iter().all(|r| allowed.contains(r)))
+    };
+
+    let mut resources_objs: HashSet<u32> = HashSet::new();
+    let mut font_dict_objs: HashSet<u32> = HashSet::new();
+    let mut holders: HashSet<u32> = HashSet::new();
+    for (page_num, page) in &page_dicts {
+        let (resources, resources_holder) = match page.get(b"Resources") {
+            Some(PdfObject::Dict(d)) => (d.clone(), *page_num),
+            Some(PdfObject::Reference(r)) => match find_object_dict(r.obj_num, modifier) {
+                Some(d) => {
+                    resources_objs.insert(r.obj_num);
+                    (d, r.obj_num)
+                }
+                None => continue,
+            },
+            _ => continue,
+        };
+        match resources.get(b"Font") {
+            Some(PdfObject::Dict(_)) => {
+                holders.insert(resources_holder);
+            }
+            Some(PdfObject::Reference(r)) => {
+                font_dict_objs.insert(r.obj_num);
+            }
+            _ => {}
+        }
+    }
+    let valid_resources: HashSet<u32> = resources_objs
+        .into_iter()
+        .filter(|&r| referenced_only_by(r, &pages))
+        .collect();
+    holders.retain(|h| pages.contains(h) || valid_resources.contains(h));
+    let font_dict_referrers: HashSet<u32> = pages.union(&valid_resources).copied().collect();
+    holders.extend(
+        font_dict_objs
+            .into_iter()
+            .filter(|&f| referenced_only_by(f, &font_dict_referrers)),
+    );
+
+    candidates
+        .iter()
+        .copied()
+        .filter(|&font| !referenced_only_by(font, &holders))
+        .collect()
+}
+
+/// Object numbers of every indirect reference inside `obj`.
+fn collect_reference_targets(obj: &PdfObject, out: &mut Vec<u32>) {
+    match obj {
+        PdfObject::Reference(r) => out.push(r.obj_num),
+        PdfObject::Array(arr) => arr.iter().for_each(|o| collect_reference_targets(o, out)),
+        PdfObject::Dict(d) => d
+            .iter()
+            .for_each(|(_, o)| collect_reference_targets(o, out)),
+        PdfObject::Stream { dict, .. } => dict
+            .iter()
+            .for_each(|(_, o)| collect_reference_targets(o, out)),
+        _ => {}
     }
 }
 
@@ -1696,6 +1760,7 @@ fn is_cid_font(font_obj_num: u32, modifier: &DocumentModifier) -> bool {
     }
 }
 
+/// Find FontFile2 obj_num by walking Font → FontDescriptor → FontFile2.
 fn find_fontfile2(font_obj_num: u32, modifier: &DocumentModifier) -> Option<u32> {
     let font_dict = find_object_dict(font_obj_num, modifier)?;
 
@@ -2186,6 +2251,7 @@ fn is_single_flate(dict: &PdfDict) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::object::IndirectRef;
     use crate::writer::document::DocumentBuilder;
     use crate::writer::page::PageBuilder;
 
@@ -2867,7 +2933,7 @@ mod tests {
     }
 
     /// D-T4: An embedded TrueType font is subsetted — counted in the stats, and
-    /// the embedded font program keeps fewer glyphs than the original.
+    /// the embedded font program keeps fewer glyph outlines than the original.
     #[test]
     fn test_subset_truetype_font_actually_subsets() {
         let pdf = create_pdf_with_truetype_font(NOTO_SANS_REGULAR, "Hello");
@@ -2883,11 +2949,16 @@ mod tests {
         assert_eq!(programs.len(), 1);
         let original = ttf_parser::Face::parse(NOTO_SANS_REGULAR, 0).unwrap();
         let subset = ttf_parser::Face::parse(&programs[0], 0).unwrap();
+        let outlines = |face: &ttf_parser::Face| {
+            (0..face.number_of_glyphs())
+                .filter(|&gid| face.glyph_bounding_box(ttf_parser::GlyphId(gid)).is_some())
+                .count()
+        };
         assert!(
-            subset.number_of_glyphs() < original.number_of_glyphs(),
-            "subset keeps {} of {} glyphs",
-            subset.number_of_glyphs(),
-            original.number_of_glyphs()
+            outlines(&subset) < outlines(&original),
+            "subset keeps {} of {} glyph outlines",
+            outlines(&subset),
+            outlines(&original)
         );
 
         let reparsed = PdfDocument::from_bytes(compressed).unwrap();
@@ -2900,7 +2971,6 @@ mod tests {
     /// D-T4b: After subsetting, every drawn character still resolves through the
     /// font's `cmap` to the outline it had in the original font.
     #[test]
-    #[ignore = "#51: subsetting renumbers glyphs without rewriting the font's cmap"]
     fn test_subset_truetype_font_keeps_glyph_outlines() {
         let text = "Hello";
         let pdf = create_pdf_with_truetype_font(NOTO_SANS_REGULAR, text);
@@ -2922,6 +2992,557 @@ mod tests {
                 "outline for {c:?} changed after subsetting"
             );
         }
+    }
+
+    /// Outline of glyph `gid` in `face`, as path commands.
+    fn glyph_outline_for_gid(face: &ttf_parser::Face, gid: u16) -> Option<Vec<String>> {
+        struct Recorder(Vec<String>);
+        impl ttf_parser::OutlineBuilder for Recorder {
+            fn move_to(&mut self, x: f32, y: f32) {
+                self.0.push(format!("M {x} {y}"));
+            }
+            fn line_to(&mut self, x: f32, y: f32) {
+                self.0.push(format!("L {x} {y}"));
+            }
+            fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+                self.0.push(format!("Q {x1} {y1} {x} {y}"));
+            }
+            fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+                self.0.push(format!("C {x1} {y1} {x2} {y2} {x} {y}"));
+            }
+            fn close(&mut self) {
+                self.0.push("Z".to_string());
+            }
+        }
+
+        let mut recorder = Recorder(Vec::new());
+        face.outline_glyph(ttf_parser::GlyphId(gid), &mut recorder)?;
+        Some(recorder.0)
+    }
+
+    /// A one-page PDF with Noto Sans embedded as simple TrueType font `/F1`,
+    /// opened for editing.
+    struct TrueTypePdf {
+        modifier: DocumentModifier,
+        pages: u32,
+        page: u32,
+        contents: u32,
+        font: u32,
+    }
+
+    impl TrueTypePdf {
+        fn new() -> Self {
+            let pdf = create_pdf_with_truetype_font(NOTO_SANS_REGULAR, "x");
+            let doc = PdfDocument::from_bytes(pdf).unwrap();
+            let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+            let find = |modifier: &mut DocumentModifier, pred: &dyn Fn(&PdfDict) -> bool| {
+                modifier
+                    .writer()
+                    .objects
+                    .iter()
+                    .find_map(|(num, obj)| match obj {
+                        PdfObject::Dict(d) if pred(d) => Some(*num),
+                        _ => None,
+                    })
+                    .unwrap()
+            };
+            let pages = find(&mut modifier, &|d| d.get_name(b"Type") == Some(b"Pages"));
+            let page = find(&mut modifier, &|d| d.get_name(b"Type") == Some(b"Page"));
+            let font = find(&mut modifier, &|d| {
+                d.get_name(b"Subtype") == Some(b"TrueType")
+            });
+            let contents = match find_object_dict(page, &modifier).unwrap().get(b"Contents") {
+                Some(PdfObject::Reference(r)) => r.obj_num,
+                other => panic!("unexpected /Contents {other:?}"),
+            };
+            Self {
+                modifier,
+                pages,
+                page,
+                contents,
+                font,
+            }
+        }
+
+        fn dict(&self, obj_num: u32) -> PdfDict {
+            find_object_dict(obj_num, &self.modifier).unwrap()
+        }
+
+        fn set_dict(&mut self, obj_num: u32, dict: PdfDict) {
+            self.modifier.set_object(obj_num, PdfObject::Dict(dict));
+        }
+
+        fn set_content(&mut self, content: &[u8]) {
+            let (dict, data) = crate::writer::encode::make_stream(content, false);
+            self.modifier
+                .set_object(self.contents, PdfObject::Stream { dict, data });
+        }
+
+        fn font_ref(&self) -> PdfObject {
+            PdfObject::Reference(IndirectRef {
+                obj_num: self.font,
+                gen_num: 0,
+            })
+        }
+
+        fn build(self) -> Vec<u8> {
+            self.modifier.build().unwrap()
+        }
+    }
+
+    /// Compress `pdf` with font subsetting on; returns the stats and the
+    /// original and output font programs.
+    fn compress_and_fonts(pdf: &[u8]) -> (CompressStats, Vec<u8>, Vec<u8>) {
+        let before = fontfile2_programs(pdf);
+        assert_eq!(before.len(), 1);
+        let (compressed, stats) = compress_pdf(pdf, &CompressOptions::preset_medium()).unwrap();
+        let after = fontfile2_programs(&compressed);
+        assert_eq!(after.len(), 1);
+        (stats, before[0].clone(), after[0].clone())
+    }
+
+    /// Assert that `c`, looked up through each font's own `cmap`, has the same
+    /// outline in `subset` as in `original`.
+    fn assert_char_outline_kept(original: &[u8], subset: &[u8], c: char) {
+        let original = ttf_parser::Face::parse(original, 0).unwrap();
+        let subset = ttf_parser::Face::parse(subset, 0).unwrap();
+        let expected = glyph_outline_for_char(&original, c);
+        assert!(expected.is_some(), "fixture has no outline for {c:?}");
+        assert_eq!(
+            glyph_outline_for_char(&subset, c),
+            expected,
+            "outline for {c:?}"
+        );
+    }
+
+    #[test]
+    fn test_subset_differences_keeps_glyph_of_mapped_name() {
+        let mut pdf = TrueTypePdf::new();
+        let mut font = pdf.dict(pdf.font);
+        let mut encoding = PdfDict::new();
+        encoding.insert(
+            b"BaseEncoding".to_vec(),
+            PdfObject::Name(b"WinAnsiEncoding".to_vec()),
+        );
+        encoding.insert(
+            b"Differences".to_vec(),
+            PdfObject::Array(vec![PdfObject::Integer(72), PdfObject::Name(b"o".to_vec())]),
+        );
+        font.insert(b"Encoding".to_vec(), PdfObject::Dict(encoding));
+        pdf.set_dict(pdf.font, font);
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 1);
+        assert_char_outline_kept(&original, &subset, 'o');
+    }
+
+    #[test]
+    fn test_subset_skips_font_with_unresolvable_glyph_name() {
+        let mut pdf = TrueTypePdf::new();
+        let mut font = pdf.dict(pdf.font);
+        let mut encoding = PdfDict::new();
+        encoding.insert(
+            b"Differences".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Integer(72),
+                PdfObject::Name(b"notAGlyphInThisFont".to_vec()),
+            ]),
+        );
+        font.insert(b"Encoding".to_vec(), PdfObject::Dict(encoding));
+        pdf.set_dict(pdf.font, font);
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
+    }
+
+    #[test]
+    fn test_subset_winansi_high_code_keeps_glyph() {
+        let mut pdf = TrueTypePdf::new();
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj <E980> Tj ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 1);
+        assert_char_outline_kept(&original, &subset, '\u{e9}');
+        assert_char_outline_kept(&original, &subset, '\u{20ac}');
+    }
+
+    #[test]
+    fn test_subset_skips_high_code_outside_winansi() {
+        let mut pdf = TrueTypePdf::new();
+        let mut font = pdf.dict(pdf.font);
+        font.insert(
+            b"Encoding".to_vec(),
+            PdfObject::Name(b"MacRomanEncoding".to_vec()),
+        );
+        pdf.set_dict(pdf.font, font);
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj <8E> Tj ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
+    }
+
+    #[test]
+    fn test_subset_skips_font_used_by_form_xobject() {
+        let mut pdf = TrueTypePdf::new();
+        let mut xobject_fonts = PdfDict::new();
+        xobject_fonts.insert(b"F1".to_vec(), pdf.font_ref());
+        let mut xobject_resources = PdfDict::new();
+        xobject_resources.insert(b"Font".to_vec(), PdfObject::Dict(xobject_fonts));
+        let (mut form, data) = crate::writer::encode::make_stream(b"BT /F1 24 Tf (o) Tj ET", false);
+        form.insert(b"Type".to_vec(), PdfObject::Name(b"XObject".to_vec()));
+        form.insert(b"Subtype".to_vec(), PdfObject::Name(b"Form".to_vec()));
+        form.insert(
+            b"BBox".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Integer(0),
+                PdfObject::Integer(0),
+                PdfObject::Integer(612),
+                PdfObject::Integer(792),
+            ]),
+        );
+        form.insert(b"Resources".to_vec(), PdfObject::Dict(xobject_resources));
+        let form_ref = pdf
+            .modifier
+            .add_object(PdfObject::Stream { dict: form, data });
+
+        let mut page = pdf.dict(pdf.page);
+        let mut resources = match page.get(b"Resources") {
+            Some(PdfObject::Dict(d)) => d.clone(),
+            other => panic!("unexpected /Resources {other:?}"),
+        };
+        let mut xobjects = PdfDict::new();
+        xobjects.insert(b"X1".to_vec(), PdfObject::Reference(form_ref));
+        resources.insert(b"XObject".to_vec(), PdfObject::Dict(xobjects));
+        page.insert(b"Resources".to_vec(), PdfObject::Dict(resources));
+        pdf.set_dict(pdf.page, page);
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj ET /X1 Do");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
+    }
+
+    #[test]
+    fn test_subset_font_in_indirect_page_resources_is_subsetted() {
+        let mut pdf = TrueTypePdf::new();
+        let mut page = pdf.dict(pdf.page);
+        let mut resources = match page.remove(b"Resources") {
+            Some(PdfObject::Dict(d)) => d,
+            other => panic!("unexpected /Resources {other:?}"),
+        };
+        let fonts = resources.remove(b"Font").unwrap();
+        let fonts_ref = pdf.modifier.add_object(fonts);
+        resources.insert(b"Font".to_vec(), PdfObject::Reference(fonts_ref));
+        let resources_ref = pdf.modifier.add_object(PdfObject::Dict(resources));
+        page.insert(b"Resources".to_vec(), PdfObject::Reference(resources_ref));
+        pdf.set_dict(pdf.page, page);
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (Hello) Tj ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 1);
+        assert_char_outline_kept(&original, &subset, 'H');
+    }
+
+    /// Page 1 reaches `/F1` only through `/Resources` inherited from the page
+    /// tree and draws "o"; page 2 has its own `/Resources` and draws "H" with the
+    /// same font object.
+    #[test]
+    fn test_subset_skips_font_in_inherited_resources() {
+        let mut pdf = TrueTypePdf::new();
+        let mut page = pdf.dict(pdf.page);
+        let resources = page.remove(b"Resources").unwrap();
+        pdf.set_dict(pdf.page, page.clone());
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (o) Tj ET");
+
+        let (content_dict, content_data) =
+            crate::writer::encode::make_stream(b"BT /F1 24 Tf 72 720 Td (H) Tj ET", false);
+        let content2 = pdf.modifier.add_object(PdfObject::Stream {
+            dict: content_dict,
+            data: content_data,
+        });
+        let mut page2 = page;
+        page2.insert(b"Contents".to_vec(), PdfObject::Reference(content2));
+        page2.insert(b"Resources".to_vec(), resources.clone());
+        let page2_ref = pdf.modifier.add_object(PdfObject::Dict(page2));
+
+        let mut pages = pdf.dict(pdf.pages);
+        pages.insert(b"Resources".to_vec(), resources);
+        let mut kids = match pages.get(b"Kids") {
+            Some(PdfObject::Array(k)) => k.clone(),
+            other => panic!("unexpected /Kids {other:?}"),
+        };
+        kids.push(PdfObject::Reference(page2_ref));
+        pages.insert(b"Kids".to_vec(), PdfObject::Array(kids));
+        pages.insert(b"Count".to_vec(), PdfObject::Integer(2));
+        pdf.set_dict(pdf.pages, pages);
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
+    }
+
+    #[test]
+    fn test_subset_skips_font_shown_by_quote_operator() {
+        let mut pdf = TrueTypePdf::new();
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td 30 TL (H) Tj 0 0 (o) \" ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
+    }
+
+    #[test]
+    fn test_subset_font_restored_by_grestore_keeps_glyphs() {
+        let mut doc = DocumentBuilder::new();
+        let f1 = doc.embed_truetype_font(NOTO_SANS_REGULAR).unwrap();
+        let f1_ref = doc.font_ref(&f1).unwrap();
+        let f2 = doc.embed_truetype_font(NOTO_SANS_REGULAR).unwrap();
+        let f2_ref = doc.font_ref(&f2).unwrap();
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.add_font_ref(&f1, f1_ref);
+        page.add_font_ref(&f2, f2_ref);
+        doc.add_page(page);
+        let pdf = doc.build().unwrap();
+
+        let doc = PdfDocument::from_bytes(pdf).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let contents = modifier
+            .writer()
+            .objects
+            .iter()
+            .find_map(|(_, obj)| match obj {
+                PdfObject::Dict(d) if d.get_name(b"Type") == Some(b"Page") => {
+                    match d.get(b"Contents") {
+                        Some(PdfObject::Reference(r)) => Some(r.obj_num),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .unwrap();
+        let content = format!(
+            "BT /{f1} 24 Tf 72 720 Td (e) Tj ET q BT /{f2} 24 Tf 72 690 Td (o) Tj ET Q BT 72 660 Td (H) Tj ET"
+        );
+        let (dict, data) = crate::writer::encode::make_stream(content.as_bytes(), false);
+        modifier.set_object(contents, PdfObject::Stream { dict, data });
+        let pdf = modifier.build().unwrap();
+
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
+        assert_eq!(stats.fonts_subsetted, 2);
+        let reparsed = PdfDocument::from_bytes(compressed.clone()).unwrap();
+        let pages = crate::page::collect_pages(&reparsed).unwrap();
+        let page_dict = match reparsed.resolve(&pages[0].page_ref) {
+            Ok(PdfObject::Dict(d)) => d,
+            other => panic!("unexpected page {other:?}"),
+        };
+        let font_dict = match page_dict.get(b"Resources") {
+            Some(PdfObject::Dict(r)) => match r.get(b"Font") {
+                Some(PdfObject::Dict(f)) => f.clone(),
+                other => panic!("unexpected /Font {other:?}"),
+            },
+            other => panic!("unexpected /Resources {other:?}"),
+        };
+        let program = |name: &str| -> Vec<u8> {
+            let font = match font_dict.get(name.as_bytes()) {
+                Some(PdfObject::Reference(r)) => r.clone(),
+                other => panic!("unexpected font {other:?}"),
+            };
+            let resolve_dict = |r: &IndirectRef| match reparsed.resolve(r) {
+                Ok(PdfObject::Dict(d)) => d,
+                other => panic!("unexpected {other:?}"),
+            };
+            let fd = match resolve_dict(&font).get(b"FontDescriptor") {
+                Some(PdfObject::Reference(r)) => r.clone(),
+                other => panic!("unexpected /FontDescriptor {other:?}"),
+            };
+            let ff2 = match resolve_dict(&fd).get(b"FontFile2") {
+                Some(PdfObject::Reference(r)) => r.clone(),
+                other => panic!("unexpected /FontFile2 {other:?}"),
+            };
+            match reparsed.resolve(&ff2) {
+                Ok(PdfObject::Stream { dict, data }) => {
+                    reparsed.decode_stream(&dict, &data).unwrap()
+                }
+                other => panic!("unexpected font file {other:?}"),
+            }
+        };
+        assert_char_outline_kept(NOTO_SANS_REGULAR, &program(&f1), 'H');
+        assert_char_outline_kept(NOTO_SANS_REGULAR, &program(&f1), 'e');
+        assert_char_outline_kept(NOTO_SANS_REGULAR, &program(&f2), 'o');
+    }
+
+    /// Create a one-page PDF that draws the glyphs of `text` with Noto Sans
+    /// embedded as an Identity-H CIDFontType2 font; `edit_cid_font` may change
+    /// the descendant CIDFont dictionary, and `content_cids` maps each glyph ID
+    /// to the CID written in the content stream.
+    fn create_pdf_with_cid_font(
+        text: &str,
+        content_cids: impl Fn(u16) -> u16,
+        edit_cid_font: impl FnOnce(&mut PdfDict, &mut crate::writer::PdfWriter),
+        encoding: &[u8],
+    ) -> Vec<u8> {
+        let face = ttf_parser::Face::parse(NOTO_SANS_REGULAR, 0).unwrap();
+        let used: Vec<(char, u16)> = text
+            .chars()
+            .map(|c| (c, face.glyph_index(c).unwrap().0))
+            .collect();
+
+        let mut writer = crate::writer::PdfWriter::new();
+        let pages_num = writer.alloc_object_num();
+        let font_ref =
+            crate::font::cjk::build_cid_font(&mut writer, "NotoSans", NOTO_SANS_REGULAR, &used)
+                .unwrap();
+
+        let type0 = writer
+            .objects
+            .iter()
+            .find_map(|(num, obj)| match obj {
+                PdfObject::Dict(d) if *num == font_ref.obj_num => Some(d.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let mut type0 = type0;
+        type0.insert(b"Encoding".to_vec(), PdfObject::Name(encoding.to_vec()));
+        writer.set_object(font_ref.obj_num, PdfObject::Dict(type0.clone()));
+        let cid_font_num = match type0.get(b"DescendantFonts") {
+            Some(PdfObject::Array(arr)) => match arr.first() {
+                Some(PdfObject::Reference(r)) => r.obj_num,
+                other => panic!("unexpected descendant {other:?}"),
+            },
+            other => panic!("unexpected /DescendantFonts {other:?}"),
+        };
+        let mut cid_font = writer
+            .objects
+            .iter()
+            .find_map(|(num, obj)| match obj {
+                PdfObject::Dict(d) if *num == cid_font_num => Some(d.clone()),
+                _ => None,
+            })
+            .unwrap();
+        edit_cid_font(&mut cid_font, &mut writer);
+        writer.set_object(cid_font_num, PdfObject::Dict(cid_font));
+
+        let hex: String = used
+            .iter()
+            .map(|&(_, gid)| format!("{:04X}", content_cids(gid)))
+            .collect();
+        let content = format!("BT /F1 24 Tf 72 720 Td <{hex}> Tj ET");
+        let (content_dict, content_data) =
+            crate::writer::encode::make_stream(content.as_bytes(), false);
+        let content_ref = writer.add_object(PdfObject::Stream {
+            dict: content_dict,
+            data: content_data,
+        });
+
+        let pages_ref = IndirectRef {
+            obj_num: pages_num,
+            gen_num: 0,
+        };
+        let mut fonts = PdfDict::new();
+        fonts.insert(b"F1".to_vec(), PdfObject::Reference(font_ref));
+        let mut resources = PdfDict::new();
+        resources.insert(b"Font".to_vec(), PdfObject::Dict(fonts));
+        let mut page = PdfDict::new();
+        page.insert(b"Type".to_vec(), PdfObject::Name(b"Page".to_vec()));
+        page.insert(b"Parent".to_vec(), PdfObject::Reference(pages_ref.clone()));
+        page.insert(
+            b"MediaBox".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Integer(0),
+                PdfObject::Integer(0),
+                PdfObject::Integer(612),
+                PdfObject::Integer(792),
+            ]),
+        );
+        page.insert(b"Contents".to_vec(), PdfObject::Reference(content_ref));
+        page.insert(b"Resources".to_vec(), PdfObject::Dict(resources));
+        let page_ref = writer.add_object(PdfObject::Dict(page));
+
+        let mut pages = PdfDict::new();
+        pages.insert(b"Type".to_vec(), PdfObject::Name(b"Pages".to_vec()));
+        pages.insert(
+            b"Kids".to_vec(),
+            PdfObject::Array(vec![PdfObject::Reference(page_ref)]),
+        );
+        pages.insert(b"Count".to_vec(), PdfObject::Integer(1));
+        writer.set_object(pages_num, PdfObject::Dict(pages));
+
+        let mut catalog = PdfDict::new();
+        catalog.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
+        catalog.insert(b"Pages".to_vec(), PdfObject::Reference(pages_ref));
+        let catalog_ref = writer.add_object(PdfObject::Dict(catalog));
+        writer.write_to_bytes(&catalog_ref).unwrap()
+    }
+
+    /// Assert that every glyph of `text` keeps its outline at its glyph ID.
+    fn assert_gid_outlines_kept(original: &[u8], subset: &[u8], text: &str) {
+        let original = ttf_parser::Face::parse(original, 0).unwrap();
+        let subset = ttf_parser::Face::parse(subset, 0).unwrap();
+        for c in text.chars() {
+            let gid = original.glyph_index(c).unwrap().0;
+            let expected = glyph_outline_for_gid(&original, gid);
+            assert!(expected.is_some(), "fixture has no outline for {c:?}");
+            assert_eq!(
+                glyph_outline_for_gid(&subset, gid),
+                expected,
+                "outline for {c:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_subset_cid_identity_keeps_glyph_outlines() {
+        let pdf = create_pdf_with_cid_font("Hello", |gid| gid, |_, _| {}, b"Identity-H");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf);
+        assert_eq!(stats.fonts_subsetted, 1);
+        assert!(subset.len() < original.len());
+        assert_gid_outlines_kept(&original, &subset, "Hello");
+    }
+
+    #[test]
+    fn test_subset_cid_to_gid_map_stream_keeps_glyph_outlines() {
+        let face = ttf_parser::Face::parse(NOTO_SANS_REGULAR, 0).unwrap();
+        let gids: Vec<u16> = "Helo"
+            .chars()
+            .map(|c| face.glyph_index(c).unwrap().0)
+            .collect();
+        let cid_of = move |gid: u16| gids.iter().position(|&g| g == gid).unwrap() as u16 + 1;
+        let face_gids: Vec<u16> = "Helo"
+            .chars()
+            .map(|c| face.glyph_index(c).unwrap().0)
+            .collect();
+        let pdf = create_pdf_with_cid_font(
+            "Hello",
+            cid_of,
+            move |cid_font, writer| {
+                let mut map = vec![0u8; 2 * (face_gids.len() + 1)];
+                for (i, gid) in face_gids.iter().enumerate() {
+                    map[2 * (i + 1)..2 * (i + 2)].copy_from_slice(&gid.to_be_bytes());
+                }
+                let (dict, data) = crate::writer::encode::make_stream(&map, true);
+                let map_ref = writer.add_object(PdfObject::Stream { dict, data });
+                cid_font.insert(b"CIDToGIDMap".to_vec(), PdfObject::Reference(map_ref));
+            },
+            b"Identity-H",
+        );
+
+        let (stats, original, subset) = compress_and_fonts(&pdf);
+        assert_eq!(stats.fonts_subsetted, 1);
+        assert_gid_outlines_kept(&original, &subset, "Hello");
+    }
+
+    #[test]
+    fn test_subset_skips_cid_font_with_non_identity_encoding() {
+        let pdf = create_pdf_with_cid_font("Hello", |gid| gid, |_, _| {}, b"UniGB-UCS2-H");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf);
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
     }
 
     /// D-T5: CFF font should be skipped (subset_font returns None for CFF).

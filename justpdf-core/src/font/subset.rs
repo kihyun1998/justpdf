@@ -11,7 +11,8 @@ use std::collections::{BTreeSet, HashMap};
 pub struct SubsetResult {
     /// The subsetted font binary data.
     pub data: Vec<u8>,
-    /// Mapping from old glyph IDs to new glyph IDs.
+    /// Mapping from old glyph IDs to new glyph IDs, one entry per kept glyph.
+    /// Glyph IDs are kept, so every entry maps a glyph ID to itself.
     pub gid_map: HashMap<u16, u16>,
 }
 
@@ -42,7 +43,9 @@ const WE_HAVE_A_TWO_BY_TWO: u16 = 0x0080;
 ///
 /// `font_data` is the raw TTF binary.
 /// `glyph_ids` is the set of glyph IDs to keep.
-/// Returns the subsetted font data and a mapping from old to new glyph IDs.
+/// Every glyph keeps its glyph ID: `numGlyphs` is unchanged, glyphs that are
+/// not kept become empty, and `cmap`, `post` and composite references still
+/// point at the same glyphs.
 ///
 /// Returns `None` if the font data is invalid, too short, or uses CFF outlines.
 pub fn subset_font(font_data: &[u8], glyph_ids: &[u16]) -> Option<SubsetResult> {
@@ -154,36 +157,23 @@ pub fn subset_font(font_data: &[u8], glyph_ids: &[u16]) -> Option<SubsetResult> 
         }
     }
 
-    // Build old-to-new GID mapping (sorted, sequential).
-    let sorted_gids: Vec<u16> = keep_gids.iter().copied().collect();
-    let mut gid_map: HashMap<u16, u16> = HashMap::new();
-    for (new_gid, &old_gid) in sorted_gids.iter().enumerate() {
-        gid_map.insert(old_gid, new_gid as u16);
-    }
-    let new_num_glyphs = sorted_gids.len() as u16;
+    let gid_map: HashMap<u16, u16> = keep_gids.iter().map(|&gid| (gid, gid)).collect();
 
-    // Build new glyf table, updating composite glyph references.
+    // Build new glyf table holding only kept glyphs; every glyph ID keeps a loca entry.
     let mut new_glyf: Vec<u8> = Vec::new();
-    let mut new_loca_offsets: Vec<u32> = Vec::with_capacity(sorted_gids.len() + 1);
+    let mut new_loca_offsets: Vec<u32> = Vec::with_capacity(total_glyphs + 1);
 
-    for &old_gid in &sorted_gids {
+    for gid in 0..total_glyphs {
         new_loca_offsets.push(new_glyf.len() as u32);
-        let start = glyph_offsets[old_gid as usize];
-        let end = glyph_offsets[old_gid as usize + 1];
+        if !keep_gids.contains(&(gid as u16)) {
+            continue;
+        }
+        let start = glyph_offsets[gid];
+        let end = glyph_offsets[gid + 1];
         if start >= end {
-            continue; // empty glyph, offset stays the same
+            continue; // empty glyph
         }
-        let glyph_slice = glyf_data.get(start..end)?;
-        let num_contours = read_i16(glyph_slice, 0)?;
-        if num_contours >= 0 {
-            // Simple glyph: copy as-is.
-            new_glyf.extend_from_slice(glyph_slice);
-        } else {
-            // Composite glyph: rewrite component GIDs.
-            let mut patched = glyph_slice.to_vec();
-            rewrite_composite_glyph_ids(&mut patched, &gid_map)?;
-            new_glyf.extend_from_slice(&patched);
-        }
+        new_glyf.extend_from_slice(glyf_data.get(start..end)?);
         // Pad to 4-byte boundary.
         while new_glyf.len() % 4 != 0 {
             new_glyf.push(0);
@@ -201,7 +191,7 @@ pub fn subset_font(font_data: &[u8], glyph_ids: &[u16]) -> Option<SubsetResult> 
 
     // Build new hmtx table.
     let hmtx_data = table_data(font_data, hmtx_rec)?;
-    let new_hmtx = build_subset_hmtx(hmtx_data, &sorted_gids, num_h_metrics, total_glyphs)?;
+    let new_hmtx = build_subset_hmtx(hmtx_data, &keep_gids, num_h_metrics, total_glyphs)?;
 
     // Patch head table: update indexToLocFormat and zero out checksumAdjustment.
     let mut new_head = head_data.to_vec();
@@ -209,14 +199,6 @@ pub fn subset_font(font_data: &[u8], glyph_ids: &[u16]) -> Option<SubsetResult> 
     write_u32(&mut new_head, 8, 0);
     // Set indexToLocFormat to 1 (long).
     write_i16(&mut new_head, 50, new_index_to_loc_format);
-
-    // Patch maxp table: update numGlyphs.
-    let mut new_maxp = maxp_data.to_vec();
-    write_u16(&mut new_maxp, 4, new_num_glyphs);
-
-    // Patch hhea table: update numberOfHMetrics to new_num_glyphs.
-    let mut new_hhea = hhea_data.to_vec();
-    write_u16(&mut new_hhea, 34, new_num_glyphs);
 
     // Collect all table data for output.
     struct TableEntry {
@@ -229,8 +211,6 @@ pub fn subset_font(font_data: &[u8], glyph_ids: &[u16]) -> Option<SubsetResult> 
     for kept_tag in KEPT_TABLES {
         let data: Vec<u8> = match kept_tag {
             b"head" => new_head.clone(),
-            b"hhea" => new_hhea.clone(),
-            b"maxp" => new_maxp.clone(),
             b"loca" => new_loca.clone(),
             b"glyf" => new_glyf.clone(),
             b"hmtx" => new_hmtx.clone(),
@@ -396,85 +376,44 @@ fn parse_composite_glyph_components(glyph_data: &[u8]) -> Option<Vec<u16>> {
     Some(components)
 }
 
-/// Rewrite component glyph IDs in a composite glyph using the gid_map.
-fn rewrite_composite_glyph_ids(glyph_data: &mut [u8], gid_map: &HashMap<u16, u16>) -> Option<()> {
-    let mut pos = 10; // skip glyph header
-
-    loop {
-        if pos + 4 > glyph_data.len() {
-            return None;
-        }
-        let flags = read_u16(glyph_data, pos)?;
-        let old_gid = read_u16(glyph_data, pos + 2)?;
-        let new_gid = *gid_map.get(&old_gid)?;
-        write_u16(glyph_data, pos + 2, new_gid);
-        pos += 4;
-
-        // Skip arguments.
-        if flags & ARG_1_AND_2_ARE_WORDS != 0 {
-            pos += 4;
-        } else {
-            pos += 2;
-        }
-
-        // Skip transform data.
-        if flags & WE_HAVE_A_SCALE != 0 {
-            pos += 2;
-        } else if flags & WE_HAVE_AN_X_AND_Y_SCALE != 0 {
-            pos += 4;
-        } else if flags & WE_HAVE_A_TWO_BY_TWO != 0 {
-            pos += 8;
-        }
-
-        if flags & MORE_COMPONENTS == 0 {
-            break;
-        }
-    }
-
-    Some(())
-}
-
-/// Build a new hmtx table for the subset glyphs.
+/// Build the hmtx table for the subset: the original layout, with the metrics
+/// of glyphs that are not kept set to zero.
+///
+/// The advance width of the last long metric is kept regardless, since every
+/// glyph after `num_h_metrics` shares it.
 fn build_subset_hmtx(
     hmtx_data: &[u8],
-    sorted_gids: &[u16],
+    keep_gids: &BTreeSet<u16>,
     num_h_metrics: usize,
-    _total_glyphs: usize,
+    total_glyphs: usize,
 ) -> Option<Vec<u8>> {
+    if num_h_metrics == 0 || num_h_metrics > total_glyphs {
+        return None;
+    }
     // hmtx structure:
     //   numOfLongHorMetrics entries of (advanceWidth: u16, lsb: i16) = 4 bytes each
     //   Remaining glyphs: just lsb (i16) = 2 bytes each, using the last advanceWidth.
-    let mut new_hmtx = Vec::new();
+    let len = num_h_metrics * 4 + (total_glyphs - num_h_metrics) * 2;
+    let mut new_hmtx = vec![0u8; len];
+    let available = hmtx_data.len().min(len);
+    new_hmtx[..available].copy_from_slice(&hmtx_data[..available]);
 
-    for &old_gid in sorted_gids {
-        let gid = old_gid as usize;
+    for gid in 0..total_glyphs {
+        if keep_gids.contains(&(gid as u16)) {
+            continue;
+        }
         if gid < num_h_metrics {
-            // Full metric entry.
             let offset = gid * 4;
-            if offset + 4 > hmtx_data.len() {
-                // Fallback: write zeros.
-                new_hmtx.extend_from_slice(&[0u8; 4]);
-            } else {
-                new_hmtx.extend_from_slice(&hmtx_data[offset..offset + 4]);
+            if gid + 1 < num_h_metrics {
+                write_u16(&mut new_hmtx, offset, 0);
             }
+            write_u16(&mut new_hmtx, offset + 2, 0);
         } else {
-            // Glyph beyond numOfLongHorMetrics: use last advance width + per-glyph lsb.
-            let last_aw_offset = (num_h_metrics - 1) * 4;
-            let advance_width = if last_aw_offset + 2 <= hmtx_data.len() {
-                &hmtx_data[last_aw_offset..last_aw_offset + 2]
-            } else {
-                &[0u8, 0]
-            };
-            let lsb_base = num_h_metrics * 4;
-            let lsb_idx = gid - num_h_metrics;
-            let lsb_offset = lsb_base + lsb_idx * 2;
-            let lsb = if lsb_offset + 2 <= hmtx_data.len() {
-                &hmtx_data[lsb_offset..lsb_offset + 2]
-            } else {
-                &[0u8, 0]
-            };
-            new_hmtx.extend_from_slice(advance_width);
-            new_hmtx.extend_from_slice(lsb);
+            write_u16(
+                &mut new_hmtx,
+                num_h_metrics * 4 + (gid - num_h_metrics) * 2,
+                0,
+            );
         }
     }
 
@@ -732,6 +671,104 @@ mod tests {
         font
     }
 
+    /// Noto Sans Regular (SIL OFL 1.1), the fixture pinned in `writer::compress` tests.
+    const NOTO_SANS_REGULAR: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/NotoSans-Regular.ttf"
+    ));
+
+    /// Raw `glyf` bytes of `gid` in `font`, located through `loca`.
+    fn glyph_bytes(font: &[u8], gid: u16) -> Vec<u8> {
+        let num_tables = read_u16(font, 4).unwrap() as usize;
+        let table = |tag: &[u8; 4]| -> &[u8] {
+            (0..num_tables)
+                .map(|i| 12 + i * 16)
+                .find(|&rec| &font[rec..rec + 4] == tag)
+                .map(|rec| {
+                    let off = read_u32(font, rec + 8).unwrap() as usize;
+                    let len = read_u32(font, rec + 12).unwrap() as usize;
+                    &font[off..off + len]
+                })
+                .unwrap()
+        };
+        let format = read_i16(table(b"head"), 50).unwrap();
+        let num_glyphs = read_u16(table(b"maxp"), 4).unwrap() as usize;
+        let offsets = parse_loca(table(b"loca"), format, num_glyphs).unwrap();
+        let (start, end) = (offsets[gid as usize], offsets[gid as usize + 1]);
+        table(b"glyf")[start..end].to_vec()
+    }
+
+    /// Assert that `gid` in `subset` holds the same glyph data as in `original`,
+    /// allowing the zero padding the subset adds after each glyph.
+    fn assert_same_glyph(subset: &[u8], original: &[u8], gid: u16) {
+        let (out, orig) = (glyph_bytes(subset, gid), glyph_bytes(original, gid));
+        assert!(out.len() >= orig.len(), "glyph {gid} shorter than original");
+        assert_eq!(&out[..orig.len()], &orig[..], "glyph {gid} data changed");
+        assert!(
+            out[orig.len()..].iter().all(|&b| b == 0),
+            "glyph {gid} padding"
+        );
+    }
+
+    #[test]
+    fn test_subset_keeps_glyph_ids() {
+        let font = build_test_font_with_glyphs(5, &[], false);
+        let result = subset_font(&font, &[3]).expect("subsetting should succeed");
+
+        let face = ttf_parser::Face::parse(&result.data, 0).unwrap();
+        assert_eq!(face.number_of_glyphs(), 5);
+        assert!(!glyph_bytes(&font, 3).is_empty());
+        assert_same_glyph(&result.data, &font, 3);
+        for dropped in [1, 2, 4] {
+            assert!(
+                glyph_bytes(&result.data, dropped).is_empty(),
+                "glyph {dropped} kept"
+            );
+        }
+    }
+
+    #[test]
+    fn test_subset_keeps_advance_widths_of_kept_glyphs() {
+        let font = build_test_font_with_glyphs(5, &[], false);
+        let result = subset_font(&font, &[3]).expect("subsetting should succeed");
+
+        let original = ttf_parser::Face::parse(&font, 0).unwrap();
+        let subset = ttf_parser::Face::parse(&result.data, 0).unwrap();
+        let gid = ttf_parser::GlyphId(3);
+        assert_eq!(original.glyph_hor_advance(gid), Some(800));
+        assert_eq!(subset.glyph_hor_advance(gid), Some(800));
+    }
+
+    #[test]
+    fn test_subset_composite_glyph_keeps_component_ids() {
+        let font = build_test_font_with_glyphs(5, &[(4, vec![1, 3])], false);
+        let result = subset_font(&font, &[4]).expect("subsetting should succeed");
+
+        assert_same_glyph(&result.data, &font, 4);
+        assert_same_glyph(&result.data, &font, 1);
+        assert_same_glyph(&result.data, &font, 3);
+        assert!(glyph_bytes(&result.data, 2).is_empty());
+    }
+
+    #[test]
+    fn test_subset_real_font_cmap_still_reaches_kept_glyph() {
+        let original = ttf_parser::Face::parse(NOTO_SANS_REGULAR, 0).unwrap();
+        let h = original.glyph_index('H').unwrap();
+        let result = subset_font(NOTO_SANS_REGULAR, &[h.0]).expect("subsetting should succeed");
+
+        let subset = ttf_parser::Face::parse(&result.data, 0).unwrap();
+        assert_eq!(subset.number_of_glyphs(), original.number_of_glyphs());
+        assert_eq!(subset.glyph_index('H'), Some(h));
+        assert!(subset.glyph_bounding_box(h).is_some());
+        assert_eq!(subset.glyph_bounding_box(h), original.glyph_bounding_box(h));
+        let o = original.glyph_index('o').unwrap();
+        assert!(
+            subset.glyph_bounding_box(o).is_none(),
+            "unrequested glyph kept"
+        );
+        assert!(result.data.len() < NOTO_SANS_REGULAR.len());
+    }
+
     #[test]
     fn test_parse_offset_table_header() {
         let font = build_test_font();
@@ -767,7 +804,7 @@ mod tests {
         // Output should parse back.
         let sf_version = read_u32(&result.data, 0).unwrap();
         assert_eq!(sf_version, 0x00010000);
-        // Verify maxp in output has numGlyphs = 2.
+        // Verify maxp in output keeps numGlyphs = 3.
         let num_tables = read_u16(&result.data, 4).unwrap() as usize;
         let mut found_maxp = false;
         for i in 0..num_tables {
@@ -776,7 +813,7 @@ mod tests {
             if tag == b"maxp" {
                 let offset = read_u32(&result.data, rec_off + 8).unwrap() as usize;
                 let num_glyphs = read_u16(&result.data, offset + 4).unwrap();
-                assert_eq!(num_glyphs, 2);
+                assert_eq!(num_glyphs, 3);
                 found_maxp = true;
                 break;
             }
@@ -790,20 +827,20 @@ mod tests {
         // Keep only glyph 2 (plus glyph 0 is always included).
         let result = subset_font(&font, &[2]).expect("subsetting should succeed");
         assert_eq!(result.gid_map.len(), 2);
-        assert_eq!(result.gid_map[&0], 0); // .notdef stays at 0
-        assert_eq!(result.gid_map[&2], 1); // old GID 2 -> new GID 1
+        assert_eq!(result.gid_map[&0], 0);
+        assert_eq!(result.gid_map[&2], 2);
     }
 
     #[test]
     fn test_subset_multiple_glyphs_ordering() {
         let font = build_test_font_with_glyphs(5, &[], false);
         let result = subset_font(&font, &[3, 1, 4]).expect("subsetting should succeed");
-        // Should have glyphs 0, 1, 3, 4 -> new IDs 0, 1, 2, 3.
+        // Should keep glyphs 0, 1, 3, 4 at their own IDs.
         assert_eq!(result.gid_map.len(), 4);
         assert_eq!(result.gid_map[&0], 0);
         assert_eq!(result.gid_map[&1], 1);
-        assert_eq!(result.gid_map[&3], 2);
-        assert_eq!(result.gid_map[&4], 3);
+        assert_eq!(result.gid_map[&3], 3);
+        assert_eq!(result.gid_map[&4], 4);
     }
 
     #[test]
