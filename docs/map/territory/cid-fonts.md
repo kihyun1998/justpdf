@@ -9,7 +9,7 @@ Type0 복합 폰트와 하위 CIDFont를 읽는 경로: 2바이트 코드 분할
 ## Design model
 - 코드 폭은 두 소비처 모두 **2바이트로 하드코딩**한다: 텍스트는 `Identity || Subtype == Type0`, 렌더는 `Subtype == Type0`. 가변 폭 CMap(예: 1/2바이트 혼합)은 지원하지 않는다(추론).
 - `/W` 파싱은 텍스트 쪽(`parse_cid_widths`, `resolve_type0_descendant`)에만 있다. `resolve_type0_descendant`는 인코딩을 `Identity`로 강제한다.
-- `/CIDToGIDMap` 해석은 렌더 쪽(`parse_cid_to_gid_map`, `parse_cid_gid_stream`)에만 있다.
+- `/CIDToGIDMap` 해석은 렌더 쪽(`parse_cid_to_gid_map`, `parse_cid_gid_stream`)과 압축 서브세팅(`cid_font_glyph_ids`, [폰트 서브세팅](font-subsetting.md))에 따로 있다. 텍스트 추출은 필요 없다.
 
 ## Code
 - `justpdf-core/src/text/mod.rs` — `parse_cid_widths`, `resolve_type0_descendant`, `show_string`

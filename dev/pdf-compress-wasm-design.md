@@ -154,9 +154,9 @@ SHA-256 해시로 동일 스트림 데이터를 감지하고 참조를 통합.
   ✅ D-1. 페이지별 사용 글리프 수집 (컨텐츠 스트림 파싱 Tf/Tj/TJ)
   ✅ D-2. subset_font()로 FontFile2 스트림 서브셋 생성
   ✅ D-3. FontDescriptor의 FontFile2 스트림 교체
-  ✅ D-4. Widths 배열 업데이트 (gid_map 기반 리매핑)
+  ✅ D-4. Widths 배열 업데이트 (gid_map 기반 리매핑) — #51에서 제거: GID를 유지하므로 폰트 사전은 그대로 둔다
   ✅ D-5. CID 폰트 지원 (Type0 → CIDFontType2 → FontFile2)
-  ✅ D-6. CIDToGIDMap 업데이트 (서브셋 후 GID 리매핑)
+  ✅ D-6. CIDToGIDMap 업데이트 (서브셋 후 GID 리매핑) — #51에서 제거: GID를 유지하므로 폰트 사전은 그대로 둔다
   ✅ D-7. 2-byte CID 문자 코드 추출
 
 주의:

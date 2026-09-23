@@ -19,7 +19,7 @@
 - [렌더 인터프리터](../territory/render-interpreter.md) — `resolve_page_fonts`.
 - [글리프 렌더링](../territory/glyph-rendering.md) — `char_code_to_glyph_id`.
 - [SVG 렌더러](../territory/svg-renderer.md) — 세 번째 `resolve_page_fonts`.
-- [폰트 서브세팅](../territory/font-subsetting.md) — 서브셋 결과를 두 경로가 다르게 읽는다(렌더는 복사된 cmap, 텍스트는 ToUnicode).
+- [폰트 서브세팅](../territory/font-subsetting.md) — 서브셋 결과를 두 경로가 다르게 읽는다(렌더는 폰트 cmap, 텍스트는 ToUnicode). 서브세팅 자신도 코드 → GID를 따로 푼다(`simple_font_glyph_ids`·`cid_font_glyph_ids`) — 세 번째 해석이지만, GID를 유지하고 모든 경로의 합집합을 남기므로 다른 두 경로와 어긋나도 글리프를 잃지 않는다.
 
 ## What a violation looks like
 - Type0(CJK) 폰트 페이지에서 렌더된 글자 간격과 추출된 텍스트 좌표가 다르다(렌더는 1000 고정 폭 — 추론).
@@ -31,7 +31,7 @@
 
 - 2026-09-23 #9 작업 중 서브셋 사례가 **실행으로 재현됐다**(단순 TrueType): 서브셋 폰트의 `cmap`이 옛 GID를 가리켜 그려질 글자 다섯 개가 모두 아웃라인을 잃었고, 같은 출력에서 텍스트 추출은 원문 그대로였다 — [폰트 서브세팅](../territory/font-subsetting.md#design-model).
 
-- Tracked: #45 (/Differences·CID 폭·CFF), #51 (서브세팅 GID 매핑)
+- Tracked: #45 (/Differences·CID 폭·CFF)
 
 ## Where it will recur
 **폰트 사전에서 코드·글리프·폭·유니코드 중 하나를 얻는 함수를 텍스트나 렌더 한쪽에 추가하면 이 불변식의 대상이다.** 확인할 것: 다른 쪽에도 같은 정보가 필요한가? 공유 폰트 해석 타입이 core에 생기기 전까지, 한쪽 수정은 다른 쪽 수정 여부를 명시적으로 판단해야 한다.
