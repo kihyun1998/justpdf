@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **CLI `compress` subcommand** — `justpdf compress <file> --preset low|medium|high|extreme -o <out>` (#10)
+- **CLI `compress` options** — per-knob overrides on top of `--preset` (`--jpeg-quality`, `--max-dpi`, `--no-strip-metadata`, …) (#11), `--password` for encrypted input (output is unencrypted) (#13), `--analyze` preview (#12), `--verbose` breakdown (#14)
+- **Release workflow** — pushing a `v*` tag builds CLI binaries for Linux, macOS (x86_64, aarch64) and Windows and attaches them to the GitHub release (#15)
+
+### Changed
+- `justpdf-special`: `justpdf-render` is now optional and only pulled in by the `ocr` feature (#1)
+- `justpdf-formats`: `justpdf-render` is now optional and only pulled in by the `plaintext`, `mobi` and `fb2` features (#2)
+
+### Fixed
+- **CI feature-isolation check** — `cargo tree` prints ASCII glyphs on CI, so the script's checks were failing or vacuous; they now match dependency names directly (#62)
+- **Encryption round-trip** — binary strings with bytes ≥ 0x7F (e.g. `/O`, `/U`) were written as literal strings and corrupted, so some password pairs produced files that could not be opened. Such strings are now hex-encoded (#20)
+
 ## [0.1.4] - 2026-05-08 (justpdf-core)
 
 ### Fixed
@@ -23,7 +38,7 @@ All notable changes to this project will be documented in this file.
   - Font subsetting (TrueType/CIDFontType2)
   - Stream dedup (SHA-256), Flate re-compression (best level)
   - Unused resource removal, metadata/structure stripping
-  - Object stream packing (PDF 1.5+)
+  - Object stream packing (PDF 1.5+) — implemented, but not enabled in `compress_pdf` (disabled for viewer compatibility)
   - RGB/CMYK to grayscale conversion
 - **Visible signature appearance** — Form XObject generation for digital signatures
 - **Signing time attribute** — UTCTime in CMS signed attributes (standard compliance)
@@ -46,6 +61,6 @@ All notable changes to this project will be documented in this file.
 - **Phase 11.1**: High-level API crate (`justpdf`) with `Document`, `Page`,
   `Metadata`, `Modifier`, `merge()` convenience functions
 - **Phase 11.2**: CLI tool (`justpdf-cli`) with info, text, render, merge,
-  split, encrypt, decrypt, clean, sign subcommands
+  split, encrypt, decrypt, clean subcommands (`sign` is a placeholder)
 - **Phase 11.3**: Language bindings — C FFI, Python (PyO3), WASM (wasm-bindgen)
 - **Phase 11.4**: Examples, documentation, async support

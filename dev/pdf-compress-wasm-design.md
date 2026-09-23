@@ -48,14 +48,14 @@ justpdf/
 |------|:-----------:|:----:|:----------:|:----------:|
 | 이미지 JPEG 재인코딩 | ✓ | ✓ | ✓ | ✓ |
 | 이미지 다운샘플링 | ✓ | — | ✓ | ✓ |
-| 폰트 서브세팅 | ✓ | — | — | ✓ |
-| 폰트 스트림 재압축 | ✓ | — | — | ✓ |
-| Flate 재압축 (최고 레벨) | ✓ | ✓ | — | ✓ |
-| 중복 스트림 dedup | ✓ | — | — | ✓ |
-| 미사용 리소스 제거 | ✓ | — | — | ✓ |
-| 메타데이터/구조 제거 | ✓ | — | — | ✓ |
-| Object Stream 압축 | — | ✓ | — | ✓ |
-| 색상 → Grayscale | ✓ | — | — | ✓ |
+| 폰트 서브세팅 | ✓ | — | ✓ (TrueType만) | ✓ |
+| 폰트 스트림 재압축 | ✓ | — | ✓ | ✓ |
+| Flate 재압축 (최고 레벨) | ✓ | ✓ | ✓ | ✓ |
+| 중복 스트림 dedup | ✓ | — | ✓ | ✓ |
+| 미사용 리소스 제거 | ✓ | — | ✓ | ✓ |
+| 메타데이터/구조 제거 | ✓ | — | ✓ | ✓ |
+| Object Stream 압축 | — | ✓ | — (구현됨, 비활성) | ✓ |
+| 색상 → Grayscale | ✓ | — | ✓ (옵션) | ✓ |
 | GC (미사용 객체) | ✓ | ✓ | ✓ | ✓ |
 | 비압축 → FlateDecode | ✓ | ✓ | ✓ | ✓ |
 
@@ -68,7 +68,7 @@ justpdf/
 | **이미지** | | | | |
 | JPEG 재인코딩 | — | q75 | q65 | q40 |
 | 이미지 다운스케일 | — | — | 150dpi | 96dpi |
-| RGB → Grayscale | — | — | — | 옵션 |
+| RGB → Grayscale | — | — | — | — (`grayscale` 옵션으로만, 어떤 프리셋도 켜지 않음) |
 | **폰트** | | | | |
 | 폰트 서브세팅 | — | ✓ | ✓ | ✓ |
 | **스트림** | | | | |
@@ -240,7 +240,7 @@ RGB/CMYK 이미지를 Grayscale로 변환하여 대폭 크기 감소.
 
 ---
 
-### Phase H: Object Stream 압축 — ✅ 완료
+### Phase H: Object Stream 압축 — ⚠️ 구현됨, 파이프라인에서 비활성
 
 작은 딕셔너리 객체를 Object Stream으로 묶어 PDF 1.5+ 최적화.
 
@@ -250,7 +250,8 @@ RGB/CMYK 이미지를 Grayscale로 변환하여 대폭 크기 감소.
   ✅ H-2. pack_object_streams() → PackResult (compressed info 포함)
   ✅ H-3. xref stream 생성 — write_xref_stream() (type 0/1/2 entries)
   ✅ H-4. serialize_pdf_with_xref_stream() + build_with_xref_stream()
-  ✅ H-5. compress_pdf 파이프라인 연동 완료
+  ⚠️ H-5. compress_pdf 연동 — 코드 경로(`pack_into_object_streams`)는 있으나 비활성.
+         일부 뷰어의 xref stream 호환성 문제 때문 (`compress_pdf` Step 5 주석)
 
 테스트:
   ✅ H-T1. eligible 객체 패킹 → 객체 수 감소
@@ -273,7 +274,7 @@ RGB/CMYK 이미지를 Grayscale로 변환하여 대폭 크기 감소.
           streams_recompressed, fonts_subsetted, unused_resources_removed,
           metadata_items_stripped, images_grayscaled, ratio)
   ✅ I-3. wasm-pack build --target web 검증 (697KB, getrandom js feature 추가)
-  ✅ I-4. npm 패키지 배포 — @kihyun1998/justpdf-compress-wasm@0.1.2
+  ✅ I-4. npm 패키지 배포 — @kihyun1998/justpdf-compress-wasm (현재 버전은 npm 참조)
 ```
 
 ---
@@ -341,9 +342,9 @@ RGB/CMYK 이미지를 Grayscale로 변환하여 대폭 크기 감소.
 | 재인코딩 후 원본보다 커지면 | 교체 취소 (안전장치) |
 | 폰트 서브세팅 실패 | 원본 유지 (안전장치) |
 | CFF 폰트 서브세팅 | 미지원 → TrueType만 |
-| Grayscale 변환 | extreme + 옵션 플래그 필요 |
+| Grayscale 변환 | 옵션 플래그로만 (프리셋은 켜지 않음) |
 | 구조 트리 제거 | 접근성 손실 — high/extreme만 |
-| clean_objects renumbering | catalog_ref 무효화 → GC만 사용 (Phase H에서 해결) |
+| clean_objects renumbering | catalog_ref 무효화 → GC만 사용 |
 
 ---
 

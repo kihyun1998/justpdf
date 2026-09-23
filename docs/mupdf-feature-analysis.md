@@ -1,6 +1,6 @@
 # MuPDF 기능 전체 분석
 
-> MuPDF 소스코드 기반 분석 (mupdf-reference submodule)
+> MuPDF 소스코드 기반 분석 (작성 당시 참조한 mupdf-reference 체크아웃은 이 저장소에 포함되어 있지 않다)
 > justpdf 프로젝트를 위한 기능 레퍼런스
 
 ---

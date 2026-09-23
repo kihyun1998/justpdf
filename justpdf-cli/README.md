@@ -14,13 +14,15 @@ cargo install justpdf-cli
 |-----------|----------------------------------|
 | `info`    | Show PDF metadata and page count |
 | `text`    | Extract text from a PDF          |
-| `render`  | Render pages to PNG/JPEG         |
+| `render`  | Render pages to PNG/JPEG/SVG     |
 | `merge`   | Merge multiple PDFs              |
-| `split`   | Split a PDF into pages           |
+| `split`   | Extract a page range             |
 | `encrypt` | Encrypt a PDF                    |
 | `decrypt` | Decrypt a PDF                    |
-| `clean`   | Remove metadata/annotations      |
+| `clean`   | Rebuild the file                 |
+| `compress`| Compress with a preset + overrides |
 | `convert` | Convert between formats          |
+| `sign`    | Not implemented yet              |
 
 ## Examples
 
@@ -29,8 +31,14 @@ justpdf info document.pdf
 justpdf text document.pdf
 justpdf render document.pdf --dpi 150 -o page.png
 justpdf merge a.pdf b.pdf -o merged.pdf
+justpdf compress document.pdf --preset high -o smaller.pdf
+justpdf compress document.pdf --analyze
+justpdf compress document.pdf --preset high --no-strip-metadata --jpeg-quality 80 -o out.pdf
+justpdf split document.pdf --pages 1-5 -o part.pdf
 justpdf encrypt doc.pdf --owner-password secret -o secured.pdf
 ```
+
+Page numbers are 1-based. Prebuilt binaries are attached to each GitHub release.
 
 ## Repository
 
