@@ -2438,11 +2438,72 @@ mod tests {
 
     // ── Phase B: Flate recompression tests ──────────────────────────
 
+    /// Create a text PDF (~1000 chars per page) whose FlateDecode streams are
+    /// stored at compression level 1, with no DecodeParms and no images.
+    /// Returns the PDF and the number of streams stored at level 1.
+    fn create_fast_flate_text_pdf(num_pages: usize) -> (Vec<u8>, usize) {
+        use std::io::Write;
+
+        let mut doc = DocumentBuilder::new();
+        let font = doc.add_standard_font("Helvetica");
+        for i in 0..num_pages {
+            let mut page = PageBuilder::new(612.0, 792.0);
+            page.add_font(&font, "Helvetica");
+            page.begin_text();
+            page.set_font(&font, 12.0);
+            page.move_to(72.0, 720.0);
+            page.show_text(&format!("Test page {} lorem ipsum dolor sit amet. ", i + 1).repeat(25));
+            page.end_text();
+            doc.add_page(page);
+        }
+
+        let parsed = PdfDocument::from_bytes(doc.build().unwrap()).unwrap();
+        let mut modifier = DocumentModifier::from_document(&parsed).unwrap();
+        let flate_streams: Vec<(u32, PdfDict, Vec<u8>)> = modifier
+            .writer()
+            .objects
+            .iter()
+            .filter_map(|(obj_num, obj)| match obj {
+                PdfObject::Stream { dict, data }
+                    if dict.get(b"Filter") == Some(&PdfObject::Name(b"FlateDecode".to_vec())) =>
+                {
+                    Some((*obj_num, dict.clone(), data.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !flate_streams.is_empty(),
+            "fixture must contain FlateDecode streams"
+        );
+        for (_, dict, _) in &flate_streams {
+            assert!(
+                dict.get(b"DecodeParms").is_none(),
+                "fixture stream has DecodeParms"
+            );
+            assert_ne!(
+                dict.get(b"Subtype"),
+                Some(&PdfObject::Name(b"Image".to_vec())),
+                "fixture stream is an image"
+            );
+        }
+        let fast_count = flate_streams.len();
+
+        for (obj_num, dict, data) in flate_streams {
+            let decoded = crate::stream::decode_stream(&data, &dict).unwrap();
+            let mut encoder =
+                flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+            encoder.write_all(&decoded).unwrap();
+            let fast = encoder.finish().unwrap();
+            modifier.set_object(obj_num, PdfObject::Stream { dict, data: fast });
+        }
+        (modifier.build().unwrap(), fast_count)
+    }
+
     /// B-T1: FlateDecode streams recompressed at best level → output ≤ original.
     #[test]
     fn test_recompress_flate_output_not_larger() {
-        // Create a PDF with multiple pages of text (generates FlateDecode content streams)
-        let pdf = create_text_pdf(5);
+        let (pdf, fast_count) = create_fast_flate_text_pdf(5);
         let original_size = pdf.len();
 
         let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
@@ -2450,18 +2511,26 @@ mod tests {
         // Output must be valid and no larger than original
         assert!(compressed.starts_with(b"%PDF"));
         assert!(compressed.len() <= original_size);
-        // At least some streams should have been recompressed (content streams use default flate)
-        // Note: may be 0 if default and best produce same output for small streams
-        // streams_recompressed field exists and is populated
-        let _ = stats.streams_recompressed;
+        assert!(
+            stats.streams_recompressed > 0,
+            "expected at least one stream recompression"
+        );
+        assert_eq!(
+            stats.streams_recompressed, fast_count,
+            "every level-1 stream should be recompressed"
+        );
     }
 
     /// B-T2: Recompression roundtrip — decoded content identical after recompression.
     #[test]
     fn test_recompress_flate_roundtrip_identical() {
-        let pdf = create_text_pdf(3);
+        let (pdf, fast_count) = create_fast_flate_text_pdf(3);
 
-        let (compressed, _) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
+        assert_eq!(
+            stats.streams_recompressed, fast_count,
+            "the roundtrip must go through a recompressed stream"
+        );
 
         // Re-parse and extract text to verify content is preserved
         let reparsed = PdfDocument::from_bytes(compressed).unwrap();
@@ -2485,7 +2554,7 @@ mod tests {
     /// B-T3: Already best-compressed streams → size change is zero or minimal.
     #[test]
     fn test_recompress_flate_already_best_no_growth() {
-        let pdf = create_text_pdf(3);
+        let (pdf, fast_count) = create_fast_flate_text_pdf(3);
 
         // First pass: recompress to best
         let (pass1, stats1) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
@@ -2494,7 +2563,7 @@ mod tests {
         // Second pass: recompress again — should not grow
         let (pass2, stats2) = compress_pdf(&pass1, &CompressOptions::preset_low()).unwrap();
 
-        // Allow tiny variance from object stream overhead (xref stream vs xref table)
+        // Allow tiny variance from re-serialization
         let tolerance = (pass1_size as f64 * 0.01) as usize + 10;
         assert!(
             pass2.len() <= pass1_size + tolerance,
@@ -2504,18 +2573,21 @@ mod tests {
             tolerance,
         );
 
-        // Second pass should recompress fewer or zero streams (already at best)
-        assert!(
-            stats2.streams_recompressed <= stats1.streams_recompressed,
-            "Second pass should not recompress more streams than first pass"
+        // First pass recompresses; second pass finds every stream already at best
+        assert_eq!(
+            stats1.streams_recompressed, fast_count,
+            "first pass must recompress for the second pass to mean anything"
+        );
+        assert_eq!(
+            stats2.streams_recompressed, 0,
+            "second pass should recompress nothing (already at best)"
         );
     }
 
     /// B-T4: Integration — text PDF with FlateDecode streams shows measurable improvement.
     #[test]
     fn test_recompress_flate_text_pdf_improvement() {
-        // Create a larger text PDF to make compression differences visible
-        let pdf = create_text_pdf(20);
+        let (pdf, fast_count) = create_fast_flate_text_pdf(20);
         let original_size = pdf.len();
 
         let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
@@ -2528,11 +2600,14 @@ mod tests {
         let pages = crate::page::collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 20);
 
-        // With 20 pages of content streams, at least some should benefit from best-level
-        // compression. The output should be ≤ original size.
+        // Every content stream is recompressed and the output is smaller
+        assert_eq!(
+            stats.streams_recompressed, fast_count,
+            "expected content streams to be recompressed"
+        );
         assert!(
-            compressed.len() <= original_size,
-            "Compressed size {} should be ≤ original size {}",
+            compressed.len() < original_size,
+            "Compressed size {} should be < original size {}",
             compressed.len(),
             original_size,
         );
