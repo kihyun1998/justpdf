@@ -2786,26 +2786,142 @@ mod tests {
         assert!(CompressOptions::preset_extreme().font_subsetting);
     }
 
-    /// D-T4: PDF with embedded TrueType font — subsetting pipeline runs without crash.
-    /// Note: This test uses embed_truetype_font which requires a valid TTF.
-    /// We test the safety path: if no system TTF is available, the test verifies
-    /// that the compress pipeline handles embedded fonts gracefully.
-    #[test]
-    fn test_subset_pipeline_no_crash() {
-        // Create a PDF and compress with font_subsetting on.
-        // Even if no embedded TrueType fonts exist, the pipeline should work.
-        let pdf = create_pdf_with_jpeg(100, 100, 90);
+    /// Noto Sans Regular (SIL OFL 1.1): an unmodified TrueType font with `glyf` outlines.
+    const NOTO_SANS_REGULAR: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/NotoSans-Regular.ttf"
+    ));
 
-        let mut options = CompressOptions::preset_medium();
+    /// Create a one-page PDF that draws `text` with `ttf_bytes` embedded as a
+    /// simple TrueType font.
+    fn create_pdf_with_truetype_font(ttf_bytes: &[u8], text: &str) -> Vec<u8> {
+        let mut doc = DocumentBuilder::new();
+        let font = doc.embed_truetype_font(ttf_bytes).unwrap();
+        let font_ref = doc.font_ref(&font).unwrap();
+
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.add_font_ref(&font, font_ref);
+        page.begin_text();
+        page.set_font(&font, 24.0);
+        page.move_to(72.0, 720.0);
+        page.show_text(text);
+        page.end_text();
+        doc.add_page(page);
+
+        doc.build().unwrap()
+    }
+
+    /// Decoded font programs reached through FontDescriptor → FontFile2 in `pdf`.
+    fn fontfile2_programs(pdf: &[u8]) -> Vec<Vec<u8>> {
+        let doc = PdfDocument::from_bytes(pdf.to_vec()).unwrap();
+        let mut programs = Vec::new();
+        for r in doc.object_refs().collect::<Vec<_>>() {
+            if let Ok(PdfObject::Dict(fd)) = doc.resolve(&r)
+                && let Some(PdfObject::Reference(ff2)) = fd.get(b"FontFile2")
+                && let Ok(PdfObject::Stream { dict, data }) = doc.resolve(ff2)
+            {
+                programs.push(doc.decode_stream(&dict, &data).unwrap());
+            }
+        }
+        programs
+    }
+
+    /// Outline of the glyph that `face`'s `cmap` maps `c` to, as path commands.
+    fn glyph_outline_for_char(face: &ttf_parser::Face, c: char) -> Option<Vec<String>> {
+        struct Recorder(Vec<String>);
+        impl ttf_parser::OutlineBuilder for Recorder {
+            fn move_to(&mut self, x: f32, y: f32) {
+                self.0.push(format!("M {x} {y}"));
+            }
+            fn line_to(&mut self, x: f32, y: f32) {
+                self.0.push(format!("L {x} {y}"));
+            }
+            fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+                self.0.push(format!("Q {x1} {y1} {x} {y}"));
+            }
+            fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+                self.0.push(format!("C {x1} {y1} {x2} {y2} {x} {y}"));
+            }
+            fn close(&mut self) {
+                self.0.push("Z".to_string());
+            }
+        }
+
+        let gid = face.glyph_index(c)?;
+        let mut recorder = Recorder(Vec::new());
+        face.outline_glyph(gid, &mut recorder)?;
+        Some(recorder.0)
+    }
+
+    /// The TrueType fixture is the pinned upstream file.
+    #[test]
+    fn test_truetype_fixture_is_pinned() {
+        let hex: String = Sha256::digest(NOTO_SANS_REGULAR)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            hex,
+            "f3961a9cde016d41a4879aecda1474d3a36d6bf54fa0e4643de029cc2248b0e8"
+        );
+    }
+
+    /// D-T4: An embedded TrueType font is subsetted — counted in the stats, and
+    /// the embedded font program keeps fewer glyphs than the original.
+    #[test]
+    fn test_subset_truetype_font_actually_subsets() {
+        let pdf = create_pdf_with_truetype_font(NOTO_SANS_REGULAR, "Hello");
+        assert_eq!(fontfile2_programs(&pdf), vec![NOTO_SANS_REGULAR.to_vec()]);
+
+        let options = CompressOptions::preset_medium();
         assert!(options.font_subsetting);
 
         let (compressed, stats) = compress_pdf(&pdf, &options).unwrap();
-        assert!(compressed.starts_with(b"%PDF"));
+        assert_eq!(stats.fonts_subsetted, 1);
 
-        // Verify output is valid
+        let programs = fontfile2_programs(&compressed);
+        assert_eq!(programs.len(), 1);
+        let original = ttf_parser::Face::parse(NOTO_SANS_REGULAR, 0).unwrap();
+        let subset = ttf_parser::Face::parse(&programs[0], 0).unwrap();
+        assert!(
+            subset.number_of_glyphs() < original.number_of_glyphs(),
+            "subset keeps {} of {} glyphs",
+            subset.number_of_glyphs(),
+            original.number_of_glyphs()
+        );
+
         let reparsed = PdfDocument::from_bytes(compressed).unwrap();
         let pages = crate::page::collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 1);
+        let text = crate::text::extract_page_text_string(&reparsed, &pages[0]).unwrap();
+        assert!(text.contains("Hello"), "extracted text: {text:?}");
+    }
+
+    /// D-T4b: After subsetting, every drawn character still resolves through the
+    /// font's `cmap` to the outline it had in the original font.
+    #[test]
+    #[ignore = "#51: subsetting renumbers glyphs without rewriting the font's cmap"]
+    fn test_subset_truetype_font_keeps_glyph_outlines() {
+        let text = "Hello";
+        let pdf = create_pdf_with_truetype_font(NOTO_SANS_REGULAR, text);
+
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
+        assert_eq!(stats.fonts_subsetted, 1);
+
+        let programs = fontfile2_programs(&compressed);
+        assert_eq!(programs.len(), 1);
+        let original = ttf_parser::Face::parse(NOTO_SANS_REGULAR, 0).unwrap();
+        let subset = ttf_parser::Face::parse(&programs[0], 0).unwrap();
+
+        for c in text.chars() {
+            let expected = glyph_outline_for_char(&original, c);
+            assert!(expected.is_some(), "fixture has no outline for {c:?}");
+            assert_eq!(
+                glyph_outline_for_char(&subset, c),
+                expected,
+                "outline for {c:?} changed after subsetting"
+            );
+        }
     }
 
     /// D-T5: CFF font should be skipped (subset_font returns None for CFF).
