@@ -238,6 +238,15 @@ impl DocumentBuilder {
         Ok(resource_name)
     }
 
+    /// Indirect reference of the font registered under `resource_name`.
+    #[cfg(test)]
+    pub(crate) fn font_ref(&self, resource_name: &str) -> Option<IndirectRef> {
+        self.fonts
+            .values()
+            .find(|(name, _)| name == resource_name)
+            .map(|(_, font_ref)| font_ref.clone())
+    }
+
     /// Set encryption for the document.
     pub fn set_encryption(&mut self, config: crate::crypto::EncryptionConfig) {
         self.encryption = Some(config);
