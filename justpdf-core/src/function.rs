@@ -1,7 +1,6 @@
 //! PDF Function evaluator.
 //!
-//! Supports all 4 PDF function types:
-//! - Type 0: Sampled function (lookup table)
+//! Supports PDF function types 2, 3 and 4 (Type 0, sampled, is not implemented):
 //! - Type 2: Exponential interpolation
 //! - Type 3: Stitching (piecewise)
 //! - Type 4: PostScript calculator

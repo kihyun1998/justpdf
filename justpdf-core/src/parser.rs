@@ -403,7 +403,8 @@ impl PdfDocument {
     /// protected by a `RwLock`, so this method only requires `&self` and
     /// can be called from multiple threads simultaneously.
     pub fn resolve(&self, iref: &IndirectRef) -> Result<PdfObject> {
-        // Fast path: cache hit (read lock only).
+        // Fast path: cache hit. Takes the write lock because an LRU lookup
+        // updates recency order.
         {
             let mut cache = self.objects.write().unwrap();
             if let Some(obj) = cache.get(iref) {

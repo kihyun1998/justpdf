@@ -7,11 +7,10 @@ Compress PDFs entirely in the browser — no server required, no data leaves the
 ## Features
 
 - **4 presets** — `low`, `medium`, `high`, `extreme`
-- **Image optimization** — JPEG re-encoding, downscaling, grayscale conversion
+- **Image optimization** — JPEG re-encoding, downscaling, grayscale conversion (grayscale via `compress_advanced` only; no preset enables it)
 - **Font subsetting** — keep only used glyphs
 - **Stream optimization** — Flate re-compression, duplicate dedup
 - **Structure cleanup** — unused resource removal, metadata stripping, GC
-- **Object Stream compression** — PDF 1.5+ optimization
 - **DPI-aware downscaling** — CTM-based effective DPI calculation
 - **Detailed stats** — images processed, fonts subsetted, bytes saved, etc.
 
@@ -47,8 +46,8 @@ const url = URL.createObjectURL(blob);
 // Compress with full control
 const advanced = compress_advanced(
   bytes,
-  65,     // jpeg_quality (0 = skip)
-  150.0,  // max_dpi (0 = skip)
+  65,     // jpeg_quality 1-100 (0 = unset; images are still re-encoded at 75 when max_dpi > 0; values are not range-checked — #57)
+  150.0,  // max_dpi (0 = no downscaling)
   true,   // font_subsetting
   true,   // remove_unused_resources
   true,   // strip_metadata
@@ -61,15 +60,15 @@ const advanced = compress_advanced(
 
 ### `compress(data, preset)`
 
-Compress with a preset (`"low"`, `"medium"`, `"high"`, `"extreme"`).
+Compress with a preset (`"low"`, `"medium"`, `"high"`, `"extreme"`). `extreme` also removes embedded files, which breaks ZUGFeRD/Factur-X invoices (#58).
 
 ### `compress_custom(data, jpeg_quality, max_dpi)`
 
-Compress with custom JPEG quality and DPI settings.
+Compress with custom JPEG quality and DPI settings (`max_dpi` 0 = no downscaling). Other options are fixed: font subsetting and unused-resource removal on, metadata/extras stripping off, images under 5,000 bytes skipped.
 
 ### `compress_advanced(data, jpeg_quality, max_dpi, font_subsetting, remove_unused_resources, strip_metadata, strip_extras, grayscale)`
 
-Full control over all compression options.
+Control over most compression options. Fixed: structural cleanup and stream recompression on, images under 5,000 bytes skipped.
 
 ### `analyze(data)`
 

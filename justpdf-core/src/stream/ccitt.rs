@@ -67,8 +67,9 @@ impl CcittParams {
     }
 }
 
-/// Decode CCITT-encoded data. Returns 1-byte-per-pixel data (0x00=white, 0xFF=black),
-/// with dimensions `columns x rows`.
+/// Decode CCITT-encoded data. Returns 1-byte-per-pixel data with dimensions
+/// `columns x rows`: black is 0x00 and white is 0xFF, or the reverse when
+/// `/BlackIs1` is true.
 pub fn decode(data: &[u8], params: Option<&PdfDict>) -> Result<Vec<u8>> {
     let p = CcittParams::from_dict(params);
     let columns = p.columns as usize;

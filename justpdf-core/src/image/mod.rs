@@ -199,7 +199,8 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict) -> Result<DecodedImage> {
         }
         Some(b"CCITTFaxDecode") | Some(b"CCF") => {
             // CCITT data is decoded by the stream decoder into 1-byte-per-pixel data
-            // (0x00=white, 0xFF=black). We pass it through as 8bpc grayscale.
+            // (black 0x00 / white 0xFF, reversed when /BlackIs1 is true). We pass it
+            // through as 8bpc grayscale.
             let decoded = stream::decode_stream(raw_data, dict)?;
             Ok(DecodedImage {
                 width: info.width,

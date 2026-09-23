@@ -102,12 +102,11 @@ fn build_pdf_with_placeholder(
     pdf_data: &[u8],
     options: &SigningOptions,
 ) -> Result<(Vec<u8>, usize, usize)> {
-    // We'll append an incremental update with:
+    // We append an incremental update with:
     // 1. The signature value dictionary (with placeholder /Contents)
     // 2. A signature field
-    // 3. Updated AcroForm
-    // 4. Updated Catalog (if needed)
-    // 5. New xref + trailer
+    // 3. New xref + trailer
+    // The field is not added to /AcroForm, the Catalog or any page /Annots.
 
     let mut buf = pdf_data.to_vec();
     let old_startxref = crate::xref::find_startxref(pdf_data)?;

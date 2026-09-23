@@ -2,7 +2,7 @@
 
 Special PDF features for the [justpdf](https://github.com/kihyun1998/justpdf) project.
 
-Provides OCR, barcode generation/reading, ZUGFeRD invoicing, BiDi text support, and image deskew.
+Provides OCR (via the external `tesseract` program), barcode generation, ZUGFeRD invoice reading, BiDi text analysis, and image deskew.
 
 ## Usage
 
@@ -24,10 +24,10 @@ let png = barcode::generate_qr_png("https://example.com", 256)?;
 
 | Feature    | Description                          |
 |------------|--------------------------------------|
-| `ocr`      | Optical character recognition        |
-| `barcode`  | QR, DataMatrix, PDF417, Aztec codes  |
-| `zugferd`  | ZUGFeRD/Factur-X invoice handling    |
-| `bidi`     | Bidirectional text layout            |
+| `ocr`      | OCR via Tesseract (pulls in `justpdf-render`) |
+| `barcode`  | QR, Code128, EAN-13, Code39; DataMatrix, PDF417, Aztec are experimental (no error correction yet, may not scan — #55) |
+| `zugferd`  | ZUGFeRD/Factur-X invoice extraction  |
+| `bidi`     | Bidirectional text run analysis      |
 | `deskew`   | Scanned image deskew correction      |
 
 ## Repository
