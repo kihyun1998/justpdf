@@ -1,0 +1,73 @@
+name: release
+
+# v로 시작하는 태그(v1.0.0 등)를 push하면 OS별 CLI 바이너리를 빌드해
+# 같은 이름의 GitHub Release에 첨부한다. 태그 push가 유일한 트리거다.
+on:
+  push:
+    tags:
+      - "v*"
+
+# 릴리스 생성·자산 업로드에 쓰기 권한이 필요하다.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: rustup update stable && rustup target add ${{ matrix.target }}
+
+      # 워크스페이스에서 CLI 바이너리(justpdf)만 빌드한다.
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} -p justpdf-cli
+
+      # tar.gz (Linux/macOS): justpdf 바이너리 + README + 라이선스를 한 폴더로 묶는다.
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          dir="justpdf-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$dir"
+          cp "target/${{ matrix.target }}/release/justpdf" "$dir/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$dir/"
+          tar czf "$dir.tar.gz" "$dir"
+          echo "ASSET=$dir.tar.gz" >> "$GITHUB_ENV"
+
+      # zip (Windows): justpdf.exe + README + 라이선스.
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $dir = "justpdf-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          New-Item -ItemType Directory $dir | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/justpdf.exe" $dir
+          Copy-Item README.md,LICENSE-MIT,LICENSE-APACHE $dir
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          "ASSET=$dir.zip" >> $env:GITHUB_ENV
+
+      # 태그 이름(v1.0.0)으로 릴리스를 만들고(없으면) 이 잡의 아카이브를 첨부한다.
+      # 4개 잡이 같은 릴리스에 각자 자산을 올린다.
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET }}

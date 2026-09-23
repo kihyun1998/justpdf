@@ -1117,6 +1117,48 @@ fn test_encrypt_permissions_flags() {
     assert!(!no_perms.can_annotate());
 }
 
+#[test]
+fn test_encrypt_roundtrip_across_password_combinations() {
+    // Regression: the literal-string writer used to UTF-8-encode bytes >= 0x7F,
+    // corrupting the binary /O and /U entries. That made authentication fail for
+    // password pairs whose /O,/U happened to contain a high byte but no control
+    // byte — e.g. ("secret","owner") and ("password","secret"). Sweep a range of
+    // pairs across handlers so a regression in /O,/U serialization is caught.
+    let pairs = [
+        ("secret", "owner"),
+        ("password", "secret"),
+        ("user123", "owner456"),
+        ("a", "b"),
+        ("pass", "ownerpass"),
+        ("hello", "world"),
+    ];
+    for method in [
+        crypto::EncryptionMethod::RC4_128,
+        crypto::EncryptionMethod::AES128,
+    ] {
+        for (user, owner) in pairs {
+            let mut builder = justpdf_core::writer::document::DocumentBuilder::new();
+            let page = justpdf_core::writer::page::PageBuilder::new(612.0, 792.0);
+            builder.add_page(page);
+            builder.set_encryption(crypto::EncryptionConfig {
+                user_password: user.as_bytes().to_vec(),
+                owner_password: owner.as_bytes().to_vec(),
+                permissions: crypto::Permissions::allow_all(),
+                method,
+                encrypt_metadata: true,
+            });
+            let bytes = builder.build().unwrap();
+
+            let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+            assert!(doc.is_encrypted());
+            doc.authenticate(user.as_bytes()).unwrap_or_else(|e| {
+                panic!("{method:?} user={user:?} owner={owner:?} failed to authenticate: {e:?}")
+            });
+            assert!(doc.is_authenticated());
+        }
+    }
+}
+
 // ============================================================
 // Phase 8 Memory Optimization tests (section 8.3)
 // ============================================================
