@@ -46,7 +46,15 @@ pub fn decrypt_object(
             )?;
             Ok(PdfObject::String(decrypted))
         }
+        PdfObject::Stream { dict, data } if is_xref_stream(&dict) => {
+            Ok(PdfObject::Stream { dict, data })
+        }
         PdfObject::Stream { dict, data } => {
+            let dict = match decrypt_strings_or_keep(PdfObject::Dict(dict), state, obj_num, gen_num)
+            {
+                PdfObject::Dict(d) => d,
+                _ => unreachable!("a dictionary decrypts to a dictionary"),
+            };
             // Check if stream has its own /Crypt filter
             let method = stream_crypt_method(&dict, state);
             if method == CryptMethod::None {
@@ -88,6 +96,54 @@ pub fn decrypt_object(
         // Other types don't need decryption
         other => Ok(other),
     }
+}
+
+/// Decrypt every string in `obj` with the string method, keeping a string
+/// as written when it does not decrypt.
+fn decrypt_strings_or_keep(
+    obj: PdfObject,
+    state: &SecurityState,
+    obj_num: u32,
+    gen_num: u16,
+) -> PdfObject {
+    match obj {
+        PdfObject::String(data) => {
+            let file_key = state.file_key.as_deref().unwrap_or_default();
+            match decrypt_bytes(
+                file_key,
+                &data,
+                obj_num,
+                gen_num,
+                state.string_method,
+                &state.encrypt_dict,
+            ) {
+                Ok(decrypted) => PdfObject::String(decrypted),
+                Err(_) => PdfObject::String(data),
+            }
+        }
+        PdfObject::Dict(d) => {
+            let mut new_dict = PdfDict::new();
+            for (k, v) in d.iter() {
+                new_dict.insert(
+                    k.clone(),
+                    decrypt_strings_or_keep(v.clone(), state, obj_num, gen_num),
+                );
+            }
+            PdfObject::Dict(new_dict)
+        }
+        PdfObject::Array(arr) => PdfObject::Array(
+            arr.into_iter()
+                .map(|item| decrypt_strings_or_keep(item, state, obj_num, gen_num))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// Whether `dict` is a cross-reference stream dictionary (`/Type /XRef`),
+/// whose data and strings are never encrypted.
+pub(super) fn is_xref_stream(dict: &PdfDict) -> bool {
+    matches!(dict.get(b"Type"), Some(PdfObject::Name(n)) if n == b"XRef")
 }
 
 /// Decrypt raw bytes using the appropriate method.

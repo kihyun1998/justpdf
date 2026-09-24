@@ -1032,6 +1032,44 @@ fn first_page_text(doc: &PdfDocument) -> String {
     text::extract_page_text_string(doc, &pages[0]).unwrap()
 }
 
+/// The dictionary of the catalog's `/Probe` stream in
+/// `stream_dict_string_{tag}.pdf` (qpdf, user `user`, owner `owner`), whose
+/// `/Note` is `(hello-note)`.
+fn probe_stream_dict(tag: &str) -> justpdf_core::PdfDict {
+    let mut doc = PdfDocument::from_bytes(
+        std::fs::read(fixture(&format!("stream_dict_string_{tag}.pdf"))).unwrap(),
+    )
+    .unwrap();
+    doc.authenticate(b"user").unwrap();
+    let catalog = doc.catalog_ref().unwrap().clone();
+    let probe = match doc.resolve(&catalog).unwrap() {
+        PdfObject::Dict(d) => d.get_ref(b"Probe").cloned().unwrap(),
+        other => panic!("{tag}: unexpected catalog {other:?}"),
+    };
+    match doc.resolve(&probe).unwrap() {
+        PdfObject::Stream { dict, data } => {
+            assert_eq!(
+                justpdf_core::stream::decode_stream(&data, &dict).unwrap(),
+                b"stream body",
+                "{tag}"
+            );
+            dict
+        }
+        other => panic!("{tag}: /Probe is not a stream: {other:?}"),
+    }
+}
+
+#[test]
+fn test_stream_dictionary_strings_decrypt_in_third_party_files() {
+    for tag in ["r3", "r4", "r6"] {
+        assert_eq!(
+            probe_stream_dict(tag).get(b"Note"),
+            Some(&PdfObject::String(b"hello-note".to_vec())),
+            "{tag}"
+        );
+    }
+}
+
 /// `aes256_r5_user_owner.pdf`: AES-256 R5 written by qpdf, user password
 /// `userpw`, owner password `ownerpw`, one page reading "R5 secret text".
 fn r5_user_owner_bytes() -> Vec<u8> {

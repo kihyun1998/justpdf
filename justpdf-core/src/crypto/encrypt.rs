@@ -229,6 +229,7 @@ pub fn encrypt_object(
             )?;
             Ok(PdfObject::String(encrypted))
         }
+        PdfObject::Stream { dict, .. } if super::decrypt::is_xref_stream(dict) => Ok(obj.clone()),
         PdfObject::Stream { dict, data } => {
             let encrypted = encrypt_bytes(
                 file_key,
@@ -237,8 +238,13 @@ pub fn encrypt_object(
                 gen_num,
                 state.stream_method,
             )?;
+            let dict =
+                match encrypt_object(&PdfObject::Dict(dict.clone()), state, obj_num, gen_num)? {
+                    PdfObject::Dict(d) => d,
+                    _ => unreachable!("a dictionary encrypts to a dictionary"),
+                };
             Ok(PdfObject::Stream {
-                dict: dict.clone(),
+                dict,
                 data: encrypted,
             })
         }
@@ -557,6 +563,93 @@ mod tests {
         let b = random_file_id().unwrap();
         assert_eq!(a.len(), 16);
         assert_ne!(a, b);
+    }
+
+    fn stream_with_note(dict_type: Option<&[u8]>) -> PdfObject {
+        let mut dict = PdfDict::new();
+        if let Some(t) = dict_type {
+            dict.insert(b"Type".to_vec(), PdfObject::Name(t.to_vec()));
+        }
+        dict.insert(b"Note".to_vec(), PdfObject::String(b"hello-note".to_vec()));
+        dict.insert(
+            b"ID".to_vec(),
+            PdfObject::Array(vec![PdfObject::String(b"id-0".to_vec())]),
+        );
+        PdfObject::Stream {
+            dict,
+            data: b"stream body".to_vec(),
+        }
+    }
+
+    #[test]
+    fn test_stream_dictionary_strings_are_encrypted() {
+        for method in [CryptMethod::V2, CryptMethod::AESV2, CryptMethod::AESV3] {
+            let state = make_state_for_encrypt(method);
+            let original = stream_with_note(None);
+            let encrypted = encrypt_object(&original, &state, 7, 0).unwrap();
+            let PdfObject::Stream { dict, .. } = &encrypted else {
+                panic!("{method:?}: not a stream");
+            };
+            assert_ne!(
+                dict.get(b"Note"),
+                Some(&PdfObject::String(b"hello-note".to_vec())),
+                "{method:?}: stream dictionary string left in plaintext"
+            );
+            let decrypted = super::super::decrypt::decrypt_object(encrypted, &state, 7, 0).unwrap();
+            assert_eq!(decrypted, original, "{method:?}");
+        }
+    }
+
+    #[test]
+    fn test_undecryptable_stream_dictionary_string_is_kept() {
+        for method in [CryptMethod::AESV2, CryptMethod::AESV3] {
+            let state = make_state_for_encrypt(method);
+            let PdfObject::Stream { data, .. } =
+                encrypt_object(&stream_with_note(None), &state, 7, 0).unwrap()
+            else {
+                panic!("{method:?}: not a stream");
+            };
+            // A producer that left a 17-byte string in plaintext.
+            let mut dict = PdfDict::new();
+            dict.insert(
+                b"ModDate".to_vec(),
+                PdfObject::String(b"D:20240101120000Z".to_vec()),
+            );
+            let decrypted = super::super::decrypt::decrypt_object(
+                PdfObject::Stream { dict, data },
+                &state,
+                7,
+                0,
+            )
+            .unwrap();
+            let PdfObject::Stream { dict, data } = decrypted else {
+                panic!("{method:?}: not a stream");
+            };
+            assert_eq!(data, b"stream body", "{method:?}");
+            assert_eq!(
+                dict.get(b"ModDate"),
+                Some(&PdfObject::String(b"D:20240101120000Z".to_vec())),
+                "{method:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_xref_stream_is_left_unencrypted() {
+        for method in [CryptMethod::V2, CryptMethod::AESV2, CryptMethod::AESV3] {
+            let state = make_state_for_encrypt(method);
+            let xref = stream_with_note(Some(b"XRef"));
+            assert_eq!(
+                encrypt_object(&xref, &state, 7, 0).unwrap(),
+                xref,
+                "{method:?}"
+            );
+            assert_eq!(
+                super::super::decrypt::decrypt_object(xref.clone(), &state, 7, 0).unwrap(),
+                xref,
+                "{method:?}"
+            );
+        }
     }
 
     #[test]
