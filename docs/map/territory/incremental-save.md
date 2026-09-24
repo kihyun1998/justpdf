@@ -10,7 +10,7 @@
 - 덧붙이는 객체는 `serialize_object`로 쓴다(#26 전에는 Display라 스트림이 디버그 형식으로 깨졌다 — #25의 직렬화 부분).
 - `from_document`가 모든 객체를 복사하므로 변경분이 아니라 **모든 객체**를 다시 덧붙인다.
 - 새 trailer는 `incremental_trailer`로 만든다 — 원본 trailer의 키를 옮긴다([증분 trailer](../invariant/incremental-trailer.md)).
-- 원본이 암호화되어 있으면 `DocumentModifier`가 가진 `SecurityState`의 파일 키로 덧붙이는 객체를 `encrypt_object`한다(`/Encrypt` 객체는 건너뜀). 인증되지 않은 문서에서 만든 modifier면 에러다.
+- 원본이 암호화되어 있으면 `DocumentModifier`가 가진 `SecurityState`의 파일 키로 덧붙이는 객체를 `encrypt_object`한다(`/Encrypt` 객체는 건너뜀). 인증되지 않은 암호화 문서로는 modifier를 만들 수 없다([문서 수정기](document-modifier.md)의 `from_document`가 거부한다). `incremental_save` 자신의 같은 검사는 그래서 지금은 도달하지 않는다.
   - **메인테이너 판단(2026-09-23, #26)**: 증분 저장은 암호화 입력을 지원하고 서명은 거부한다. 대안이었던 "둘 다 거부"와 "둘 다 지원(서명에 비밀번호 인자 추가)"이 함께 제시되었다. #25는 직렬화만 포함하고 "모든 객체를 다시 덧붙임"은 #25에 남긴다(메인테이너 판단).
 - `DocumentModifier`는 세대 번호를 버린다 — 덧붙이는 객체는 모두 `N 0 obj`이고, 암호화 키도 세대 0으로 유도한다. 원본에 세대가 0이 아닌 객체가 있으면 참조(`N g R`)와 어긋난다(추론).
 

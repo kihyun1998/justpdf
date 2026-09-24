@@ -326,7 +326,7 @@ impl PdfDocument {
     }
 
     /// Extract the first element of the /ID array from the trailer.
-    fn extract_file_id(&self) -> Vec<u8> {
+    pub(crate) fn extract_file_id(&self) -> Vec<u8> {
         if let Some(PdfObject::Array(arr)) = self.xref.trailer.get(b"ID") {
             if let Some(PdfObject::String(id)) = arr.first() {
                 return id.clone();

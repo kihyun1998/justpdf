@@ -587,40 +587,9 @@ fn cmd_encrypt(
         encrypt_metadata: true,
     };
 
-    // Rebuild the document with encryption using DocumentBuilder approach:
-    // Load all objects into a modifier, then serialize with encryption.
     let mut modifier = justpdf_core::writer::DocumentModifier::from_document(&doc)?;
-
-    // We need to use the DocumentBuilder encryption path.
-    // Since DocumentModifier doesn't directly support encryption,
-    // we rebuild via DocumentBuilder-like serialization.
-    let file_id = match doc.trailer().get(b"ID") {
-        Some(justpdf_core::PdfObject::Array(ids)) => match ids.first() {
-            Some(justpdf_core::PdfObject::String(first)) if !first.is_empty() => first.clone(),
-            _ => justpdf_core::crypto::random_file_id()?,
-        },
-        _ => justpdf_core::crypto::random_file_id()?,
-    };
-    let (state, encrypt_dict, id_array) = config.build(&file_id)?;
-
-    let encrypt_ref = modifier.add_object(justpdf_core::PdfObject::Dict(encrypt_dict));
-
-    let mut state = state;
-    state.encrypt_obj_num = Some(encrypt_ref.obj_num);
-
-    let catalog_ref = modifier.catalog_ref().clone();
-
-    // Access internal writer for serialization
-    let writer = modifier.writer();
-    let result = justpdf_core::writer::serialize_pdf_encrypted(
-        &writer.objects,
-        writer.version,
-        &catalog_ref,
-        None,
-        &encrypt_ref,
-        &state,
-        &id_array,
-    )?;
+    modifier.set_encryption(config);
+    let result = modifier.build()?;
 
     std::fs::write(output, result)?;
     eprintln!("Encrypted -> {}", output.display());
