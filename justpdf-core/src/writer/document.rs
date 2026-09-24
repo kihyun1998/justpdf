@@ -338,22 +338,13 @@ impl DocumentBuilder {
         // Handle encryption
         if let Some(config) = self.encryption {
             let file_id = crate::crypto::random_file_id()?;
-            let (state, encrypt_dict, id_array) = config.build(&file_id)?;
-
-            let encrypt_ref = self.writer.add_object(PdfObject::Dict(encrypt_dict));
-
-            // Update the state with the encrypt obj num so it won't be encrypted
-            let mut state = state;
-            state.encrypt_obj_num = Some(encrypt_ref.obj_num);
-
-            crate::writer::serialize_pdf_encrypted(
-                &self.writer.objects,
-                self.writer.version,
+            crate::writer::serialize::serialize_writer_encrypted(
+                &mut self.writer,
                 &catalog_ref,
                 info_ref.as_ref(),
-                &encrypt_ref,
-                &state,
-                &id_array,
+                &config,
+                &file_id,
+                &file_id,
             )
         } else {
             serialize_pdf(

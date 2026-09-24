@@ -41,7 +41,7 @@ impl EncryptionConfig {
     /// suitable for encrypting objects during serialization.
     ///
     /// Also returns the encryption PdfDict to be added as an indirect object,
-    /// and the /ID array to be added to the trailer.
+    /// and the `/ID` array of a newly written file: `file_id` in both elements.
     pub fn build(
         &self,
         file_id: &[u8],

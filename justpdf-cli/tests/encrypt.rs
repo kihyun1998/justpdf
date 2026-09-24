@@ -38,8 +38,29 @@ fn source_with_id(first: &[u8], second: &[u8], tag: &str) -> PathBuf {
     path
 }
 
-/// Run `justpdf encrypt` on `input` and return the output's trailer `/ID`.
+/// `/Info /Title` of `doc`, if any.
+fn info_title(doc: &PdfDocument) -> Option<Vec<u8>> {
+    let info = match doc.trailer().get(b"Info") {
+        Some(PdfObject::Reference(r)) => r.clone(),
+        _ => return None,
+    };
+    match doc.resolve(&info).ok()? {
+        PdfObject::Dict(d) => match d.get(b"Title") {
+            Some(PdfObject::String(s)) => Some(s.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Run `justpdf encrypt` on `input`; assert the output keeps the input's
+/// `/Info /Title`, and return the output's trailer `/ID`.
 fn encrypt_and_read_id(input: &Path, tag: &str) -> Vec<Vec<u8>> {
+    let source_title = info_title(&PdfDocument::open(input).unwrap());
+    assert!(
+        source_title.is_some(),
+        "{tag}: fixture must carry /Info /Title"
+    );
     let out = std::env::temp_dir().join(format!("justpdf_cli_encrypt_{tag}.pdf"));
     let _ = std::fs::remove_file(&out);
     let status = bin()
@@ -53,6 +74,7 @@ fn encrypt_and_read_id(input: &Path, tag: &str) -> Vec<Vec<u8>> {
 
     let mut doc = PdfDocument::open(&out).unwrap();
     doc.authenticate(b"user").unwrap();
+    assert_eq!(info_title(&doc), source_title, "{tag}: /Info /Title lost");
     match doc.trailer().get(b"ID") {
         Some(PdfObject::Array(arr)) => arr
             .iter()
@@ -76,6 +98,9 @@ fn encrypt_keeps_the_source_permanent_id() {
 
     let id = encrypt_and_read_id(&input, "kept");
     assert_eq!(id[0], SOURCE_ID);
+    assert_eq!(id[1].len(), 16);
+    assert_ne!(id[1], SOURCE_ID, "changing identifier not updated");
+    assert_ne!(id[1], SOURCE_CHANGING_ID, "changing identifier not updated");
 }
 
 #[test]
@@ -92,6 +117,7 @@ fn encrypt_without_source_id_gets_a_fresh_one() {
     let a = encrypt_and_read_id(&input, "fresh_a");
     let b = encrypt_and_read_id(&input, "fresh_b");
     assert_eq!(a[0].len(), 16);
+    assert_eq!(a[0], a[1], "a file without /ID is written as new");
     assert_ne!(a[0], b[0], "two encryptions share one /ID");
 }
 
@@ -109,5 +135,6 @@ fn encrypt_with_empty_source_id_gets_a_fresh_one() {
     let a = encrypt_and_read_id(&input, "empty_a");
     let b = encrypt_and_read_id(&input, "empty_b");
     assert_eq!(a[0].len(), 16);
+    assert_eq!(a[0], a[1], "an empty /ID is treated as absent");
     assert_ne!(a[0], b[0], "two encryptions share one /ID");
 }

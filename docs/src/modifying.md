@@ -40,4 +40,20 @@ for i in 0..doc.page_count() {
 
 ## Encryption
 
-The high-level `Modifier` has no encryption method. Use the CLI (`justpdf encrypt` / `justpdf decrypt`), or `DocumentBuilder::set_encryption` when creating a new document.
+The high-level `Modifier` has no encryption method of its own; set it on the core modifier through `inner_mut()`, and `build()`/`save()` then write the document encrypted. The document information dictionary is kept, and the first `/ID` element of the original stays as the file's permanent identifier.
+
+```rust
+use justpdf::core::crypto::{EncryptionConfig, EncryptionMethod, Permissions};
+
+let mut m = doc.modify()?;
+m.inner_mut().set_encryption(EncryptionConfig {
+    user_password: b"user".to_vec(),
+    owner_password: b"owner".to_vec(),
+    permissions: Permissions::allow_all(),
+    method: EncryptionMethod::AES256,
+    encrypt_metadata: true,
+});
+m.save("encrypted.pdf")?;
+```
+
+The CLI does the same with `justpdf encrypt` (always AES-128); `justpdf decrypt` writes the plaintext copy. For a new document, use `DocumentBuilder::set_encryption`.

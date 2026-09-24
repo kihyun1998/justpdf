@@ -57,4 +57,4 @@ builder.set_encryption(EncryptionConfig {
 let encrypted = builder.build()?;
 ```
 
-To encrypt an existing file, use the CLI: `justpdf encrypt`.
+To encrypt an existing file, see [Modifying PDFs](./modifying.md#encryption) or use the CLI: `justpdf encrypt`.

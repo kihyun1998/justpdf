@@ -20,6 +20,10 @@ pub struct DocumentModifier {
     info_ref: Option<IndirectRef>,
     /// Security state of the source document, when it is encrypted.
     security: Option<crate::crypto::SecurityState>,
+    /// First element of the source trailer's `/ID`, empty when absent.
+    source_file_id: Vec<u8>,
+    /// Encryption applied by `build`, when set.
+    encryption: Option<crate::crypto::EncryptionConfig>,
 }
 
 impl DocumentModifier {
@@ -60,6 +64,8 @@ impl DocumentModifier {
             catalog_ref,
             info_ref,
             security: doc.security_state().cloned(),
+            source_file_id: doc.extract_file_id(),
+            encryption: None,
         })
     }
 
@@ -223,22 +229,56 @@ impl DocumentModifier {
         self.writer.objects.retain(|(num, _)| reachable.contains(num));
     }
 
-    /// Serialize to PDF bytes.
-    pub fn build(self) -> Result<Vec<u8>> {
-        serialize_pdf(
-            &self.writer.objects,
-            self.writer.version,
+    /// Encrypt the document written by `build` with `config`.
+    ///
+    /// The trailer `/ID` keeps the source's first element as the permanent
+    /// identifier and gets a new random changing identifier; a source without
+    /// a usable `/ID` gets a new random identifier in both elements.
+    pub fn set_encryption(&mut self, config: crate::crypto::EncryptionConfig) {
+        self.encryption = Some(config);
+    }
+
+    /// Serialize to PDF bytes, encrypted when `set_encryption` was called.
+    pub fn build(mut self) -> Result<Vec<u8>> {
+        let Some(config) = self.encryption.take() else {
+            return serialize_pdf(
+                &self.writer.objects,
+                self.writer.version,
+                &self.catalog_ref,
+                self.info_ref.as_ref(),
+            );
+        };
+        let (permanent_id, changing_id) = if self.source_file_id.is_empty() {
+            let id = crate::crypto::random_file_id()?;
+            (id.clone(), id)
+        } else {
+            (
+                std::mem::take(&mut self.source_file_id),
+                crate::crypto::random_file_id()?,
+            )
+        };
+        crate::writer::serialize::serialize_writer_encrypted(
+            &mut self.writer,
             &self.catalog_ref,
             self.info_ref.as_ref(),
+            &config,
+            &permanent_id,
+            &changing_id,
         )
     }
 
     /// Serialize to PDF bytes using xref streams (PDF 1.5+).
     /// `compressed` contains info about objects packed into object streams.
+    /// Returns an error when `set_encryption` was called.
     pub fn build_with_xref_stream(
         self,
         compressed: &[crate::writer::object_stream::CompressedObjInfo],
     ) -> Result<Vec<u8>> {
+        if self.encryption.is_some() {
+            return Err(crate::error::JustPdfError::UnsupportedEncryption {
+                detail: "encryption is not supported when writing xref streams".into(),
+            });
+        }
         crate::writer::serialize::serialize_pdf_with_xref_stream(
             &self.writer.objects,
             compressed,
@@ -321,6 +361,12 @@ fn collect_references_inner(obj: &PdfObject, refs: &mut Vec<u32>) {
 /// file key, so the modifier must come from an authenticated document.
 pub fn incremental_save(original_data: &[u8], modifier: DocumentModifier) -> Result<Vec<u8>> {
     use std::io::Write;
+
+    if modifier.encryption.is_some() {
+        return Err(crate::error::JustPdfError::UnsupportedEncryption {
+            detail: "set_encryption applies to a full rewrite, not an incremental save".into(),
+        });
+    }
 
     let old_startxref = crate::xref::find_startxref(original_data)?;
     let previous_trailer = crate::xref::load_xref(original_data)?.trailer;
@@ -957,5 +1003,263 @@ mod tests {
         // Both pages should be independently valid (each has its own Resources)
         // Verify the merged PDF is parseable
         assert!(reparsed.catalog_ref().is_some());
+    }
+
+    /// A plain one-page PDF reading "Secret page" with `/Title (Plain title)`,
+    /// and `/ID [<first> <second>]` in its trailer when `id` is given.
+    fn create_plain_pdf(id: Option<(&[u8], &[u8])>) -> Vec<u8> {
+        let mut doc = DocumentBuilder::new();
+        let font = doc.add_standard_font("Helvetica");
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.add_font(&font, "Helvetica");
+        page.begin_text();
+        page.set_font(&font, 12.0);
+        page.move_to(72.0, 720.0);
+        page.show_text("Secret page");
+        page.end_text();
+        doc.add_page(page);
+        doc.set_title("Plain title");
+        let bytes = doc.build().unwrap();
+        let Some((first, second)) = id else {
+            return bytes;
+        };
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02X}")).collect::<String>();
+        let at = bytes
+            .windows(10)
+            .rposition(|w| w == b"trailer\n<<")
+            .unwrap()
+            + 10;
+        let mut out = bytes[..at].to_vec();
+        out.extend_from_slice(format!(" /ID [<{}> <{}>]", hex(first), hex(second)).as_bytes());
+        out.extend_from_slice(&bytes[at..]);
+        out
+    }
+
+    fn encryption_config(
+        method: crate::crypto::EncryptionMethod,
+    ) -> crate::crypto::EncryptionConfig {
+        crate::crypto::EncryptionConfig {
+            user_password: b"user".to_vec(),
+            owner_password: b"owner".to_vec(),
+            permissions: crate::crypto::Permissions::allow_all(),
+            method,
+            encrypt_metadata: true,
+        }
+    }
+
+    /// Encrypt `source` through `DocumentModifier::set_encryption` + `build`.
+    fn encrypt_with_modifier(source: Vec<u8>, method: crate::crypto::EncryptionMethod) -> Vec<u8> {
+        let doc = PdfDocument::from_bytes(source).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_encryption(encryption_config(method));
+        modifier.build().unwrap()
+    }
+
+    fn trailer_id(doc: &PdfDocument) -> Vec<Vec<u8>> {
+        match doc.trailer().get(b"ID") {
+            Some(PdfObject::Array(arr)) => arr
+                .iter()
+                .map(|o| match o {
+                    PdfObject::String(s) => s.clone(),
+                    other => panic!("/ID element is not a string: {other:?}"),
+                })
+                .collect(),
+            other => panic!("trailer /ID missing: {other:?}"),
+        }
+    }
+
+    fn info_title(doc: &PdfDocument) -> Option<PdfObject> {
+        let info = match doc.trailer().get(b"Info") {
+            Some(PdfObject::Reference(r)) => r.clone(),
+            other => panic!("unexpected /Info {other:?}"),
+        };
+        match doc.resolve(&info).unwrap() {
+            PdfObject::Dict(d) => d.get(b"Title").cloned(),
+            other => panic!("unexpected Info {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_build_with_encryption_roundtrip() {
+        use crate::crypto::EncryptionMethod;
+        for method in [
+            EncryptionMethod::RC4_128,
+            EncryptionMethod::AES128,
+            EncryptionMethod::AES256,
+        ] {
+            let bytes = encrypt_with_modifier(create_plain_pdf(None), method);
+            assert!(
+                !bytes.windows(11).any(|w| w == b"Plain title"),
+                "{method:?}: /Info written in plaintext"
+            );
+
+            let mut doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
+            assert!(doc.is_encrypted(), "{method:?}");
+            assert!(!doc.is_authenticated(), "{method:?}");
+            assert!(doc.authenticate(b"wrong").is_err(), "{method:?}");
+            for password in [&b"user"[..], b"owner"] {
+                let mut doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
+                doc.authenticate(password).unwrap();
+                assert_all_objects_resolve(&doc);
+                assert_eq!(first_page_text(&doc).trim(), "Secret page", "{method:?}");
+                assert_eq!(
+                    info_title(&doc),
+                    Some(PdfObject::String(b"Plain title".to_vec())),
+                    "{method:?}"
+                );
+            }
+
+            doc.authenticate(b"user").unwrap();
+            let id = trailer_id(&doc);
+            assert_eq!(id.len(), 2, "{method:?}");
+            assert_eq!(id[0].len(), 16, "{method:?}");
+            assert_eq!(
+                id[0], id[1],
+                "{method:?}: a file without /ID is written as new"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_with_encryption_keeps_permanent_id_and_changes_the_other() {
+        use crate::crypto::EncryptionMethod;
+        let permanent = *b"permanent-id-001";
+        let changing = *b"changing-id-0002";
+        for method in [
+            EncryptionMethod::RC4_128,
+            EncryptionMethod::AES128,
+            EncryptionMethod::AES256,
+        ] {
+            let bytes =
+                encrypt_with_modifier(create_plain_pdf(Some((&permanent, &changing))), method);
+            let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+            doc.authenticate(b"user").unwrap();
+            assert_eq!(first_page_text(&doc).trim(), "Secret page", "{method:?}");
+
+            let id = trailer_id(&doc);
+            assert_eq!(id[0], permanent, "{method:?}");
+            assert_eq!(id[1].len(), 16, "{method:?}");
+            assert_ne!(
+                id[1], permanent,
+                "{method:?}: changing identifier not updated"
+            );
+            assert_ne!(
+                id[1], changing,
+                "{method:?}: changing identifier not updated"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_with_encryption_treats_empty_id_as_absent() {
+        let bytes = encrypt_with_modifier(
+            create_plain_pdf(Some((b"", b""))),
+            crate::crypto::EncryptionMethod::AES128,
+        );
+        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        doc.authenticate(b"user").unwrap();
+        let id = trailer_id(&doc);
+        assert_eq!(id[0].len(), 16);
+        assert_eq!(id[0], id[1]);
+    }
+
+    #[test]
+    fn test_build_without_encryption_decrypts_an_authenticated_source() {
+        let original = create_encrypted_pdf(crate::crypto::EncryptionMethod::AES128);
+        let mut doc = PdfDocument::from_bytes(original).unwrap();
+        doc.authenticate(b"user").unwrap();
+        let bytes = DocumentModifier::from_document(&doc)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let reopened = PdfDocument::from_bytes(bytes).unwrap();
+        assert!(!reopened.is_encrypted());
+        assert!(reopened.trailer().get(b"Encrypt").is_none());
+        assert_eq!(first_page_text(&reopened).trim(), "Secret page");
+    }
+
+    #[test]
+    fn test_build_with_xref_stream_refuses_encryption() {
+        let doc = PdfDocument::from_bytes(create_plain_pdf(None)).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_encryption(encryption_config(crate::crypto::EncryptionMethod::AES128));
+        assert!(matches!(
+            modifier.build_with_xref_stream(&[]),
+            Err(crate::error::JustPdfError::UnsupportedEncryption { .. })
+        ));
+    }
+
+    #[test]
+    fn test_incremental_save_refuses_encryption() {
+        let original = create_plain_pdf(None);
+        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_encryption(encryption_config(crate::crypto::EncryptionMethod::AES128));
+        assert!(matches!(
+            incremental_save(&original, modifier),
+            Err(crate::error::JustPdfError::UnsupportedEncryption { .. })
+        ));
+    }
+
+    #[test]
+    fn test_build_with_encryption_reencrypts_an_authenticated_source() {
+        use crate::crypto::EncryptionMethod;
+        let original = create_encrypted_pdf(EncryptionMethod::AES128);
+        let mut source = PdfDocument::from_bytes(original).unwrap();
+        source.authenticate(b"user").unwrap();
+        let source_id = trailer_id(&source);
+
+        let mut modifier = DocumentModifier::from_document(&source).unwrap();
+        modifier.set_encryption(crate::crypto::EncryptionConfig {
+            user_password: b"new-user".to_vec(),
+            owner_password: b"new-owner".to_vec(),
+            permissions: crate::crypto::Permissions::allow_all(),
+            method: EncryptionMethod::AES256,
+            encrypt_metadata: true,
+        });
+        let bytes = modifier.build().unwrap();
+
+        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        assert!(
+            doc.authenticate(b"user").is_err(),
+            "old password still opens it"
+        );
+        doc.authenticate(b"new-user").unwrap();
+        assert_eq!(first_page_text(&doc).trim(), "Secret page");
+        let id = trailer_id(&doc);
+        assert_eq!(id[0], source_id[0]);
+        assert_ne!(id[1], source_id[1]);
+    }
+
+    #[test]
+    fn test_build_with_encryption_encrypts_an_object_set_at_a_new_number() {
+        let doc = PdfDocument::from_bytes(create_plain_pdf(None)).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let next = modifier
+            .writer()
+            .objects
+            .iter()
+            .map(|(n, _)| *n)
+            .max()
+            .unwrap()
+            + 1;
+        modifier.set_object(next, PdfObject::String(b"TOPSECRET".to_vec()));
+        modifier.set_encryption(encryption_config(crate::crypto::EncryptionMethod::AES128));
+        let bytes = modifier.build().unwrap();
+        assert!(
+            !bytes.windows(9).any(|w| w == b"TOPSECRET"),
+            "object written in plaintext"
+        );
+
+        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        doc.authenticate(b"user").unwrap();
+        let secret = doc
+            .resolve(&IndirectRef {
+                obj_num: next,
+                gen_num: 0,
+            })
+            .unwrap();
+        assert_eq!(secret, PdfObject::String(b"TOPSECRET".to_vec()));
     }
 }

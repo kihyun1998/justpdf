@@ -64,12 +64,14 @@ impl PdfWriter {
     }
 
     /// Set (or replace) an object at a specific object number.
-    /// If an object with this number already exists, it is replaced.
+    /// If an object with this number already exists, it is replaced;
+    /// otherwise later `add_object`/`alloc_object_num` numbers start above it.
     pub fn set_object(&mut self, obj_num: u32, obj: PdfObject) {
         if let Some(entry) = self.objects.iter_mut().find(|(n, _)| *n == obj_num) {
             entry.1 = obj;
         } else {
             self.objects.push((obj_num, obj));
+            self.next_obj_num = self.next_obj_num.max(obj_num.saturating_add(1));
         }
     }
 
@@ -124,6 +126,16 @@ mod tests {
 
         let ref1 = writer.add_object(PdfObject::Null);
         assert_eq!(ref1.obj_num, 2);
+    }
+
+    #[test]
+    fn test_set_object_at_a_new_number_is_not_reused() {
+        let mut writer = PdfWriter::new();
+        writer.set_object(5, PdfObject::Integer(5));
+        let r = writer.add_object(PdfObject::Integer(6));
+        assert_eq!(r.obj_num, 6);
+        writer.set_object(3, PdfObject::Integer(3));
+        assert_eq!(writer.add_object(PdfObject::Null).obj_num, 7);
     }
 
     #[test]
