@@ -9,7 +9,7 @@
 ## Design model
 코드에서 읽어낸 규칙이다.
 - **최신 구간이 이긴다**: 이전 구간의 엔트리는 이미 있는 번호를 덮어쓰지 않는다(`or_insert`).
-- **trailer는 최신 것 하나만 남는다.** 이전 구간 trailer의 키는 병합되지 않는다. 증분 쓰기가 `/Encrypt`·`/ID`를 새 trailer에 다시 적지 않으면 읽기 쪽에서 사라진다 — [증분 trailer](../invariant/incremental-trailer.md).
+- **trailer는 최신 것 하나만 남는다.** 이전 구간 trailer의 키는 병합되지 않는다 — pdf.js·MuPDF와 같고, 병합하지 않는 것은 #26의 메인테이너 판단이다. 그래서 증분 쓰기가 키를 옮겨 적는다 — [증분 trailer](../invariant/incremental-trailer.md).
 - `/Prev` 순환은 `visited`로 끊는다. `startxref`는 파일 끝 1024바이트에서만 찾는다.
 - xref 스트림: `/W[0] == 0`이면 타입 1, 모르는 타입은 건너뜀. 쓰기 쪽 `write_xref_stream`이 내는 레이아웃(`/W [1 w2 w3]`, `/Index` 없음)을 이 코드가 읽는다.
 - EOF 너머 오프셋은 하드 에러이고, 자동으로 [repair](repair.md)로 떨어지지 않는다.
@@ -33,5 +33,4 @@
 
 ## Known holes / open
 - hybrid 파일(`/XRefStm`)을 처리하지 않는다: `rg XRefStm justpdf-core/src` 결과가 비어 있다.
-- 이전 trailer 키를 병합하지 않는다(위 Design model).
-- Tracked: #26 (증분 trailer 키 소실), #53 (/XRefStm)
+- Tracked: #53 (/XRefStm)
