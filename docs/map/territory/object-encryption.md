@@ -13,11 +13,12 @@
 - **`getrandom`을 고른 이유**: 0.2가 이미 core의 일반 의존성 그래프에 있었다(`rsa`/`pkcs8`/`signature` → `rand_core` → `getrandom`). 직접 의존으로 올려도 새 크레이트가 없고, wasm32-unknown-unknown 빌드가 `js` 기능을 요구하는 조건도 이전과 같다(compress-wasm이 이미 켠다). `getrandom`의 메이저를 올리면 이 조건이 바뀐다.
 - **파일 ID**: [문서 빌더](document-builder.md)의 `build`는 `random_file_id`로 16바이트를 만들고 `/ID`의 두 원소를 같은 값으로 쓴다(새로 쓰는 파일). 기존 문서를 암호화해 다시 쓰는 [문서 수정기](document-modifier.md)의 `build`(`set_encryption` 후 — [CLI](cli.md) `encrypt`가 이 경로다)는 원본 trailer `/ID` 첫 원소를 영구 식별자로 유지하고 둘째 원소를 새 `random_file_id`로 쓴다. 원본에 `/ID`가 없거나 첫 원소가 빈 문자열·문자열 아닌 값이면 새로 쓰는 파일로 보고 `random_file_id` 하나를 두 원소에 쓴다(빈 ID는 키 유도에 아무것도 보태지 않는다). 파일 키는 영구 식별자로 유도한다. 원본 첫 원소는 읽기 쪽과 같은 `extract_file_id`(parser, `pub(crate)`)로 읽는다 — 첫 원소는 문서의 영구 식별자이기 때문이다(MuPDF도 원본 첫 원소를 유지하고 그것으로 키를 유도한다). 그래서 같은 원본·비밀번호·권한으로 R3/R4 재암호화를 두 번 하면 파일 키가 같다. 이 선택은 유지보수자의 판단이다(2026-09-24, #31): MuPDF·ISO의 영구 식별자 규정과 이 같은-키 결과를 보고 "항상 새 무작위" 대신 골랐다. 둘째 원소 규칙은 이 판단이 다루지 않았고, ISO 32000-1 §14.4와 MuPDF `change_identity`에서 끌어냈다(#75).
 - `generate_file_id(title, timestamp)`는 공개 API로 남아 있지만 core·CLI 어디서도 부르지 않는다. 같은 입력이면 같은 ID를 낸다.
-- 세대 번호는 항상 0. 스트림 사전 안 문자열은 암호화하지 않는다.
+- 세대 번호는 항상 0.
+- 스트림 사전 안의 문자열도 문자열 방식(`string_method`)으로 암호화한다. `/Type /XRef` 스트림은 데이터·사전 모두 암호화하지 않는다([객체 복호화](object-decryption.md)와 같은 규칙, ISO 32000-1 §7.6.1·§7.5.8.2 원문 대조).
 - 암호문 문자열은 고바이트를 포함하므로 [객체 직렬화](object-serialization.md)의 hex 경로를 탄다 — #20의 원인이 여기서 드러났다.
 
 ## Code
-- `justpdf-core/src/crypto/encrypt.rs` — `EncryptionConfig`, `build_r3`, `build_r4`, `build_r6`, `encrypt_object`, `encrypt_bytes`, `fill_random`, `generate_iv`, `generate_random_key`, `generate_random_salt`, `random_file_id`, `generate_file_id`, `make_id_array`, `test_r6_perms_tail_is_random`, `test_r6_file_keys_and_salts_differ_across_builds`, `test_aes_ivs_are_distinct`
+- `justpdf-core/src/crypto/encrypt.rs` — `EncryptionConfig`, `build_r3`, `build_r4`, `build_r6`, `encrypt_object`, `encrypt_bytes`, `fill_random`, `generate_iv`, `generate_random_key`, `generate_random_salt`, `random_file_id`, `generate_file_id`, `make_id_array`, `test_r6_perms_tail_is_random`, `test_r6_file_keys_and_salts_differ_across_builds`, `test_aes_ivs_are_distinct`, `test_stream_dictionary_strings_are_encrypted`, `test_undecryptable_stream_dictionary_string_is_kept`, `test_xref_stream_is_left_unencrypted`
 - `justpdf-core/src/crypto/aes_cipher.rs` — `encrypt_aes_cbc`
 - `justpdf-core/tests/integration.rs` — `test_encrypt_roundtrip_across_password_combinations`, `test_encrypted_builds_get_distinct_file_ids`
 - `justpdf-cli/tests/encrypt.rs` — `encrypt_keeps_the_source_permanent_id`, `encrypt_without_source_id_gets_a_fresh_one`, `encrypt_with_empty_source_id_gets_a_fresh_one`
