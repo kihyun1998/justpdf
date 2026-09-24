@@ -10,7 +10,7 @@
 ## Design model
 - 표면: `compress`(프리셋), `compress_custom`(품질·DPI, 나머지 고정), `compress_advanced`(일부 노브), `analyze`. 결과 getter가 `CompressStats`·`AnalyzeResult` 필드를 1:1로 노출한다.
 - `compress_advanced`의 `jpeg_quality: i32`는 `as u8`로 잘린다.
-- `getrandom`의 `js` 기능은 코드가 쓰지 않는다. `rsa` → `rand_core`의 전이 의존이 wasm32에서 빌드되게 하려는 것이다(설계 문서 I-3).
+- `getrandom`의 `js` 기능은 compress-wasm 코드가 쓰지 않는다. core가 `getrandom`에 의존하므로(직접: 암호화 난수 — [객체 암호화](object-encryption.md); 전이: `rsa` → `rand_core`) wasm32에서 빌드되게 하려는 것이다(설계 문서 I-3).
 - `pkg/`(빌드 산출물)는 git에 추적되지 않는다.
 
 ## Code

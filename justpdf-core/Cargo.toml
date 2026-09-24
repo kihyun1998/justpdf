@@ -31,6 +31,7 @@ aes = "0.8"
 cbc = "0.1"
 md-5 = "0.10"
 sha2 = "0.10"
+getrandom = "0.2"
 
 # Digital signatures (Phase 6.3)
 cms = "0.2"

@@ -2,7 +2,7 @@
 //!
 //! Encrypts strings and stream data before serialization.
 
-use crate::error::Result;
+use crate::error::{JustPdfError, Result};
 use crate::object::{PdfDict, PdfObject};
 
 use super::aes_cipher;
@@ -139,13 +139,15 @@ impl EncryptionConfig {
 
     fn build_r6(&self, file_id: &[u8]) -> Result<(SecurityState, PdfDict, Vec<PdfObject>)> {
         // Generate a random 32-byte file encryption key
-        let file_key = generate_random_key();
+        let file_key = generate_random_key()?;
 
         // Generate random salts
-        let uvs = generate_random_salt();
-        let uks = generate_random_salt();
-        let ovs = generate_random_salt();
-        let oks = generate_random_salt();
+        let uvs = generate_random_salt()?;
+        let uks = generate_random_salt()?;
+        let ovs = generate_random_salt()?;
+        let oks = generate_random_salt()?;
+        let mut perms_random = [0u8; 4];
+        fill_random(&mut perms_random)?;
 
         let (o, u, oe, ue, perms) = key::generate_values_r6(
             &self.user_password,
@@ -157,6 +159,7 @@ impl EncryptionConfig {
             &uks,
             &ovs,
             &oks,
+            &perms_random,
         );
 
         let ed = EncryptionDict {
@@ -278,11 +281,11 @@ fn encrypt_bytes(
         }
         CryptMethod::AESV2 => {
             let obj_key = key::compute_object_key(file_key, obj_num, gen_num, true);
-            let iv = generate_iv();
+            let iv = generate_iv()?;
             aes_cipher::encrypt_aes_cbc(&obj_key, data, &iv)
         }
         CryptMethod::AESV3 => {
-            let iv = generate_iv();
+            let iv = generate_iv()?;
             aes_cipher::encrypt_aes_cbc(file_key, data, &iv)
         }
     }
@@ -296,63 +299,39 @@ fn make_id_array(file_id: &[u8]) -> Vec<PdfObject> {
     ]
 }
 
+/// Fill `buf` from the operating system's random source.
+fn fill_random(buf: &mut [u8]) -> Result<()> {
+    getrandom::getrandom(buf).map_err(|e| JustPdfError::EncryptionError {
+        detail: format!("OS random source unavailable: {e}"),
+    })
+}
+
 /// Generate a random 16-byte IV.
-fn generate_iv() -> [u8; 16] {
+fn generate_iv() -> Result<[u8; 16]> {
     let mut iv = [0u8; 16];
-    // Use a simple deterministic approach for now — in production, use OsRng
-    // For each encryption we use the current time hash as entropy source
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let hash = {
-        use md5::Digest;
-        let mut h = md5::Md5::new();
-        h.update(seed.to_le_bytes());
-        h.update(b"justpdf-iv");
-        h.finalize()
-    };
-    iv.copy_from_slice(&hash);
-    iv
+    fill_random(&mut iv)?;
+    Ok(iv)
 }
 
 /// Generate a random 32-byte file key for AES-256.
-fn generate_random_key() -> [u8; 32] {
+fn generate_random_key() -> Result<[u8; 32]> {
     let mut key = [0u8; 32];
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let hash1 = {
-        use sha2::Digest;
-        let mut h = sha2::Sha256::new();
-        h.update(seed.to_le_bytes());
-        h.update(b"justpdf-key-1");
-        h.finalize()
-    };
-    key.copy_from_slice(&hash1);
-    key
+    fill_random(&mut key)?;
+    Ok(key)
 }
 
 /// Generate a random 8-byte salt.
-fn generate_random_salt() -> [u8; 8] {
+fn generate_random_salt() -> Result<[u8; 8]> {
     let mut salt = [0u8; 8];
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .wrapping_add(count as u128);
-    let hash = {
-        use md5::Digest;
-        let mut h = md5::Md5::new();
-        h.update(seed.to_le_bytes());
-        h.update(b"justpdf-salt");
-        h.finalize()
-    };
-    salt.copy_from_slice(&hash[..8]);
-    salt
+    fill_random(&mut salt)?;
+    Ok(salt)
+}
+
+/// Generate a random 16-byte file identifier for a newly written file.
+pub fn random_file_id() -> Result<Vec<u8>> {
+    let mut id = vec![0u8; 16];
+    fill_random(&mut id)?;
+    Ok(id)
 }
 
 /// Generate a file ID based on document content.
@@ -489,6 +468,95 @@ mod tests {
         assert_eq!(pdf_dict.get_i64(b"R"), Some(6));
         assert_eq!(state.string_method, CryptMethod::AESV3);
         assert_eq!(state.file_key.as_ref().unwrap().len(), 32);
+    }
+
+    /// Decrypted `/Perms` block of an R6 config build.
+    fn r6_perms_plaintext() -> [u8; 16] {
+        let config = EncryptionConfig {
+            user_password: b"user256".to_vec(),
+            owner_password: b"owner256".to_vec(),
+            permissions: Permissions::allow_all(),
+            method: EncryptionMethod::AES256,
+            encrypt_metadata: true,
+        };
+        let (state, pdf_dict, _) = config.build(b"id256").unwrap();
+        let key: [u8; 32] = state.file_key.unwrap().try_into().unwrap();
+        let perms: [u8; 16] = match pdf_dict.get(b"Perms") {
+            Some(PdfObject::String(s)) => s.as_slice().try_into().unwrap(),
+            other => panic!("/Perms missing: {other:?}"),
+        };
+        aes_cipher::decrypt_aes256_ecb_block(&key, &perms)
+    }
+
+    #[test]
+    fn test_r6_perms_tail_is_random() {
+        let a = r6_perms_plaintext();
+        let b = r6_perms_plaintext();
+        assert_eq!(&a[9..12], b"adb");
+        assert_eq!(&b[9..12], b"adb");
+        assert_ne!(
+            a[12..16],
+            b[12..16],
+            "/Perms bytes 12-15 repeat across builds"
+        );
+    }
+
+    #[test]
+    fn test_r6_file_keys_and_salts_differ_across_builds() {
+        let build = || {
+            let config = EncryptionConfig {
+                user_password: b"u".to_vec(),
+                owner_password: b"o".to_vec(),
+                permissions: Permissions::allow_all(),
+                method: EncryptionMethod::AES256,
+                encrypt_metadata: true,
+            };
+            let (state, pdf_dict, _) = config.build(b"id").unwrap();
+            let bytes = |k: &[u8]| match pdf_dict.get(k) {
+                Some(PdfObject::String(s)) => s.clone(),
+                other => panic!("missing entry: {other:?}"),
+            };
+            (
+                state.file_key.unwrap(),
+                bytes(b"U")[32..48].to_vec(),
+                bytes(b"O")[32..48].to_vec(),
+            )
+        };
+        let (key_a, u_salts_a, o_salts_a) = build();
+        let (key_b, u_salts_b, o_salts_b) = build();
+        assert_ne!(key_a, key_b);
+        assert_ne!(u_salts_a, u_salts_b);
+        assert_ne!(o_salts_a, o_salts_b);
+        assert_ne!(
+            u_salts_a[..8],
+            u_salts_a[8..],
+            "validation and key salt coincide"
+        );
+    }
+
+    #[test]
+    fn test_aes_ivs_are_distinct() {
+        for method in [CryptMethod::AESV2, CryptMethod::AESV3] {
+            let state = make_state_for_encrypt(method);
+            let mut ivs = std::collections::HashSet::new();
+            for obj_num in 1..=256 {
+                match encrypt_object(&PdfObject::String(b"x".to_vec()), &state, obj_num, 0).unwrap()
+                {
+                    PdfObject::String(ct) => {
+                        assert!(ivs.insert(ct[..16].to_vec()), "{method:?}: IV repeated")
+                    }
+                    other => panic!("{other:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_random_file_id() {
+        let a = random_file_id().unwrap();
+        let b = random_file_id().unwrap();
+        assert_eq!(a.len(), 16);
+        assert_ne!(a, b);
     }
 
     #[test]

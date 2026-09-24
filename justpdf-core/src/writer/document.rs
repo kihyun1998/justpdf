@@ -337,7 +337,7 @@ impl DocumentBuilder {
 
         // Handle encryption
         if let Some(config) = self.encryption {
-            let file_id = crate::crypto::generate_file_id(b"justpdf", 0);
+            let file_id = crate::crypto::random_file_id()?;
             let (state, encrypt_dict, id_array) = config.build(&file_id)?;
 
             let encrypt_ref = self.writer.add_object(PdfObject::Dict(encrypt_dict));

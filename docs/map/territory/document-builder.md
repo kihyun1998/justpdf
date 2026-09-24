@@ -14,7 +14,7 @@
 - `draw_inline_image`는 `BI … ID … EI`만 쓰고 `cm`을 쓰지 않는다. 이미지는 단위 정사각형에 매핑되므로 호출자가 `cm`을 앞에 써야 한다(추론: cbz/svg 입력은 이걸 하지 않는다).
 - XMP 값은 XML 이스케이프 없이 들어간다(`set_xmp_metadata`).
 - `embed_truetype_font`는 리소스 이름만 돌려준다. 폰트의 `IndirectRef`는 테스트 빌드 전용 `font_ref`(`#[cfg(test)]`)로만 얻을 수 있고, `PageBuilder`는 임베드 폰트를 `add_font_ref`(ref 필요)로만 리소스에 넣는다(`add_font`는 표준 Type1 인라인 사전을 만든다). 그래서 공개 API만으로는 임베드한 TrueType 폰트를 페이지에서 쓸 수 없다.
-- 암호화 시 파일 ID가 고정값(`generate_file_id(b"justpdf", 0)`)이다 — [객체 암호화](object-encryption.md).
+- 암호화 시 파일 ID는 `random_file_id`로 만든 16바이트이고 `/ID` 두 원소가 같다 — [객체 암호화](object-encryption.md). 암호화하지 않으면 `/ID`를 쓰지 않는다.
 
 ## Code
 - `justpdf-core/src/writer/document.rs` — `DocumentBuilder`, `add_standard_font`, `embed_truetype_font`, `font_ref`, `set_title`, `set_xmp_metadata`, `set_encryption`, `build`, `save`, `embed_jpeg`, `embed_png`, `generate_tounicode_cmap`

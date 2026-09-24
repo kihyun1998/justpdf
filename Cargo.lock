@@ -681,6 +681,7 @@ dependencies = [
  "criterion",
  "der",
  "flate2",
+ "getrandom",
  "image",
  "jpeg-decoder",
  "justbig2",

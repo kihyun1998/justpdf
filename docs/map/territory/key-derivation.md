@@ -9,7 +9,7 @@
 ## Design model
 - 쓰기가 지원하는 리비전은 R3·R4·R6뿐이다. R2·R5는 읽기만.
 - 비밀번호는 127바이트로 자른다. SASLprep 정규화는 없다.
-- R6 `/Perms`의 12–15바이트를 난수가 아닌 0으로 둔다("leave as zeros for determinism").
+- `generate_values_r6`은 결정적이다: 파일 키·솔트 4개·`/Perms` 12–15바이트(`perms_random`)를 모두 호출자가 넘긴다. 난수는 [객체 암호화](object-encryption.md)의 `build_r6`이 만든다.
 - `compute_file_key_r5`의 문서 주석은 "validation_salt"라고 하지만 호출자는 key salt를 넘긴다.
 
 ## Code

@@ -594,7 +594,13 @@ fn cmd_encrypt(
     // We need to use the DocumentBuilder encryption path.
     // Since DocumentModifier doesn't directly support encryption,
     // we rebuild via DocumentBuilder-like serialization.
-    let file_id = justpdf_core::crypto::generate_file_id(b"justpdf", 0);
+    let file_id = match doc.trailer().get(b"ID") {
+        Some(justpdf_core::PdfObject::Array(ids)) => match ids.first() {
+            Some(justpdf_core::PdfObject::String(first)) if !first.is_empty() => first.clone(),
+            _ => justpdf_core::crypto::random_file_id()?,
+        },
+        _ => justpdf_core::crypto::random_file_id()?,
+    };
     let (state, encrypt_dict, id_array) = config.build(&file_id)?;
 
     let encrypt_ref = modifier.add_object(justpdf_core::PdfObject::Dict(encrypt_dict));

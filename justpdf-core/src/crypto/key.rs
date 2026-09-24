@@ -431,7 +431,7 @@ pub fn generate_o_u_values_r234(
 
 /// Generate encryption entries for R=6 (AES-256).
 ///
-/// Returns (O, U, OE, UE, Perms, file_key).
+/// Returns (O, U, OE, UE, Perms).
 pub fn generate_values_r6(
     user_password: &[u8],
     owner_password: &[u8],
@@ -442,6 +442,7 @@ pub fn generate_values_r6(
     user_key_salt: &[u8; 8],
     owner_validation_salt: &[u8; 8],
     owner_key_salt: &[u8; 8],
+    perms_random: &[u8; 4],
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
     let pw_u = if user_password.len() > 127 {
         &user_password[..127]
@@ -486,7 +487,7 @@ pub fn generate_values_r6(
     perms_block[9] = b'a';
     perms_block[10] = b'd';
     perms_block[11] = b'b';
-    // bytes 12-15 are random, leave as zeros for determinism
+    perms_block[12..16].copy_from_slice(perms_random);
 
     let perms_value = super::aes_cipher::encrypt_aes256_ecb_block(file_key, &perms_block);
 
@@ -613,7 +614,7 @@ mod tests {
         let oks = [4u8; 8];
 
         let (o, u, oe, ue, perms) = generate_values_r6(
-            user_pw, owner_pw, -4, true, &file_key, &uvs, &uks, &ovs, &oks,
+            user_pw, owner_pw, -4, true, &file_key, &uvs, &uks, &ovs, &oks, &[5u8; 4],
         );
 
         assert_eq!(u.len(), 48);

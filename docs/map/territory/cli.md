@@ -8,7 +8,7 @@
 
 ## Design model
 - 암호화 입력은 `open_doc`이 `--password`로 인증한다.
-- `encrypt`는 항상 AES-128이고 `--no-print`·`--no-copy`만 노출한다. `serialize_pdf_encrypted`를 직접 부르며 고정 파일 ID를 쓴다([객체 암호화](object-encryption.md)).
+- `encrypt`는 항상 AES-128이고 `--no-print`·`--no-copy`만 노출한다. `serialize_pdf_encrypted`를 직접 부르며, 원본 `/ID`의 첫 원소가 있으면 그것을, 없으면 무작위 파일 ID를 쓴다([객체 암호화](object-encryption.md)).
 - `clean`은 재빌드만 한다([정리(clean)](clean.md) 모듈을 부르지 않는다).
 - `convert`에는 MOBI·FB2 분기가 없다 — CLI가 formats `all`을 켜지만 두 형식은 "unsupported input format"이 된다.
 - `sign`은 "not yet fully implemented"를 출력하고 **성공 코드로 끝난다**.
@@ -18,6 +18,7 @@
 - `justpdf-cli/src/main.rs` — `Commands`, `CompressArgs`, `resolve_options`, `open_doc`, `cmd_info`, `cmd_text`, `cmd_render`, `cmd_merge`, `cmd_split`, `cmd_encrypt`, `cmd_decrypt`, `cmd_clean`, `cmd_compress`, `cmd_convert`
 - `justpdf-cli/tests/compress.rs` — `every_preset_produces_a_valid_smaller_pdf`, `conflicting_on_off_pair_is_rejected`, `analyze_needs_no_output_flag_and_writes_nothing`, `verbose_prints_breakdown_on_stderr`
 - `justpdf-cli/tests/compress_encrypted.rs` — `compresses_encrypted_pdf_with_password_and_drops_encryption`, `wrong_password_is_rejected`
+- `justpdf-cli/tests/encrypt.rs` — `encrypt_keeps_the_source_permanent_id`, `encrypt_without_source_id_gets_a_fresh_one`, `encrypt_with_empty_source_id_gets_a_fresh_one`
 
 ## Reference behaviour
 **None.** 기능 범위의 example 참조는 MuPDF `mutool`이다(`docs/mupdf-feature-analysis.md`). 명령별 동작을 `mutool`과 비교한 기록은 없다.
