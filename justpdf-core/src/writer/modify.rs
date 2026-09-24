@@ -18,6 +18,8 @@ pub struct DocumentModifier {
     writer: PdfWriter,
     catalog_ref: IndirectRef,
     info_ref: Option<IndirectRef>,
+    /// Security state of the source document, when it is encrypted.
+    security: Option<crate::crypto::SecurityState>,
 }
 
 impl DocumentModifier {
@@ -57,6 +59,7 @@ impl DocumentModifier {
             writer,
             catalog_ref,
             info_ref,
+            security: doc.security_state().cloned(),
         })
     }
 
@@ -308,76 +311,113 @@ fn collect_references_inner(obj: &PdfObject, refs: &mut Vec<u32>) {
     }
 }
 
-/// Perform an incremental save: append modified objects to the original PDF data.
+/// Perform an incremental save: append the modifier's objects to the original
+/// PDF data, followed by a new xref table and a trailer whose `/Prev` points at
+/// the original xref.
 ///
-/// This preserves the original bytes and appends only modified/new objects,
-/// a new xref table, and a new trailer with /Prev pointing to the old xref.
+/// Every object of the modifier is appended, not only the changed ones. The
+/// trailer carries the original trailer's keys ([`incremental_trailer`]). When
+/// the source document is encrypted, the appended objects are encrypted with its
+/// file key, so the modifier must come from an authenticated document.
 pub fn incremental_save(original_data: &[u8], modifier: DocumentModifier) -> Result<Vec<u8>> {
     use std::io::Write;
 
-    // Find old startxref
     let old_startxref = crate::xref::find_startxref(original_data)?;
+    let previous_trailer = crate::xref::load_xref(original_data)?.trailer;
+
+    let security = match &modifier.security {
+        Some(state) if state.file_key.is_none() => {
+            return Err(crate::error::JustPdfError::EncryptionError {
+                detail: "incremental save of an encrypted document requires authentication".into(),
+            });
+        }
+        other => other.as_ref(),
+    };
 
     let mut buf = original_data.to_vec();
+    if !buf.ends_with(b"\n") {
+        buf.push(b'\n');
+    }
 
-    // Determine max object number for xref size
-    let max_obj_num = modifier
-        .writer
-        .objects
-        .iter()
-        .map(|(n, _)| *n)
-        .max()
-        .unwrap_or(0);
-    let xref_size = max_obj_num + 1;
-
-    // Write each object and track offsets
     let mut offsets: Vec<(u32, usize)> = Vec::new();
     for (obj_num, obj) in &modifier.writer.objects {
-        let offset = buf.len();
-        offsets.push((*obj_num, offset));
+        let write_obj = match security {
+            Some(state) => crate::crypto::encrypt_object(obj, state, *obj_num, 0)?,
+            None => obj.clone(),
+        };
+        offsets.push((*obj_num, buf.len()));
         write!(buf, "{} 0 obj\n", obj_num)?;
-        // Use the serialize module's logic inline
-        write!(buf, "{}", obj)?;
+        crate::writer::serialize::serialize_object(&mut buf, &write_obj)?;
         write!(buf, "\nendobj\n")?;
     }
 
-    // Write new xref table
     let new_xref_offset = buf.len();
     write!(buf, "xref\n")?;
-
-    // Write subsections for each modified object
-    // Sort offsets by object number
-    let mut sorted_offsets = offsets.clone();
+    let mut sorted_offsets = offsets;
     sorted_offsets.sort_by_key(|(n, _)| *n);
-
-    // Write as individual subsections
     for (obj_num, offset) in &sorted_offsets {
         write!(buf, "{} 1\n", obj_num)?;
         write!(buf, "{:010} {:05} n \r\n", offset, 0)?;
     }
 
-    // Write trailer
-    let mut trailer = PdfDict::new();
-    trailer.insert(b"Size".to_vec(), PdfObject::Integer(xref_size as i64));
-    trailer.insert(
-        b"Root".to_vec(),
-        PdfObject::Reference(modifier.catalog_ref.clone()),
+    let max_obj_num = sorted_offsets.last().map(|(n, _)| *n).unwrap_or(0);
+    let trailer = incremental_trailer(
+        &previous_trailer,
+        max_obj_num + 1,
+        &modifier.catalog_ref,
+        modifier.info_ref.as_ref(),
+        old_startxref,
     );
-    if let Some(ref info) = modifier.info_ref {
-        trailer.insert(b"Info".to_vec(), PdfObject::Reference(info.clone()));
-    }
-    trailer.insert(
-        b"Prev".to_vec(),
-        PdfObject::Integer(old_startxref as i64),
-    );
-
     write!(buf, "trailer\n")?;
-    write!(buf, "{}", PdfObject::Dict(trailer))?;
-    write!(buf, "\n")?;
-
-    write!(buf, "startxref\n{}\n%%EOF\n", new_xref_offset)?;
+    crate::writer::serialize::serialize_dict(&mut buf, &trailer)?;
+    write!(buf, "\nstartxref\n{}\n%%EOF\n", new_xref_offset)?;
 
     Ok(buf)
+}
+
+/// The trailer of an incremental update section: every key of `previous` (the
+/// trailer being updated) except the cross-reference-stream keys and
+/// `/XRefStm`, with `/Size` raised to at least `size`, `/Root` and — when given —
+/// `/Info` replaced, and `/Prev` set to `prev_offset`.
+pub(crate) fn incremental_trailer(
+    previous: &PdfDict,
+    size: u32,
+    root: &IndirectRef,
+    info: Option<&IndirectRef>,
+    prev_offset: usize,
+) -> PdfDict {
+    const NOT_CARRIED: &[&[u8]] = &[
+        b"Prev",
+        b"XRefStm",
+        b"Type",
+        b"W",
+        b"Index",
+        b"Filter",
+        b"DecodeParms",
+        b"Length",
+        b"F",
+        b"FFilter",
+        b"FDecodeParms",
+        b"DL",
+    ];
+
+    let mut trailer = PdfDict::new();
+    for (key, value) in previous.iter() {
+        if !NOT_CARRIED.contains(&key.as_slice()) {
+            trailer.insert(key.clone(), value.clone());
+        }
+    }
+    let previous_size = previous.get_i64(b"Size").unwrap_or(0);
+    trailer.insert(
+        b"Size".to_vec(),
+        PdfObject::Integer(previous_size.max(i64::from(size))),
+    );
+    trailer.insert(b"Root".to_vec(), PdfObject::Reference(root.clone()));
+    if let Some(info) = info {
+        trailer.insert(b"Info".to_vec(), PdfObject::Reference(info.clone()));
+    }
+    trailer.insert(b"Prev".to_vec(), PdfObject::Integer(prev_offset as i64));
+    trailer
 }
 
 /// Merge pages from multiple PDF documents into one.
@@ -607,6 +647,243 @@ mod tests {
         let mut reparsed = PdfDocument::from_bytes(merged).unwrap();
         let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 5); // 2 + 3
+    }
+
+    /// Text of the first page of `doc`.
+    fn first_page_text(doc: &PdfDocument) -> String {
+        let pages = collect_pages(doc).unwrap();
+        crate::text::extract_page_text_string(doc, &pages[0]).unwrap()
+    }
+
+    /// Assert that every object listed in `doc`'s xref resolves.
+    fn assert_all_objects_resolve(doc: &PdfDocument) {
+        for r in doc.object_refs().collect::<Vec<_>>() {
+            if let Err(e) = doc.resolve(&r) {
+                panic!("object {} {} does not resolve: {e}", r.obj_num, r.gen_num);
+            }
+        }
+    }
+
+    /// A one-page PDF reading "Secret page", encrypted with user password
+    /// `user` and owner password `owner`.
+    fn create_encrypted_pdf(method: crate::crypto::EncryptionMethod) -> Vec<u8> {
+        let mut doc = DocumentBuilder::new();
+        let font = doc.add_standard_font("Helvetica");
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.add_font(&font, "Helvetica");
+        page.begin_text();
+        page.set_font(&font, 12.0);
+        page.move_to(72.0, 720.0);
+        page.show_text("Secret page");
+        page.end_text();
+        doc.add_page(page);
+        doc.set_encryption(crate::crypto::EncryptionConfig {
+            user_password: b"user".to_vec(),
+            owner_password: b"owner".to_vec(),
+            permissions: crate::crypto::Permissions::allow_all(),
+            method,
+            encrypt_metadata: true,
+        });
+        doc.build().unwrap()
+    }
+
+    #[test]
+    fn test_incremental_save_keeps_encryption() {
+        use crate::crypto::EncryptionMethod;
+        for method in [
+            EncryptionMethod::RC4_128,
+            EncryptionMethod::AES128,
+            EncryptionMethod::AES256,
+        ] {
+            let original = create_encrypted_pdf(method);
+            let mut doc = PdfDocument::from_bytes(original.clone()).unwrap();
+            doc.authenticate(b"user").unwrap();
+            let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+            modifier.set_info(b"Title", "Updated Title");
+
+            let result = incremental_save(&original, modifier).unwrap();
+            assert_eq!(&result[..original.len()], &original[..]);
+            let appended = &result[original.len()..];
+            assert!(
+                !appended.windows(13).any(|w| w == b"Updated Title"),
+                "{method:?}: appended objects are plaintext"
+            );
+
+            let mut reopened = PdfDocument::from_bytes(result).unwrap();
+            assert!(reopened.is_encrypted(), "{method:?}");
+            assert!(!reopened.is_authenticated(), "{method:?}");
+            assert_eq!(
+                reopened.trailer().get(b"Encrypt"),
+                doc.trailer().get(b"Encrypt")
+            );
+            assert!(doc.trailer().get(b"ID").is_some());
+            assert_eq!(reopened.trailer().get(b"ID"), doc.trailer().get(b"ID"));
+            assert!(reopened.authenticate(b"wrong").is_err(), "{method:?}");
+            reopened.authenticate(b"user").unwrap();
+
+            assert_all_objects_resolve(&reopened);
+            assert_eq!(
+                first_page_text(&reopened).trim(),
+                "Secret page",
+                "{method:?}"
+            );
+            let info = match reopened.trailer().get(b"Info") {
+                Some(PdfObject::Reference(r)) => r.clone(),
+                other => panic!("{method:?}: unexpected /Info {other:?}"),
+            };
+            let title = match reopened.resolve(&info).unwrap() {
+                PdfObject::Dict(d) => d.get(b"Title").cloned(),
+                other => panic!("{method:?}: unexpected Info {other:?}"),
+            };
+            assert_eq!(
+                title,
+                Some(PdfObject::String(b"Updated Title".to_vec())),
+                "{method:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_incremental_save_requires_authentication() {
+        let original = create_encrypted_pdf(crate::crypto::EncryptionMethod::AES128);
+        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        assert!(!doc.is_authenticated());
+        let modifier = DocumentModifier::from_document(&doc).unwrap();
+        assert!(incremental_save(&original, modifier).is_err());
+    }
+
+    #[test]
+    fn test_incremental_save_reopens_with_intact_objects() {
+        let original = create_test_pdf("Original", 2);
+        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_info(b"Title", "Updated Title");
+
+        let result = incremental_save(&original, modifier).unwrap();
+        let reopened = PdfDocument::from_bytes(result).unwrap();
+        assert_all_objects_resolve(&reopened);
+        assert!(first_page_text(&reopened).contains("Original"));
+    }
+
+    #[test]
+    fn test_incremental_save_after_xref_stream_section() {
+        let doc = PdfDocument::from_bytes(create_test_pdf("Streamed", 1)).unwrap();
+        let original = DocumentModifier::from_document(&doc)
+            .unwrap()
+            .build_with_xref_stream(&[])
+            .unwrap();
+        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        assert_eq!(doc.trailer().get_name(b"Type"), Some(b"XRef".as_slice()));
+        let modifier = DocumentModifier::from_document(&doc).unwrap();
+
+        let result = incremental_save(&original, modifier).unwrap();
+        let reopened = PdfDocument::from_bytes(result).unwrap();
+        for key in [
+            &b"Type"[..],
+            b"W",
+            b"Index",
+            b"Filter",
+            b"DecodeParms",
+            b"Length",
+        ] {
+            assert!(
+                reopened.trailer().get(key).is_none(),
+                "stream key /{} copied into the trailer",
+                String::from_utf8_lossy(key)
+            );
+        }
+        assert_all_objects_resolve(&reopened);
+        assert!(first_page_text(&reopened).contains("Streamed"));
+    }
+
+    #[test]
+    fn test_incremental_trailer_copies_previous_keys() {
+        let mut previous = PdfDict::new();
+        for (key, value) in [
+            (&b"Size"[..], PdfObject::Integer(40)),
+            (
+                b"Root",
+                PdfObject::Reference(IndirectRef {
+                    obj_num: 1,
+                    gen_num: 0,
+                }),
+            ),
+            (
+                b"Info",
+                PdfObject::Reference(IndirectRef {
+                    obj_num: 2,
+                    gen_num: 0,
+                }),
+            ),
+            (
+                b"Encrypt",
+                PdfObject::Reference(IndirectRef {
+                    obj_num: 3,
+                    gen_num: 0,
+                }),
+            ),
+            (
+                b"ID",
+                PdfObject::Array(vec![
+                    PdfObject::String(vec![1; 16]),
+                    PdfObject::String(vec![2; 16]),
+                ]),
+            ),
+            (b"Custom", PdfObject::Name(b"Kept".to_vec())),
+            (b"Prev", PdfObject::Integer(9)),
+            (b"XRefStm", PdfObject::Integer(99)),
+            (b"Type", PdfObject::Name(b"XRef".to_vec())),
+            (b"W", PdfObject::Array(vec![PdfObject::Integer(1)])),
+            (b"Index", PdfObject::Array(vec![PdfObject::Integer(0)])),
+            (b"Filter", PdfObject::Name(b"FlateDecode".to_vec())),
+            (b"DecodeParms", PdfObject::Dict(PdfDict::new())),
+            (b"Length", PdfObject::Integer(12)),
+        ] {
+            previous.insert(key.to_vec(), value);
+        }
+        let root = IndirectRef {
+            obj_num: 7,
+            gen_num: 0,
+        };
+
+        let trailer = incremental_trailer(&previous, 20, &root, None, 1234);
+        assert_eq!(trailer.get(b"Size"), Some(&PdfObject::Integer(40)));
+        assert_eq!(
+            trailer.get(b"Root"),
+            Some(&PdfObject::Reference(root.clone()))
+        );
+        assert_eq!(trailer.get(b"Prev"), Some(&PdfObject::Integer(1234)));
+        for key in [&b"Info"[..], b"Encrypt", b"ID", b"Custom"] {
+            assert_eq!(
+                trailer.get(key),
+                previous.get(key),
+                "/{}",
+                String::from_utf8_lossy(key)
+            );
+        }
+        for key in [
+            &b"XRefStm"[..],
+            b"Type",
+            b"W",
+            b"Index",
+            b"Filter",
+            b"DecodeParms",
+            b"Length",
+        ] {
+            assert!(
+                trailer.get(key).is_none(),
+                "/{}",
+                String::from_utf8_lossy(key)
+            );
+        }
+
+        let info = IndirectRef {
+            obj_num: 8,
+            gen_num: 0,
+        };
+        let trailer = incremental_trailer(&previous, 50, &root, Some(&info), 1234);
+        assert_eq!(trailer.get(b"Size"), Some(&PdfObject::Integer(50)));
+        assert_eq!(trailer.get(b"Info"), Some(&PdfObject::Reference(info)));
     }
 
     #[test]

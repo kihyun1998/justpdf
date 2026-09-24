@@ -113,6 +113,11 @@ fn build_pdf_with_placeholder(
 
     // Parse the existing document to get catalog info
     let doc = crate::parser::PdfDocument::from_bytes(pdf_data.to_vec())?;
+    if doc.is_encrypted() {
+        return Err(JustPdfError::UnsupportedEncryption {
+            detail: "signing an encrypted document is not supported".into(),
+        });
+    }
     let catalog_ref = doc
         .catalog_ref()
         .ok_or(JustPdfError::TrailerNotFound)?
@@ -220,11 +225,21 @@ fn build_pdf_with_placeholder(
     }
 
     // Trailer
-    let xref_size = if options.visible { ap_stream_num + 1 } else { sig_field_num + 1 };
+    let xref_size = if options.visible {
+        ap_stream_num + 1
+    } else {
+        sig_field_num + 1
+    };
+    let trailer = crate::writer::modify::incremental_trailer(
+        doc.trailer(),
+        xref_size,
+        &catalog_ref,
+        None,
+        old_startxref,
+    );
     write!(buf, "trailer\n")?;
-    write!(buf, "<< /Size {} /Root {} 0 R /Prev {} >>\n",
-        xref_size, catalog_ref.obj_num, old_startxref)?;
-    write!(buf, "startxref\n{}\n%%EOF\n", xref_offset)?;
+    crate::writer::serialize::serialize_dict(&mut buf, &trailer)?;
+    write!(buf, "\nstartxref\n{}\n%%EOF\n", xref_offset)?;
 
     Ok((buf, contents_offset, contents_length))
 }
@@ -635,6 +650,61 @@ fn escape_pdf_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn create_pdf(encrypted: bool) -> Vec<u8> {
+        use crate::writer::document::DocumentBuilder;
+        use crate::writer::page::PageBuilder;
+        let mut doc = DocumentBuilder::new();
+        let font = doc.add_standard_font("Helvetica");
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.add_font(&font, "Helvetica");
+        page.begin_text();
+        page.set_font(&font, 12.0);
+        page.move_to(72.0, 720.0);
+        page.show_text("Signed page");
+        page.end_text();
+        doc.add_page(page);
+        doc.set_title("Signed document");
+        if encrypted {
+            doc.set_encryption(crate::crypto::EncryptionConfig {
+                user_password: Vec::new(),
+                owner_password: b"owner".to_vec(),
+                permissions: crate::crypto::Permissions::allow_all(),
+                method: crate::crypto::EncryptionMethod::AES128,
+                encrypt_metadata: true,
+            });
+        }
+        doc.build().unwrap()
+    }
+
+    #[test]
+    fn test_placeholder_rejects_encrypted_input() {
+        let pdf = create_pdf(true);
+        let err = build_pdf_with_placeholder(&pdf, &SigningOptions::default()).unwrap_err();
+        assert!(
+            matches!(err, JustPdfError::UnsupportedEncryption { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_placeholder_keeps_trailer_keys() {
+        let pdf = create_pdf(false);
+        let original = crate::parser::PdfDocument::from_bytes(pdf.clone()).unwrap();
+        assert!(original.trailer().get(b"Info").is_some());
+
+        let (signed, _, _) = build_pdf_with_placeholder(&pdf, &SigningOptions::default()).unwrap();
+        let reopened = crate::parser::PdfDocument::from_bytes(signed).unwrap();
+        assert_eq!(
+            reopened.trailer().get(b"Info"),
+            original.trailer().get(b"Info")
+        );
+        assert_eq!(
+            reopened.trailer().get(b"Root"),
+            original.trailer().get(b"Root")
+        );
+        assert!(reopened.trailer().get(b"Prev").is_some());
+    }
 
     #[test]
     fn test_hex_encode() {

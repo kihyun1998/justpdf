@@ -11,7 +11,7 @@
 - `contents_offset`을 `<` 바로 뒤로 잡아 `<`·`>` 구분자가 서명 범위에 들어간다(추론: 구분자까지 제외하는 관행과 다름).
 - `fix_byte_range`는 파일 전체에서 자리표시자 텍스트의 첫 일치를 패치한다.
 - **증분 구간이 문서에 연결되지 않는다**: 필드를 `/AcroForm /Fields`에 넣지 않고, Catalog를 갱신하지 않고, 위젯을 페이지 `/Annots`에 넣지 않는다. 모듈 주석의 "3. Updated AcroForm 4. Updated Catalog"는 구현되지 않았다. `/M`을 쓰지 않고 `contact_info`는 버려진다.
-- 새 trailer에는 `/Size /Root /Prev`만 — [증분 trailer](../invariant/incremental-trailer.md). 새 객체는 암호화되지 않는다.
+- 새 trailer는 `incremental_trailer`로 만든다 — [증분 trailer](../invariant/incremental-trailer.md). 암호화된 입력은 `UnsupportedEncryption`으로 거부한다(비밀번호를 받지 않아 덧붙일 객체를 암호화할 키가 없다 — #26 메인테이너 판단).
 - 서명자 이름 등은 자체 `escape_pdf_string`(`( ) \`만)으로 Rust `&str`의 UTF-8을 literal에 쓴다. `write_pdf_value`는 이름·문자열을 **전혀 이스케이프하지 않는다** — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md), [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
 
 ## Code
@@ -37,4 +37,5 @@
 ## Known holes / open
 - 서명 → 검증 왕복 테스트가 없다.
 - CLI `sign`은 "not yet fully implemented"를 출력하고 성공 코드로 끝난다. CLI는 `--cert`를 받지만 core에 PKCS#12 파서가 없다.
-- Tracked: #26 (증분 trailer 키 소실), #29 (손으로 쓰는 구문 이스케이프), #33 (텍스트 문자열 인코딩), #37 (서명 연결·CLI sign)
+- 암호화 문서는 서명할 수 없다(위).
+- Tracked: #29 (손으로 쓰는 구문 이스케이프), #33 (텍스트 문자열 인코딩), #37 (서명 연결·CLI sign)

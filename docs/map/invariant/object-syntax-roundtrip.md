@@ -9,11 +9,11 @@ PDF 구문을 쓰는 코드가 한 곳이 아니다. 중심 사이트(`PdfObject
 ## Territories it holds in
 중심 사이트:
 - [객체 직렬화](../territory/object-serialization.md) — Display의 Name/String/Real, `serialize_object`, `write_escaped_name`(이름 이스케이프 세 벌).
+- [증분 저장](../territory/incremental-save.md) — 덧붙이는 객체와 trailer를 `serialize_object`/`serialize_dict`로 쓴다(#26 전에는 Display로 써서 스트림이 디버그 형식으로 깨졌다).
 - [파일 직렬화](../territory/file-serialization.md) — 모든 객체가 `serialize_object`를 지난다.
 - [토크나이저](../territory/tokenizer.md), [객체 모델](../territory/object-model.md) — 판정자(되읽는 쪽). CR 정규화가 여기 있다.
 
 Display를 잘못 쓰는 사이트:
-- [증분 저장](../territory/incremental-save.md) — 스트림을 `"{}"`로 써서 디버그 형식이 된다.
 - [정리(clean)](../territory/clean.md) — Display 텍스트를 객체 동일성으로 쓴다(스트림 데이터 누락).
 
 손으로 구문을 쓰는 사이트(도구가 볼 수 있는 절반 — 아래 명령으로 다시 얻는다):
@@ -45,7 +45,7 @@ Display를 잘못 쓰는 사이트:
 
 세 번 모두 중심 사이트(Display)만 고쳤다. 손으로 쓰는 사이트들은 같은 규칙을 적용받지 않았다 — 2026-09-23 맵 작성 중 위 목록의 결함들이 발견됐고, 그중 `incremental_save` 스트림 손상, `clean_objects`의 스트림 병합, Display의 CR·`Real(1.0)`·NaN 왕복 구멍은 같은 날 임시 프로브로 재현했다.
 
-- Tracked: #25 (incremental_save 스트림 손상), #27 (스트림 동일성 판정), #28 (Display 왕복 구멍(CR·Real·NaN)), #29 (손으로 쓰는 구문 이스케이프)
+- `incremental_save`는 #26에서 `serialize_object`로 바꿨다. Tracked: #27 (스트림 동일성 판정), #28 (Display 왕복 구멍(CR·Real·NaN)), #29 (손으로 쓰는 구문 이스케이프)
 
 ## Where it will recur
 **PDF 구문 바이트를 `PdfObject` Display / `serialize_object` 밖에서 만드는 함수는 이 불변식의 대상이다.** 새로 쓰거나 고칠 때 확인할 것:
