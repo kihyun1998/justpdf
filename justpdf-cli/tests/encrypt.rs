@@ -138,3 +138,32 @@ fn encrypt_with_empty_source_id_gets_a_fresh_one() {
     assert_eq!(a[0], a[1], "an empty /ID is treated as absent");
     assert_ne!(a[0], b[0], "two encryptions share one /ID");
 }
+
+#[test]
+fn encrypt_refuses_an_encrypted_input() {
+    let first = std::env::temp_dir().join("justpdf_cli_encrypt_once.pdf");
+    let _ = std::fs::remove_file(&first);
+    let status = bin()
+        .arg("encrypt")
+        .arg(fixture("compressible.pdf"))
+        .args(["--user-password", "user", "--owner-password", "owner", "-o"])
+        .arg(&first)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let second = std::env::temp_dir().join("justpdf_cli_encrypt_twice.pdf");
+    let _ = std::fs::remove_file(&second);
+    let output = bin()
+        .arg("encrypt")
+        .arg(&first)
+        .args(["--user-password", "a", "--owner-password", "b", "-o"])
+        .arg(&second)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "encrypting an encrypted input succeeded"
+    );
+    assert!(!second.exists(), "an output file was written");
+}

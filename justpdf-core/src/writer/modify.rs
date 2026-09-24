@@ -28,8 +28,13 @@ pub struct DocumentModifier {
 
 impl DocumentModifier {
     /// Create a modifier from an existing PdfDocument.
-    /// Copies all objects from the document into the writer.
+    /// Copies all objects from the document into the writer, except the
+    /// trailer's `/Encrypt` dictionary. An encrypted document must be
+    /// authenticated first (`JustPdfError::EncryptedDocument` otherwise).
     pub fn from_document(doc: &PdfDocument) -> Result<Self> {
+        if doc.is_encrypted() && !doc.is_authenticated() {
+            return Err(crate::error::JustPdfError::EncryptedDocument);
+        }
         let mut writer = PdfWriter::new();
         writer.version = doc.version;
 
@@ -48,13 +53,17 @@ impl DocumentModifier {
             .get_ref(b"Info")
             .cloned();
 
-        // Copy all objects
-        let mut max_obj = 0u32;
+        let encrypt_obj_num = doc.trailer().get_ref(b"Encrypt").map(|r| r.obj_num);
+
+        // Copy all objects; new numbers start above every number the source uses
         let refs: Vec<IndirectRef> = doc.object_refs().collect();
+        let max_obj = refs.iter().map(|r| r.obj_num).max().unwrap_or(0);
         for iref in &refs {
+            if Some(iref.obj_num) == encrypt_obj_num {
+                continue;
+            }
             if let Ok(obj) = doc.resolve(iref) {
                 writer.objects.push((iref.obj_num, obj));
-                max_obj = max_obj.max(iref.obj_num);
             }
         }
         writer.next_obj_num = max_obj + 1;
@@ -790,12 +799,14 @@ mod tests {
     }
 
     #[test]
-    fn test_incremental_save_requires_authentication() {
+    fn test_from_document_requires_authentication() {
         let original = create_encrypted_pdf(crate::crypto::EncryptionMethod::AES128);
-        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        let doc = PdfDocument::from_bytes(original).unwrap();
         assert!(!doc.is_authenticated());
-        let modifier = DocumentModifier::from_document(&doc).unwrap();
-        assert!(incremental_save(&original, modifier).is_err());
+        assert!(matches!(
+            DocumentModifier::from_document(&doc),
+            Err(crate::error::JustPdfError::EncryptedDocument)
+        ));
     }
 
     #[test]
@@ -1261,5 +1272,37 @@ mod tests {
             })
             .unwrap();
         assert_eq!(secret, PdfObject::String(b"TOPSECRET".to_vec()));
+    }
+
+    /// Occurrences of a standard security handler dictionary in `bytes`.
+    fn count_standard_handlers(bytes: &[u8]) -> usize {
+        bytes
+            .windows(17)
+            .filter(|w| w == b"/Filter /Standard")
+            .count()
+    }
+
+    #[test]
+    fn test_rewrite_drops_the_source_encrypt_dictionary() {
+        use crate::crypto::EncryptionMethod;
+        let original = create_encrypted_pdf(EncryptionMethod::AES128);
+        assert_eq!(count_standard_handlers(&original), 1);
+        let mut doc = PdfDocument::from_bytes(original).unwrap();
+        doc.authenticate(b"user").unwrap();
+
+        let plain = DocumentModifier::from_document(&doc)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(count_standard_handlers(&plain), 0, "old /Encrypt copied");
+
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_encryption(encryption_config(EncryptionMethod::AES256));
+        let reencrypted = modifier.build().unwrap();
+        assert_eq!(
+            count_standard_handlers(&reencrypted),
+            1,
+            "old /Encrypt copied"
+        );
     }
 }

@@ -2,7 +2,7 @@
 
 ## Using the Modifier
 
-`Document::modify` returns a `Modifier` working on a copy of the document; the original `Document` is not changed.
+`Document::modify` returns a `Modifier` working on a copy of the document; the original `Document` is not changed. An encrypted document has to be authenticated first (`Document::authenticate`), otherwise `modify` returns `EncryptedDocument`.
 
 ```rust
 use justpdf::Document;
