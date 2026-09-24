@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - `justpdf-special`: `justpdf-render` is now optional and only pulled in by the `ocr` feature (#1)
 - `justpdf-formats`: `justpdf-render` is now optional and only pulled in by the `plaintext`, `mobi` and `fb2` features (#2)
+- **`incremental_save` appends only what changed** — it takes the source document instead of its bytes (`incremental_save(&doc, modifier)`, where `doc` is the document the modifier was created from). It appends only the objects whose value differs from the document's and the new ones, marks the objects the modifier removed as free (`65535 f`), and returns the original bytes unchanged when nothing changed; before, every object was appended again (#25)
 
 ### Fixed
 - **Strings in stream dictionaries were not encrypted** — encryption and decryption skipped the strings in a stream's dictionary, which ISO 32000-1 §7.6.1 encrypts like any other string: justpdf wrote them in plaintext (qpdf read them as garbage) and read third-party encrypted files' values as ciphertext. Both directions now handle them with the string method; cross-reference streams stay unencrypted (§7.5.8.2). A stream-dictionary string that does not decrypt is kept as written instead of failing the stream. Encrypted files written by earlier justpdf versions can now read such strings (for example an attachment's `/Params /ModDate`) as garbage, as other readers already did

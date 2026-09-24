@@ -1,7 +1,7 @@
 //! Document modification: load existing PDF, modify, and save.
 //! Also provides page merge/split operations.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::error::Result;
@@ -18,8 +18,6 @@ pub struct DocumentModifier {
     writer: PdfWriter,
     catalog_ref: IndirectRef,
     info_ref: Option<IndirectRef>,
-    /// Security state of the source document, when it is encrypted.
-    security: Option<crate::crypto::SecurityState>,
     /// First element of the source trailer's `/ID`, empty when absent.
     source_file_id: Vec<u8>,
     /// Encryption applied by `build`, when set.
@@ -53,26 +51,15 @@ impl DocumentModifier {
             .get_ref(b"Info")
             .cloned();
 
-        let encrypt_obj_num = doc.trailer().get_ref(b"Encrypt").map(|r| r.obj_num);
-
         // Copy all objects; new numbers start above every number the source uses
-        let refs: Vec<IndirectRef> = doc.object_refs().collect();
-        let max_obj = refs.iter().map(|r| r.obj_num).max().unwrap_or(0);
-        for iref in &refs {
-            if Some(iref.obj_num) == encrypt_obj_num {
-                continue;
-            }
-            if let Ok(obj) = doc.resolve(iref) {
-                writer.objects.push((iref.obj_num, obj));
-            }
-        }
+        let max_obj = doc.object_refs().map(|r| r.obj_num).max().unwrap_or(0);
+        writer.objects.extend(source_objects(doc));
         writer.next_obj_num = max_obj + 1;
 
         Ok(Self {
             writer,
             catalog_ref,
             info_ref,
-            security: doc.security_state().cloned(),
             source_file_id: doc.extract_file_id(),
             encryption: None,
         })
@@ -329,6 +316,15 @@ impl DocumentModifier {
     }
 }
 
+/// The objects `from_document` copies: every in-use object of `doc` that
+/// resolves, except the trailer's `/Encrypt` dictionary.
+fn source_objects(doc: &PdfDocument) -> impl Iterator<Item = (u32, PdfObject)> + '_ {
+    let encrypt_obj_num = doc.trailer().get_ref(b"Encrypt").map(|r| r.obj_num);
+    doc.object_refs()
+        .filter(move |r| Some(r.obj_num) != encrypt_obj_num)
+        .filter_map(|r| doc.resolve(&r).ok().map(|obj| (r.obj_num, obj)))
+}
+
 /// Collect all indirect reference object numbers from a PdfObject recursively.
 fn collect_references(obj: &PdfObject) -> Vec<u32> {
     let mut refs = Vec::new();
@@ -360,15 +356,19 @@ fn collect_references_inner(obj: &PdfObject, refs: &mut Vec<u32>) {
     }
 }
 
-/// Perform an incremental save: append the modifier's objects to the original
-/// PDF data, followed by a new xref table and a trailer whose `/Prev` points at
-/// the original xref.
+/// Perform an incremental save of `doc`: append the objects the modifier changed
+/// or added, mark the ones it removed as free, and follow them with a new xref
+/// table and a trailer whose `/Prev` points at the original xref.
 ///
-/// Every object of the modifier is appended, not only the changed ones. The
+/// `modifier` must have been created from `doc`. An object is changed when its
+/// value differs from `doc`'s. A removed object is one `from_document` copied
+/// that the modifier no longer holds, other than an object stream that still
+/// holds an unchanged object; its entry is `0000000000 65535 f`. With
+/// nothing changed or removed, the original bytes are returned unchanged. The
 /// trailer carries the original trailer's keys ([`incremental_trailer`]). When
-/// the source document is encrypted, the appended objects are encrypted with its
-/// file key, so the modifier must come from an authenticated document.
-pub fn incremental_save(original_data: &[u8], modifier: DocumentModifier) -> Result<Vec<u8>> {
+/// `doc` is encrypted, the appended objects are encrypted with its file key, so
+/// `doc` must be authenticated.
+pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result<Vec<u8>> {
     use std::io::Write;
 
     if modifier.encryption.is_some() {
@@ -377,17 +377,55 @@ pub fn incremental_save(original_data: &[u8], modifier: DocumentModifier) -> Res
         });
     }
 
+    let original_data = doc.raw_data();
     let old_startxref = crate::xref::find_startxref(original_data)?;
     let previous_trailer = crate::xref::load_xref(original_data)?.trailer;
 
-    let security = match &modifier.security {
+    let security = match doc.security_state() {
         Some(state) if state.file_key.is_none() => {
             return Err(crate::error::JustPdfError::EncryptionError {
                 detail: "incremental save of an encrypted document requires authentication".into(),
             });
         }
-        other => other.as_ref(),
+        other => other,
     };
+
+    let current: HashMap<u32, &PdfObject> = modifier
+        .writer
+        .objects
+        .iter()
+        .map(|(num, obj)| (*num, obj))
+        .collect();
+    let mut unchanged: HashSet<u32> = HashSet::new();
+    let mut removed: Vec<u32> = Vec::new();
+    for (num, source_obj) in source_objects(doc) {
+        match current.get(&num) {
+            None => removed.push(num),
+            Some(obj) if **obj == source_obj => {
+                unchanged.insert(num);
+            }
+            Some(_) => {}
+        }
+    }
+    let live_object_streams: HashSet<u32> = unchanged
+        .iter()
+        .filter_map(|num| match doc.xref.get(*num) {
+            Some(crate::xref::XrefEntry::Compressed { obj_stream_num, .. }) => {
+                Some(*obj_stream_num)
+            }
+            _ => None,
+        })
+        .collect();
+    removed.retain(|num| !live_object_streams.contains(num));
+    let changed: Vec<&(u32, PdfObject)> = modifier
+        .writer
+        .objects
+        .iter()
+        .filter(|(num, _)| !unchanged.contains(num))
+        .collect();
+    if changed.is_empty() && removed.is_empty() {
+        return Ok(original_data.to_vec());
+    }
 
     let mut buf = original_data.to_vec();
     if !buf.ends_with(b"\n") {
@@ -395,7 +433,7 @@ pub fn incremental_save(original_data: &[u8], modifier: DocumentModifier) -> Res
     }
 
     let mut offsets: Vec<(u32, usize)> = Vec::new();
-    for (obj_num, obj) in &modifier.writer.objects {
+    for (obj_num, obj) in changed {
         let write_obj = match security {
             Some(state) => crate::crypto::encrypt_object(obj, state, *obj_num, 0)?,
             None => obj.clone(),
@@ -408,14 +446,21 @@ pub fn incremental_save(original_data: &[u8], modifier: DocumentModifier) -> Res
 
     let new_xref_offset = buf.len();
     write!(buf, "xref\n")?;
-    let mut sorted_offsets = offsets;
-    sorted_offsets.sort_by_key(|(n, _)| *n);
-    for (obj_num, offset) in &sorted_offsets {
+    let mut entries: Vec<(u32, Option<usize>)> = offsets
+        .into_iter()
+        .map(|(n, offset)| (n, Some(offset)))
+        .chain(removed.into_iter().map(|n| (n, None)))
+        .collect();
+    entries.sort_by_key(|(n, _)| *n);
+    for (obj_num, offset) in &entries {
         write!(buf, "{} 1\n", obj_num)?;
-        write!(buf, "{:010} {:05} n \r\n", offset, 0)?;
+        match offset {
+            Some(offset) => write!(buf, "{:010} {:05} n \r\n", offset, 0)?,
+            None => write!(buf, "{:010} {:05} f \r\n", 0, 65535)?,
+        }
     }
 
-    let max_obj_num = sorted_offsets.last().map(|(n, _)| *n).unwrap_or(0);
+    let max_obj_num = entries.last().map(|(n, _)| *n).unwrap_or(0);
     let trailer = incremental_trailer(
         &previous_trailer,
         max_obj_num + 1,
@@ -756,7 +801,7 @@ mod tests {
             let mut modifier = DocumentModifier::from_document(&doc).unwrap();
             modifier.set_info(b"Title", "Updated Title");
 
-            let result = incremental_save(&original, modifier).unwrap();
+            let result = incremental_save(&doc, modifier).unwrap();
             assert_eq!(&result[..original.len()], &original[..]);
             let appended = &result[original.len()..];
             assert!(
@@ -816,10 +861,266 @@ mod tests {
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.set_info(b"Title", "Updated Title");
 
-        let result = incremental_save(&original, modifier).unwrap();
+        let result = incremental_save(&doc, modifier).unwrap();
         let reopened = PdfDocument::from_bytes(result).unwrap();
         assert_all_objects_resolve(&reopened);
         assert!(first_page_text(&reopened).contains("Original"));
+    }
+
+    /// Byte offset of object `obj_num` in `doc`, when it is an uncompressed in-use entry.
+    fn object_offset(doc: &PdfDocument, obj_num: u32) -> Option<usize> {
+        match doc.xref.get(obj_num) {
+            Some(crate::xref::XrefEntry::InUse { offset, .. }) => Some(*offset as usize),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_incremental_save_appends_only_changed_objects() {
+        let original = create_test_pdf("Original", 2);
+        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        let source_nums: Vec<u32> = doc.object_refs().map(|r| r.obj_num).collect();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_info(b"Title", "Updated Title");
+        let info_num = modifier.info_ref.as_ref().unwrap().obj_num;
+
+        let result = incremental_save(&doc, modifier).unwrap();
+        let reopened = PdfDocument::from_bytes(result).unwrap();
+
+        assert!(object_offset(&reopened, info_num).unwrap() >= original.len());
+        let rewritten: Vec<u32> = source_nums
+            .iter()
+            .copied()
+            .filter(|&n| n != info_num)
+            .filter(|&n| object_offset(&reopened, n).unwrap() >= original.len())
+            .collect();
+        assert!(
+            rewritten.is_empty(),
+            "unchanged objects appended: {rewritten:?}"
+        );
+        assert!(source_nums.len() > 3);
+        assert_all_objects_resolve(&reopened);
+        assert!(first_page_text(&reopened).contains("Original"));
+    }
+
+    #[test]
+    fn test_incremental_save_without_changes_returns_the_original() {
+        let original = create_test_pdf("Original", 1);
+        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        let modifier = DocumentModifier::from_document(&doc).unwrap();
+
+        assert_eq!(incremental_save(&doc, modifier).unwrap(), original);
+    }
+
+    #[test]
+    fn test_incremental_save_frees_removed_objects() {
+        let original = create_test_pdf("Original", 2);
+        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        let second_page = collect_pages(&doc).unwrap()[1].page_ref.clone();
+        let second_contents = match doc.resolve(&second_page).unwrap() {
+            PdfObject::Dict(d) => d.get_ref(b"Contents").unwrap().obj_num,
+            other => panic!("unexpected page {other:?}"),
+        };
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.delete_page(1).unwrap();
+        modifier.garbage_collect();
+
+        let result = incremental_save(&doc, modifier).unwrap();
+        let reopened = PdfDocument::from_bytes(result).unwrap();
+
+        for num in [second_page.obj_num, second_contents] {
+            match reopened.xref.get(num) {
+                Some(crate::xref::XrefEntry::Free {
+                    next_free: 0,
+                    gen_num: 65535,
+                }) => {}
+                other => panic!("object {num}: expected a free entry, got {other:?}"),
+            }
+        }
+        let pages = collect_pages(&reopened).unwrap();
+        assert_eq!(pages.len(), 1);
+        assert!(object_offset(&reopened, pages[0].page_ref.obj_num).unwrap() < original.len());
+        assert_all_objects_resolve(&reopened);
+        assert!(first_page_text(&reopened).contains("Page 1"));
+    }
+
+    /// `data` with an update section whose xref lists object `obj_num` at bytes
+    /// that are not an object.
+    fn append_unresolvable_object(data: &[u8], obj_num: u32) -> Vec<u8> {
+        use std::io::Write;
+        let doc = PdfDocument::from_bytes(data.to_vec()).unwrap();
+        let mut buf = data.to_vec();
+        let garbage_offset = buf.len();
+        buf.extend_from_slice(b"garbage\n");
+        let xref_offset = buf.len();
+        write!(
+            buf,
+            "xref\n{obj_num} 1\n{garbage_offset:010} 00000 n \r\ntrailer\n"
+        )
+        .unwrap();
+        let trailer = incremental_trailer(
+            doc.trailer(),
+            obj_num + 1,
+            doc.catalog_ref().unwrap(),
+            None,
+            crate::xref::find_startxref(data).unwrap(),
+        );
+        crate::writer::serialize::serialize_dict(&mut buf, &trailer).unwrap();
+        write!(buf, "\nstartxref\n{xref_offset}\n%%EOF\n").unwrap();
+        buf
+    }
+
+    #[test]
+    fn test_incremental_save_keeps_an_object_that_does_not_resolve() {
+        let plain = create_test_pdf("Original", 1);
+        let broken_num = PdfDocument::from_bytes(plain.clone())
+            .unwrap()
+            .object_refs()
+            .map(|r| r.obj_num)
+            .max()
+            .unwrap()
+            + 1;
+        let original = append_unresolvable_object(&plain, broken_num);
+        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        assert!(object_offset(&doc, broken_num).is_some());
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_info(b"Title", "Updated Title");
+
+        let result = incremental_save(&doc, modifier).unwrap();
+        let reopened = PdfDocument::from_bytes(result).unwrap();
+
+        assert_eq!(
+            object_offset(&reopened, broken_num),
+            object_offset(&doc, broken_num)
+        );
+        assert!(first_page_text(&reopened).contains("Original"));
+    }
+
+    /// A two-page PDF whose eligible objects are packed into object streams,
+    /// written with an xref stream.
+    fn create_packed_pdf() -> Vec<u8> {
+        let doc = PdfDocument::from_bytes(create_test_pdf("Packed", 2)).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let catalog_num = modifier.catalog_ref.obj_num;
+        let pages_num = modifier.find_pages_ref().unwrap().obj_num;
+        let packed = crate::writer::object_stream::pack_object_streams(
+            &modifier.writer.objects,
+            100,
+            catalog_num,
+            Some(pages_num),
+            None,
+        )
+        .unwrap();
+        assert!(!packed.compressed.is_empty());
+        modifier.writer.objects = packed.objects;
+        modifier.build_with_xref_stream(&packed.compressed).unwrap()
+    }
+
+    #[test]
+    fn test_incremental_save_keeps_object_streams_that_hold_unchanged_objects() {
+        let original = create_packed_pdf();
+        let doc = PdfDocument::from_bytes(original).unwrap();
+        let containers: Vec<u32> = doc
+            .object_refs()
+            .filter_map(|r| match doc.xref.get(r.obj_num) {
+                Some(crate::xref::XrefEntry::Compressed { obj_stream_num, .. }) => {
+                    Some(*obj_stream_num)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(!containers.is_empty());
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_info(b"Title", "Updated Title");
+        modifier.garbage_collect();
+
+        let result = incremental_save(&doc, modifier).unwrap();
+        let reopened = PdfDocument::from_bytes(result).unwrap();
+
+        for num in containers {
+            assert!(
+                !matches!(
+                    reopened.xref.get(num),
+                    Some(crate::xref::XrefEntry::Free { .. })
+                ),
+                "object stream {num} freed"
+            );
+        }
+        assert_all_objects_resolve(&reopened);
+        assert_eq!(collect_pages(&reopened).unwrap().len(), 2);
+        assert!(first_page_text(&reopened).contains("Packed"));
+    }
+
+    #[test]
+    fn test_incremental_save_deletes_a_page_of_a_packed_document() {
+        let original = create_packed_pdf();
+        let doc = PdfDocument::from_bytes(original).unwrap();
+        let second_page = collect_pages(&doc).unwrap()[1].page_ref.obj_num;
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.delete_page(1).unwrap();
+        modifier.garbage_collect();
+
+        let result = incremental_save(&doc, modifier).unwrap();
+        let reopened = PdfDocument::from_bytes(result).unwrap();
+
+        assert!(matches!(
+            reopened.xref.get(second_page),
+            Some(crate::xref::XrefEntry::Free { .. })
+        ));
+        assert_all_objects_resolve(&reopened);
+        assert_eq!(collect_pages(&reopened).unwrap().len(), 1);
+        assert!(first_page_text(&reopened).contains("Packed - Page 1"));
+    }
+
+    #[test]
+    fn test_incremental_save_of_an_encrypted_document() {
+        let original = create_test_pdf("Secret", 2);
+        let original = encrypt_with_modifier(original, crate::crypto::EncryptionMethod::AES128);
+        let mut doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        doc.authenticate(b"user").unwrap();
+        let encrypt_num = doc.trailer().get_ref(b"Encrypt").unwrap().obj_num;
+
+        let unchanged = DocumentModifier::from_document(&doc).unwrap();
+        assert_eq!(incremental_save(&doc, unchanged).unwrap(), original);
+
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.delete_page(1).unwrap();
+        modifier.garbage_collect();
+        let result = incremental_save(&doc, modifier).unwrap();
+        let mut reopened = PdfDocument::from_bytes(result).unwrap();
+
+        assert!(matches!(
+            reopened.xref.get(encrypt_num),
+            Some(crate::xref::XrefEntry::InUse { .. })
+        ));
+        reopened.authenticate(b"user").unwrap();
+        assert_all_objects_resolve(&reopened);
+        assert_eq!(collect_pages(&reopened).unwrap().len(), 1);
+        assert!(first_page_text(&reopened).contains("Secret - Page 1"));
+    }
+
+    #[test]
+    fn test_incremental_save_appends_an_object_edited_in_place() {
+        let original = create_test_pdf("Original", 1);
+        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        let page_num = collect_pages(&doc).unwrap()[0].page_ref.obj_num;
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        for (num, obj) in modifier.writer().objects.iter_mut() {
+            if let (true, PdfObject::Dict(page)) = (*num == page_num, obj) {
+                page.insert(b"Rotate".to_vec(), PdfObject::Integer(90));
+            }
+        }
+
+        let result = incremental_save(&doc, modifier).unwrap();
+        let reopened = PdfDocument::from_bytes(result).unwrap();
+
+        assert!(object_offset(&reopened, page_num).unwrap() >= original.len());
+        let page = collect_pages(&reopened).unwrap()[0].page_ref.clone();
+        match reopened.resolve(&page).unwrap() {
+            PdfObject::Dict(d) => assert_eq!(d.get(b"Rotate"), Some(&PdfObject::Integer(90))),
+            other => panic!("unexpected page {other:?}"),
+        }
+        assert_all_objects_resolve(&reopened);
     }
 
     #[test]
@@ -831,9 +1132,11 @@ mod tests {
             .unwrap();
         let doc = PdfDocument::from_bytes(original.clone()).unwrap();
         assert_eq!(doc.trailer().get_name(b"Type"), Some(b"XRef".as_slice()));
-        let modifier = DocumentModifier::from_document(&doc).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_info(b"Title", "Updated Title");
 
-        let result = incremental_save(&original, modifier).unwrap();
+        let result = incremental_save(&doc, modifier).unwrap();
+        assert!(result.len() > original.len());
         let reopened = PdfDocument::from_bytes(result).unwrap();
         for key in [
             &b"Type"[..],
@@ -952,7 +1255,7 @@ mod tests {
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.set_info(b"Title", "Updated Title");
 
-        let result = incremental_save(&original, modifier).unwrap();
+        let result = incremental_save(&doc, modifier).unwrap();
 
         // The result should start with the original bytes
         assert!(result.len() > original_len);
@@ -1208,7 +1511,7 @@ mod tests {
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.set_encryption(encryption_config(crate::crypto::EncryptionMethod::AES128));
         assert!(matches!(
-            incremental_save(&original, modifier),
+            incremental_save(&doc, modifier),
             Err(crate::error::JustPdfError::UnsupportedEncryption { .. })
         ));
     }
