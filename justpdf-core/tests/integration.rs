@@ -1214,6 +1214,54 @@ fn test_encrypt_roundtrip_across_password_combinations() {
     }
 }
 
+/// The trailer `/ID` of an encrypted PDF built with `method`.
+fn build_encrypted_id(method: crypto::EncryptionMethod) -> Vec<Vec<u8>> {
+    let mut builder = justpdf_core::writer::document::DocumentBuilder::new();
+    builder.add_page(justpdf_core::writer::page::PageBuilder::new(612.0, 792.0));
+    builder.set_encryption(crypto::EncryptionConfig {
+        user_password: b"user".to_vec(),
+        owner_password: b"owner".to_vec(),
+        permissions: crypto::Permissions::allow_all(),
+        method,
+        encrypt_metadata: true,
+    });
+    let doc = PdfDocument::from_bytes(builder.build().unwrap()).unwrap();
+    match doc.trailer().get(b"ID") {
+        Some(PdfObject::Array(arr)) => arr
+            .iter()
+            .map(|o| match o {
+                PdfObject::String(s) => s.clone(),
+                other => panic!("/ID element is not a string: {other:?}"),
+            })
+            .collect(),
+        other => panic!("{method:?}: trailer /ID missing or not an array: {other:?}"),
+    }
+}
+
+#[test]
+fn test_encrypted_builds_get_distinct_file_ids() {
+    for method in [
+        crypto::EncryptionMethod::RC4_128,
+        crypto::EncryptionMethod::AES128,
+        crypto::EncryptionMethod::AES256,
+    ] {
+        let first = build_encrypted_id(method);
+        let second = build_encrypted_id(method);
+        for id in [&first, &second] {
+            assert_eq!(id.len(), 2, "{method:?}: /ID must have two elements");
+            assert_eq!(id[0].len(), 16, "{method:?}: /ID element must be 16 bytes");
+            assert_eq!(
+                id[0], id[1],
+                "{method:?}: a newly written file carries two equal identifiers"
+            );
+        }
+        assert_ne!(
+            first[0], second[0],
+            "{method:?}: two documents share one /ID"
+        );
+    }
+}
+
 // ============================================================
 // Phase 8 Memory Optimization tests (section 8.3)
 // ============================================================

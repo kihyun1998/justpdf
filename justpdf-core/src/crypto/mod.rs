@@ -14,5 +14,7 @@ mod rc4;
 mod types;
 
 pub use decrypt::decrypt_object;
-pub use encrypt::{encrypt_object, generate_file_id, EncryptionConfig, EncryptionMethod};
+pub use encrypt::{
+    EncryptionConfig, EncryptionMethod, encrypt_object, generate_file_id, random_file_id,
+};
 pub use types::{CryptFilter, CryptMethod, EncryptionDict, Permissions, SecurityState};

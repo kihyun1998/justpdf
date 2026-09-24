@@ -361,15 +361,8 @@ mod tests {
         let file_key = [0x42u8; 32];
 
         let (o, u, oe, ue, perms) = key::generate_values_r6(
-            user_pw,
-            owner_pw,
-            -4,
-            true,
-            &file_key,
-            &[1u8; 8],
-            &[2u8; 8],
-            &[3u8; 8],
-            &[4u8; 8],
+            user_pw, owner_pw, -4, true, &file_key, &[1u8; 8], &[2u8; 8], &[3u8; 8], &[4u8; 8],
+            &[5u8; 4],
         );
 
         let ed = EncryptionDict {
