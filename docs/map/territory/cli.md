@@ -38,4 +38,5 @@
 ## Known holes / open
 - `--structural` 도움말이 "GC + dedup + object streams"라고 하지만 object stream 패킹은 꺼져 있다.
 - "비암호화 PDF에 `--password`" 경로에 테스트가 없다(수동 실행으로는 정상).
-- Tracked: #37 (서명 연결·CLI sign), #49 (convert MOBI·FB2)
+- `encrypt`가 원본 `/Info`를 옮기지 않는다(`info_ref`에 `None`) — 출력에서 `/Title`이 사라진다(2026-09-24 qpdf로 확인).
+- Tracked: #37 (서명 연결·CLI sign), #49 (convert MOBI·FB2), #75 (encrypt의 `/Info` 소실·`/ID` 둘째 원소)
