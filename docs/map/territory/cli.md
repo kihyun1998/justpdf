@@ -8,7 +8,7 @@
 
 ## Design model
 - 암호화 입력은 `open_doc`이 `--password`로 인증한다.
-- `encrypt`는 항상 AES-128이고 `--no-print`·`--no-copy`만 노출한다. `serialize_pdf_encrypted`를 직접 부르며, 원본 `/ID`의 첫 원소가 있으면 그것을, 없으면 무작위 파일 ID를 쓴다([객체 암호화](object-encryption.md)).
+- `encrypt`는 항상 AES-128이고 `--no-print`·`--no-copy`만 노출한다. `DocumentModifier::set_encryption` 후 `build`만 부른다 — `/Info`·`/ID`·`/Encrypt`는 [문서 수정기](document-modifier.md)가 쓴다([객체 암호화](object-encryption.md)).
 - `clean`은 재빌드만 한다([정리(clean)](clean.md) 모듈을 부르지 않는다).
 - `convert`에는 MOBI·FB2 분기가 없다 — CLI가 formats `all`을 켜지만 두 형식은 "unsupported input format"이 된다.
 - `sign`은 "not yet fully implemented"를 출력하고 **성공 코드로 끝난다**.
@@ -38,5 +38,4 @@
 ## Known holes / open
 - `--structural` 도움말이 "GC + dedup + object streams"라고 하지만 object stream 패킹은 꺼져 있다.
 - "비암호화 PDF에 `--password`" 경로에 테스트가 없다(수동 실행으로는 정상).
-- `encrypt`가 원본 `/Info`를 옮기지 않는다(`info_ref`에 `None`) — 출력에서 `/Title`이 사라진다(2026-09-24 qpdf로 확인).
-- Tracked: #37 (서명 연결·CLI sign), #49 (convert MOBI·FB2), #75 (encrypt의 `/Info` 소실·`/ID` 둘째 원소)
+- Tracked: #37 (서명 연결·CLI sign), #49 (convert MOBI·FB2)

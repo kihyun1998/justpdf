@@ -41,6 +41,35 @@ pub fn serialize_pdf_encrypted(
     )
 }
 
+/// Add the `/Encrypt` dictionary built from `config` to `writer` and serialize
+/// every object encrypted, with trailer `/ID [permanent_id changing_id]`.
+/// The file key is derived from `permanent_id`.
+pub(crate) fn serialize_writer_encrypted(
+    writer: &mut crate::writer::PdfWriter,
+    catalog_ref: &IndirectRef,
+    info_ref: Option<&IndirectRef>,
+    config: &crate::crypto::EncryptionConfig,
+    permanent_id: &[u8],
+    changing_id: &[u8],
+) -> Result<Vec<u8>> {
+    let (mut state, encrypt_dict, _) = config.build(permanent_id)?;
+    let id_array = [
+        PdfObject::String(permanent_id.to_vec()),
+        PdfObject::String(changing_id.to_vec()),
+    ];
+    let encrypt_ref = writer.add_object(PdfObject::Dict(encrypt_dict));
+    state.encrypt_obj_num = Some(encrypt_ref.obj_num);
+    serialize_pdf_encrypted(
+        &writer.objects,
+        writer.version,
+        catalog_ref,
+        info_ref,
+        &encrypt_ref,
+        &state,
+        &id_array,
+    )
+}
+
 /// Internal implementation handling both encrypted and unencrypted serialization.
 fn serialize_pdf_impl(
     objects: &[(u32, PdfObject)],
