@@ -67,7 +67,7 @@ fn authenticate_r5(ed: &EncryptionDict, password: &[u8]) -> Result<Vec<u8>> {
     let validation_salt = &ed.u[32..40];
     let key_salt = &ed.u[40..48];
 
-    if verify_password_r5(password, validation_salt, &[]) {
+    if verify_password_r5(password, validation_salt, &[], &ed.u[..32]) {
         if let Some(file_key) = key::compute_file_key_r5(password, key_salt, &[], ue) {
             return Ok(file_key);
         }
@@ -82,7 +82,7 @@ fn authenticate_r5(ed: &EncryptionDict, password: &[u8]) -> Result<Vec<u8>> {
         let o_validation_salt = &ed.o[32..40];
         let o_key_salt = &ed.o[40..48];
 
-        if verify_password_r5(password, o_validation_salt, &ed.u[..48]) {
+        if verify_password_r5(password, o_validation_salt, &ed.u[..48], &ed.o[..32]) {
             if let Some(file_key) =
                 key::compute_file_key_r5(password, o_key_salt, &ed.u[..48], oe)
             {
@@ -94,8 +94,16 @@ fn authenticate_r5(ed: &EncryptionDict, password: &[u8]) -> Result<Vec<u8>> {
     Err(JustPdfError::IncorrectPassword)
 }
 
-/// Verify a password for R=5 using SHA-256.
-fn verify_password_r5(password: &[u8], validation_salt: &[u8], u_bytes: &[u8]) -> bool {
+/// Verify a password for R=5: SHA-256 of the password (truncated to 127
+/// bytes), the validation salt and `u_bytes` (the first 48 bytes of /U for the
+/// owner password, empty for the user password) must equal `stored_hash`, the
+/// first 32 bytes of /U or /O.
+fn verify_password_r5(
+    password: &[u8],
+    validation_salt: &[u8],
+    u_bytes: &[u8],
+    stored_hash: &[u8],
+) -> bool {
     use sha2::{Digest, Sha256};
 
     let pw = if password.len() > 127 {
@@ -108,14 +116,7 @@ fn verify_password_r5(password: &[u8], validation_salt: &[u8], u_bytes: &[u8]) -
     hasher.update(pw);
     hasher.update(validation_salt);
     hasher.update(u_bytes);
-    let _hash = hasher.finalize();
-
-    // Compare first 32 bytes
-    // The validation value is the first 32 bytes of /U or /O
-    // Since we don't have the stored hash to compare against here,
-    // the caller does the validation_salt extraction.
-    // For R=5, this is simpler than R=6.
-    true // R=5 validation is embedded in the key derivation success
+    hasher.finalize().as_slice() == stored_hash
 }
 
 /// Authenticate for R=6 (AES-256 with extended hash).
