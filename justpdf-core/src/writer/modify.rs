@@ -1435,6 +1435,23 @@ mod tests {
     }
 
     #[test]
+    fn test_build_with_encryption_keeps_a_permanent_id_that_holds_a_carriage_return() {
+        use crate::crypto::EncryptionMethod;
+        let permanent = *b"AB\rCDEFGHIPQRSTU";
+        for method in [EncryptionMethod::RC4_128, EncryptionMethod::AES128] {
+            let bytes = encrypt_with_modifier(
+                create_plain_pdf(Some((&permanent, b"changing-id-0002"))),
+                method,
+            );
+            let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+            doc.authenticate(b"user").unwrap();
+
+            assert_eq!(trailer_id(&doc)[0], permanent, "{method:?}");
+            assert_eq!(first_page_text(&doc).trim(), "Secret page", "{method:?}");
+        }
+    }
+
+    #[test]
     fn test_build_with_encryption_keeps_permanent_id_and_changes_the_other() {
         use crate::crypto::EncryptionMethod;
         let permanent = *b"permanent-id-001";

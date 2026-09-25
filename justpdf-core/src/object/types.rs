@@ -287,7 +287,22 @@ impl fmt::Display for PdfObject {
             Self::Null => write!(f, "null"),
             Self::Bool(v) => write!(f, "{v}"),
             Self::Integer(v) => write!(f, "{v}"),
-            Self::Real(v) => write!(f, "{v}"),
+            Self::Real(v) => {
+                // Always with a decimal point; NaN as 0, ±Inf as ±f32::MAX
+                let v = if v.is_nan() {
+                    0.0
+                } else if v.is_infinite() {
+                    f64::from(f32::MAX).copysign(*v)
+                } else {
+                    *v
+                };
+                let text = v.to_string();
+                if text.contains('.') {
+                    write!(f, "{text}")
+                } else {
+                    write!(f, "{text}.0")
+                }
+            }
             Self::Name(v) => {
                 write!(f, "/")?;
                 for &byte in v {
@@ -317,10 +332,11 @@ impl fmt::Display for PdfObject {
             Self::String(v) => {
                 // Use a literal string with proper escaping only when every
                 // byte is safely representable there: printable ASCII or one of
-                // tab/newline/carriage-return. Anything else (control bytes, and
-                // crucially bytes >= 0x7F) must use hex — otherwise the literal
-                // path's `b as char` would UTF-8-encode high bytes into multiple
-                // bytes and corrupt binary strings like /O and /U.
+                // tab/newline/carriage-return (written as `\r`). Anything else
+                // (control bytes, and crucially bytes >= 0x7F) must use hex —
+                // otherwise the literal path's `b as char` would UTF-8-encode
+                // high bytes into multiple bytes and corrupt binary strings
+                // like /O and /U.
                 let needs_hex = v.iter().any(|&b| {
                     !(b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7E).contains(&b))
                 });
@@ -337,6 +353,7 @@ impl fmt::Display for PdfObject {
                             b'(' => write!(f, "\\(")?,
                             b')' => write!(f, "\\)")?,
                             b'\\' => write!(f, "\\\\")?,
+                            b'\r' => write!(f, "\\r")?,
                             _ => write!(f, "{}", b as char)?,
                         }
                     }
@@ -528,6 +545,12 @@ mod tests {
         // (this broke binary /O and /U entries, blocking decryption).
         let s = PdfObject::String(vec![b'A', 0xE9, b'B']);
         assert_eq!(s.to_string(), "<41E942>");
+    }
+
+    #[test]
+    fn test_string_display_escapes_carriage_return() {
+        let s = PdfObject::String(b"a\rb\nc".to_vec());
+        assert_eq!(s.to_string(), "(a\\rb\nc)");
     }
 
     #[test]
