@@ -972,6 +972,17 @@ fn encode_jpeg_gray(gray_data: &[u8], width: u32, height: u32, quality: u8) -> R
     use ::image::codecs::jpeg::JpegEncoder;
     use std::io::Cursor;
 
+    let expected = width as usize * height as usize;
+    if gray_data.len() != expected {
+        return Err(JustPdfError::StreamDecode {
+            filter: "compress".into(),
+            detail: format!(
+                "grayscale pixels: expected {expected} for {width}x{height}, got {}",
+                gray_data.len()
+            ),
+        });
+    }
+
     let mut buf = Cursor::new(Vec::new());
     let mut encoder = JpegEncoder::new_with_quality(&mut buf, quality);
     encoder
@@ -3845,6 +3856,79 @@ mod tests {
         let reparsed = PdfDocument::from_bytes(compressed).unwrap();
         let pages = crate::page::collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 1);
+    }
+
+    /// Replace the JPEG image of a one-image PDF with a Flate image whose
+    /// `/ColorSpace` is a reference to `color_space`.
+    fn pdf_with_referenced_color_space(color_space: PdfObject, pixels: &[u8]) -> (Vec<u8>, u32) {
+        let pdf = create_pdf_with_jpeg(30, 20, 90);
+        let doc = PdfDocument::from_bytes(pdf).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let image_num = modifier
+            .writer()
+            .objects
+            .iter()
+            .find(
+                |(_, obj)| matches!(obj, PdfObject::Stream { dict, .. } if is_image_xobject(dict)),
+            )
+            .unwrap()
+            .0;
+        let color_space_ref = modifier.add_object(color_space);
+        let (mut dict, data) = crate::writer::encode::make_stream(pixels, true);
+        for (key, value) in [
+            (&b"Type"[..], PdfObject::Name(b"XObject".to_vec())),
+            (b"Subtype", PdfObject::Name(b"Image".to_vec())),
+            (b"Width", PdfObject::Integer(30)),
+            (b"Height", PdfObject::Integer(20)),
+            (b"BitsPerComponent", PdfObject::Integer(8)),
+            (b"ColorSpace", PdfObject::Reference(color_space_ref)),
+        ] {
+            dict.insert(key.to_vec(), value);
+        }
+        modifier.set_object(image_num, PdfObject::Stream { dict, data });
+        (modifier.build().unwrap(), image_num)
+    }
+
+    /// Images whose pixel data does not hold three or four bytes per pixel as
+    /// assumed (a referenced Indexed or four-component ICCBased color space)
+    /// are left as they are.
+    #[test]
+    fn test_grayscale_leaves_images_with_referenced_color_space() {
+        let indexed = PdfObject::Array(vec![
+            PdfObject::Name(b"Indexed".to_vec()),
+            PdfObject::Name(b"DeviceRGB".to_vec()),
+            PdfObject::Integer(1),
+            PdfObject::String(vec![0, 0, 0, 255, 255, 255]),
+        ]);
+        let mut icc_dict = PdfDict::new();
+        icc_dict.insert(b"N".to_vec(), PdfObject::Integer(4));
+        let icc = PdfObject::Array(vec![
+            PdfObject::Name(b"ICCBased".to_vec()),
+            PdfObject::Stream {
+                dict: icc_dict,
+                data: Vec::new(),
+            },
+        ]);
+        let one_byte: Vec<u8> = (0..30 * 20).map(|i| (i % 2) as u8).collect();
+        let four_bytes: Vec<u8> = (0..30 * 20 * 4).map(|i| (i % 251) as u8).collect();
+
+        for (color_space, pixels) in [(indexed, one_byte), (icc, four_bytes)] {
+            let (pdf, image_num) = pdf_with_referenced_color_space(color_space, &pixels);
+            let mut options = CompressOptions::preset_low();
+            options.grayscale = true;
+            let (compressed, stats) = compress_pdf(&pdf, &options).unwrap();
+
+            assert_eq!(stats.images_grayscaled, 0);
+            let reparsed = PdfDocument::from_bytes(compressed).unwrap();
+            let image_ref = crate::object::IndirectRef {
+                obj_num: image_num,
+                gen_num: 0,
+            };
+            let Ok(PdfObject::Stream { dict, data }) = reparsed.resolve(&image_ref) else {
+                panic!("expected the image stream")
+            };
+            assert_eq!(crate::stream::decode_stream(&data, &dict).unwrap(), pixels);
+        }
     }
 
     /// G-T3: grayscale=false → no conversion.
