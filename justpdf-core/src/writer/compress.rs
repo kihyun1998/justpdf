@@ -6,7 +6,6 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use sha2::{Digest, Sha256};
 
 use crate::content::parse_content_stream;
 use crate::error::{JustPdfError, Result};
@@ -14,7 +13,7 @@ use crate::font::subset::subset_font;
 use crate::image::{self, ImageInfo};
 use crate::object::{PdfDict, PdfObject};
 use crate::parser::PdfDocument;
-use crate::writer::clean::rewrite_references;
+use crate::writer::clean::merge_duplicates;
 use crate::writer::encode::{encode_flate, encode_flate_best};
 use crate::writer::modify::DocumentModifier;
 
@@ -2194,50 +2193,13 @@ fn strip_non_essential(
     }
 }
 
-/// Deduplicate streams with identical data using SHA-256 hashing.
-///
-/// For each pair of streams with identical data, keeps the first and rewrites
-/// all references to the duplicate to point to the first. GC will then remove
-/// the orphaned duplicate objects.
+/// Deduplicate streams whose dictionary (without `/Length`) and data are both
+/// equal ([`merge_duplicates`]): keeps the first of each and rewrites
+/// references to it.
 fn dedup_streams(modifier: &mut DocumentModifier, stats: &mut CompressStats) {
-    // Phase 1: Hash all stream data
-    let mut hash_to_first: HashMap<[u8; 32], u32> = HashMap::new();
-    let mut remap: HashMap<u32, u32> = HashMap::new();
-
-    for (obj_num, obj) in modifier.writer().objects.iter() {
-        if let PdfObject::Stream { data, .. } = obj {
-            let mut hasher = Sha256::new();
-            hasher.update(data);
-            let hash: [u8; 32] = hasher.finalize().into();
-
-            match hash_to_first.get(&hash) {
-                Some(&first_num) if first_num != *obj_num => {
-                    remap.insert(*obj_num, first_num);
-                }
-                _ => {
-                    hash_to_first.insert(hash, *obj_num);
-                }
-            }
-        }
-    }
-
-    if remap.is_empty() {
-        return;
-    }
-
-    stats.duplicates_removed = remap.len();
-
-    // Phase 2: Rewrite all references
-    for (_, obj) in modifier.writer().objects.iter_mut() {
-        rewrite_references(obj, &remap);
-    }
-
-    // Phase 3: Remove the duplicate objects (GC will handle this,
-    // but we can also remove them directly for immediate effect)
-    modifier
-        .writer()
-        .objects
-        .retain(|(obj_num, _)| !remap.contains_key(obj_num));
+    stats.duplicates_removed = merge_duplicates(&mut modifier.writer().objects, |obj| {
+        matches!(obj, PdfObject::Stream { .. })
+    });
 }
 
 /// Check if a stream dict has exactly one FlateDecode filter.
@@ -2732,18 +2694,126 @@ mod tests {
         );
     }
 
-    /// C-T2: Two identical fonts → dedup consolidates (font streams are streams too).
-    #[test]
-    fn test_dedup_identical_font_streams() {
-        // Text PDFs with the same font on every page will have identical
-        // content stream patterns. Dedup should detect these.
-        let pdf = create_text_pdf(5);
-        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
+    /// Adds two streams with the same data and the given dictionaries, plus
+    /// an array referencing both, and runs `dedup_streams`.
+    /// Returns the stats, the two stream numbers and the array's references.
+    fn dedup_two_streams(first: PdfDict, second: PdfDict) -> (CompressStats, u32, u32, Vec<u32>) {
+        let doc = PdfDocument::from_bytes(create_text_pdf(1)).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let data = vec![7u8; 16];
+        let a = modifier.add_object(PdfObject::Stream {
+            dict: first,
+            data: data.clone(),
+        });
+        let b = modifier.add_object(PdfObject::Stream { dict: second, data });
+        let holder = modifier.add_object(PdfObject::Array(vec![
+            PdfObject::Reference(a.clone()),
+            PdfObject::Reference(b.clone()),
+        ]));
 
-        assert!(compressed.starts_with(b"%PDF"));
-        // Content streams may or may not be identical depending on text,
-        // but the dedup code should at least not break anything
-        let _ = stats.duplicates_removed;
+        let mut stats = CompressStats::default();
+        dedup_streams(&mut modifier, &mut stats);
+
+        let refs = match modifier.find_object_pub(holder.obj_num) {
+            Some(PdfObject::Array(items)) => items
+                .iter()
+                .map(|item| match item {
+                    PdfObject::Reference(r) => r.obj_num,
+                    other => panic!("unexpected item {other:?}"),
+                })
+                .collect(),
+            other => panic!("unexpected holder {other:?}"),
+        };
+        assert!(modifier.find_object_pub(a.obj_num).is_some());
+        let b_kept = modifier.find_object_pub(b.obj_num).is_some();
+        assert_eq!(b_kept, stats.duplicates_removed == 0);
+        (stats, a.obj_num, b.obj_num, refs)
+    }
+
+    fn image_dict(width: i64, height: i64) -> PdfDict {
+        let mut dict = PdfDict::new();
+        dict.insert(b"Width".to_vec(), PdfObject::Integer(width));
+        dict.insert(b"Height".to_vec(), PdfObject::Integer(height));
+        dict
+    }
+
+    /// C-T2: Two streams with equal dictionaries and data → one, references merged.
+    #[test]
+    fn test_dedup_merges_streams_with_equal_dict_and_data() {
+        let (stats, a, _, refs) = dedup_two_streams(image_dict(4, 4), image_dict(4, 4));
+        assert_eq!(stats.duplicates_removed, 1);
+        assert_eq!(refs, vec![a, a]);
+    }
+
+    /// Equal streams whose only difference is which indirect `/Length` they use → one.
+    #[test]
+    fn test_dedup_ignores_the_length_entry() {
+        let doc = PdfDocument::from_bytes(create_text_pdf(1)).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let mut streams = Vec::new();
+        for _ in 0..2 {
+            let length = modifier.add_object(PdfObject::Integer(16));
+            let mut dict = image_dict(4, 4);
+            dict.insert(b"Length".to_vec(), PdfObject::Reference(length));
+            streams.push(modifier.add_object(PdfObject::Stream {
+                dict,
+                data: vec![7u8; 16],
+            }));
+        }
+
+        let mut stats = CompressStats::default();
+        dedup_streams(&mut modifier, &mut stats);
+
+        assert_eq!(stats.duplicates_removed, 1);
+        assert!(modifier.find_object_pub(streams[0].obj_num).is_some());
+        assert!(modifier.find_object_pub(streams[1].obj_num).is_none());
+    }
+
+    /// Two equal images, each with its own equal `/SMask` → one image, one mask.
+    #[test]
+    fn test_dedup_merges_streams_that_become_equal_after_a_merge() {
+        let doc = PdfDocument::from_bytes(create_text_pdf(1)).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let mut images = Vec::new();
+        for _ in 0..2 {
+            let mask = modifier.add_object(PdfObject::Stream {
+                dict: image_dict(4, 4),
+                data: vec![1u8; 16],
+            });
+            let mut dict = image_dict(4, 4);
+            dict.insert(b"SMask".to_vec(), PdfObject::Reference(mask));
+            images.push(modifier.add_object(PdfObject::Stream {
+                dict,
+                data: vec![7u8; 16],
+            }));
+        }
+        let holder = modifier.add_object(PdfObject::Array(
+            images.iter().cloned().map(PdfObject::Reference).collect(),
+        ));
+
+        let mut stats = CompressStats::default();
+        dedup_streams(&mut modifier, &mut stats);
+
+        assert_eq!(stats.duplicates_removed, 2);
+        let refs = match modifier.find_object_pub(holder.obj_num) {
+            Some(PdfObject::Array(items)) => items.clone(),
+            other => panic!("unexpected holder {other:?}"),
+        };
+        assert_eq!(
+            refs,
+            vec![
+                PdfObject::Reference(images[0].clone()),
+                PdfObject::Reference(images[0].clone())
+            ]
+        );
+    }
+
+    /// Same bytes, different dictionary → both kept.
+    #[test]
+    fn test_dedup_keeps_streams_whose_dicts_differ() {
+        let (stats, a, b, refs) = dedup_two_streams(image_dict(4, 4), image_dict(2, 8));
+        assert_eq!(stats.duplicates_removed, 0);
+        assert_eq!(refs, vec![a, b]);
     }
 
     /// C-T3: Different streams → no false dedup.
@@ -2922,6 +2992,7 @@ mod tests {
     /// The TrueType fixture is the pinned upstream file.
     #[test]
     fn test_truetype_fixture_is_pinned() {
+        use sha2::{Digest, Sha256};
         let hex: String = Sha256::digest(NOTO_SANS_REGULAR)
             .iter()
             .map(|b| format!("{b:02x}"))

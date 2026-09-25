@@ -10,7 +10,7 @@
 | 그레이스케일 변환과 색 연산자 재작성 | [compress-grayscale](compress-grayscale.md) |
 | TrueType 서브세팅과 Widths/CIDToGIDMap 갱신 | [font-subsetting](font-subsetting.md) |
 | Flate 재압축, 무압축 스트림 압축 | [compress-stream-recompression](compress-stream-recompression.md) |
-| 스트림 SHA-256 중복 제거 | [compress-dedup](compress-dedup.md) |
+| 스트림 중복 제거(사전·데이터가 모두 같은 것) | [compress-dedup](compress-dedup.md) |
 | 미사용 리소스 제거 | [compress-unused-resources](compress-unused-resources.md) |
 | 메타데이터·구조·부가 데이터 제거 | [compress-stripping](compress-stripping.md) |
 | 브라우저 제품 / CLI 서브커맨드 | [compress-wasm](compress-wasm.md), [CLI](cli.md) |

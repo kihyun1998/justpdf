@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::object::{PdfDict, PdfObject};
 
@@ -14,7 +16,7 @@ pub struct CleanStats {
 /// Clean and optimize a PDF document's object list.
 ///
 /// Performs the following operations:
-/// 1. Removes duplicate objects (identical content), rewriting references
+/// 1. Removes duplicate objects (equal values, streams without `/Length`), rewriting references
 /// 2. Removes null/empty objects
 /// 3. Compacts object numbers sequentially to eliminate gaps
 ///
@@ -22,7 +24,7 @@ pub struct CleanStats {
 pub fn clean_objects(objects: &mut Vec<(u32, PdfObject)>) -> CleanStats {
     let total_before = objects.len();
 
-    // Step 1: Remove duplicates by hashing object content
+    // Step 1: Remove objects whose value equals an earlier object's
     let dups_removed = dedup_objects(objects);
 
     // Step 2: Remove null objects
@@ -39,53 +41,105 @@ pub fn clean_objects(objects: &mut Vec<(u32, PdfObject)>) -> CleanStats {
     }
 }
 
-/// Hash a PdfObject to a canonical string for deduplication.
-/// This uses the Display representation which is deterministic for our types.
-fn hash_object(obj: &PdfObject) -> String {
-    // Use format! which delegates to Display
-    format!("{}", obj)
+/// A stream dictionary's entries other than `/Length`, which the writer
+/// recomputes.
+fn entries_without_length(dict: &PdfDict) -> impl Iterator<Item = (&Vec<u8>, &PdfObject)> {
+    dict.iter().filter(|(key, _)| key.as_slice() != b"Length")
 }
 
-/// Remove duplicate objects: when two objects have identical content,
-/// keep the first and rewrite all references to point to it.
-/// Returns the number of duplicates removed.
-fn dedup_objects(objects: &mut Vec<(u32, PdfObject)>) -> usize {
-    // Build a map from object hash -> first object number with that hash
-    let mut hash_to_first: HashMap<String, u32> = HashMap::new();
-    // Map from removed obj_num -> replacement obj_num
+/// Whether `a` duplicates `b`: equal values (`PartialEq`), where two streams
+/// are compared without their `/Length` entries.
+fn same_value(a: &PdfObject, b: &PdfObject) -> bool {
+    match (a, b) {
+        (
+            PdfObject::Stream {
+                dict: dict_a,
+                data: data_a,
+            },
+            PdfObject::Stream {
+                dict: dict_b,
+                data: data_b,
+            },
+        ) => data_a == data_b && entries_without_length(dict_a).eq(entries_without_length(dict_b)),
+        _ => a == b,
+    }
+}
+
+/// Bucket key for deduplication: the object's Display text, or for a stream
+/// its dictionary without `/Length` and a hash of its data. Objects sharing a
+/// key need not be duplicates, and equal objects whose Display differs (`0.0`
+/// and `-0.0`) do not share one.
+fn bucket_key(obj: &PdfObject) -> String {
+    match obj {
+        PdfObject::Stream { dict, data } => {
+            let mut hasher = DefaultHasher::new();
+            data.hash(&mut hasher);
+            let entries: Vec<_> = entries_without_length(dict).collect();
+            format!("stream {:?} {:016x}", entries, hasher.finish())
+        }
+        _ => format!("{}", obj),
+    }
+}
+
+/// Duplicates among the objects `select` accepts: a map from the number of
+/// each object that duplicates ([`same_value`]) an earlier accepted object to
+/// that earlier object's number. Candidates are bucketed by `bucket_key`;
+/// only objects in the same bucket are compared.
+fn find_duplicates(
+    objects: &[(u32, PdfObject)],
+    select: &impl Fn(&PdfObject) -> bool,
+) -> HashMap<u32, u32> {
+    // Indices of the kept objects, bucketed by bucket_key
+    let mut buckets: HashMap<String, Vec<usize>> = HashMap::new();
     let mut remap: HashMap<u32, u32> = HashMap::new();
 
-    for (obj_num, obj) in objects.iter() {
-        let h = hash_object(obj);
-        match hash_to_first.get(&h) {
-            Some(&first_num) if first_num != *obj_num => {
-                remap.insert(*obj_num, first_num);
+    for (i, (obj_num, obj)) in objects.iter().enumerate() {
+        if !select(obj) {
+            continue;
+        }
+        let kept = buckets.entry(bucket_key(obj)).or_default();
+        match kept.iter().find(|&&j| same_value(obj, &objects[j].1)) {
+            Some(&j) => {
+                if objects[j].0 != *obj_num {
+                    remap.insert(*obj_num, objects[j].0);
+                }
             }
-            _ => {
-                hash_to_first.insert(h, *obj_num);
-            }
+            None => kept.push(i),
         }
     }
+    remap
+}
 
-    if remap.is_empty() {
-        return 0;
+/// Merge duplicates ([`find_duplicates`]) among the objects `select` accepts:
+/// remove each duplicate and point its references at the object it
+/// duplicates, repeating until none remain, since a merge can make objects
+/// that referenced the merged ones equal. Returns the number removed.
+pub(crate) fn merge_duplicates(
+    objects: &mut Vec<(u32, PdfObject)>,
+    select: impl Fn(&PdfObject) -> bool,
+) -> usize {
+    let mut removed = 0;
+    loop {
+        let remap = find_duplicates(objects, &select);
+        if remap.is_empty() {
+            return removed;
+        }
+        removed += remap.len();
+        objects.retain(|(obj_num, _)| !remap.contains_key(obj_num));
+        for (_, obj) in objects.iter_mut() {
+            rewrite_references(obj, &remap);
+        }
     }
+}
 
-    let removed = remap.len();
-
-    // Remove the duplicate objects
-    objects.retain(|(obj_num, _)| !remap.contains_key(obj_num));
-
-    // Rewrite all references in remaining objects
-    for (_, obj) in objects.iter_mut() {
-        rewrite_references(obj, &remap);
-    }
-
-    removed
+/// Remove duplicate objects ([`merge_duplicates`]), keeping the first of each
+/// and rewriting references to it. Returns the number of duplicates removed.
+fn dedup_objects(objects: &mut Vec<(u32, PdfObject)>) -> usize {
+    merge_duplicates(objects, |_| true)
 }
 
 /// Recursively rewrite indirect references according to the remap table.
-pub(crate) fn rewrite_references(obj: &mut PdfObject, remap: &HashMap<u32, u32>) {
+fn rewrite_references(obj: &mut PdfObject, remap: &HashMap<u32, u32>) {
     match obj {
         PdfObject::Reference(r) => {
             if let Some(&new_num) = remap.get(&r.obj_num) {
@@ -369,6 +423,70 @@ mod tests {
         assert_eq!(stats.empty_objects_removed, 0);
     }
 
+    fn stream(data: &[u8]) -> PdfObject {
+        PdfObject::Stream {
+            dict: PdfDict::new(),
+            data: data.to_vec(),
+        }
+    }
+
+    #[test]
+    fn test_no_dedup_of_streams_with_different_data() {
+        let mut objects = vec![(1, stream(b"AAAA")), (2, stream(b"BBBB"))];
+
+        assert_eq!(clean_objects(&mut objects).duplicate_objects_removed, 0);
+        assert_eq!(objects, vec![(1, stream(b"AAAA")), (2, stream(b"BBBB"))]);
+    }
+
+    #[test]
+    fn test_no_dedup_of_real_and_integer_with_the_same_text() {
+        let mut objects = vec![(1, PdfObject::Real(1.0)), (2, PdfObject::Integer(1))];
+
+        assert_eq!(clean_objects(&mut objects).duplicate_objects_removed, 0);
+        assert_eq!(
+            objects,
+            vec![(1, PdfObject::Real(1.0)), (2, PdfObject::Integer(1))]
+        );
+    }
+
+    #[test]
+    fn test_clean_merges_equal_streams() {
+        let mut dict = PdfDict::new();
+        dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
+        let equal = PdfObject::Stream {
+            dict,
+            data: b"AAAA".to_vec(),
+        };
+        let mut objects = vec![
+            (1, equal.clone()),
+            (2, equal.clone()),
+            (
+                3,
+                PdfObject::Array(vec![PdfObject::Reference(IndirectRef {
+                    obj_num: 2,
+                    gen_num: 0,
+                })]),
+            ),
+        ];
+
+        let stats = clean_objects(&mut objects);
+
+        assert_eq!(stats.duplicate_objects_removed, 1);
+        assert_eq!(
+            objects,
+            vec![
+                (1, equal),
+                (
+                    2,
+                    PdfObject::Array(vec![PdfObject::Reference(IndirectRef {
+                        obj_num: 1,
+                        gen_num: 0,
+                    })]),
+                ),
+            ]
+        );
+    }
+
     // ── Name/String special char tests for dedup ────────────────────
 
     #[test]
@@ -419,21 +537,20 @@ mod tests {
     }
 
     #[test]
-    fn test_hash_name_with_special_chars() {
-        // Same name with spaces must hash identically
-        let obj1 = PdfObject::Name(b"Font Name Here".to_vec());
-        let obj2 = PdfObject::Name(b"Font Name Here".to_vec());
-        assert_eq!(hash_object(&obj1), hash_object(&obj2));
+    fn test_dedup_strings_with_parens() {
+        let mut objects = vec![
+            (1, PdfObject::String(b"hello(world)".to_vec())),
+            (2, PdfObject::String(b"hello(world)".to_vec())),
+            (3, PdfObject::String(b"hello(world))".to_vec())),
+        ];
 
-        // Different names must hash differently
-        let obj3 = PdfObject::Name(b"Font Name There".to_vec());
-        assert_ne!(hash_object(&obj1), hash_object(&obj3));
-    }
-
-    #[test]
-    fn test_hash_string_with_parens() {
-        let obj1 = PdfObject::String(b"hello(world)".to_vec());
-        let obj2 = PdfObject::String(b"hello(world)".to_vec());
-        assert_eq!(hash_object(&obj1), hash_object(&obj2));
+        assert_eq!(dedup_objects(&mut objects), 1);
+        assert_eq!(
+            objects,
+            vec![
+                (1, PdfObject::String(b"hello(world)".to_vec())),
+                (3, PdfObject::String(b"hello(world))".to_vec())),
+            ]
+        );
     }
 }
