@@ -287,79 +287,9 @@ impl fmt::Display for PdfObject {
             Self::Null => write!(f, "null"),
             Self::Bool(v) => write!(f, "{v}"),
             Self::Integer(v) => write!(f, "{v}"),
-            Self::Real(v) => {
-                // Always with a decimal point; NaN as 0, ±Inf as ±f32::MAX
-                let v = if v.is_nan() {
-                    0.0
-                } else if v.is_infinite() {
-                    f64::from(f32::MAX).copysign(*v)
-                } else {
-                    *v
-                };
-                let text = v.to_string();
-                if text.contains('.') {
-                    write!(f, "{text}")
-                } else {
-                    write!(f, "{text}.0")
-                }
-            }
-            Self::Name(v) => {
-                write!(f, "/")?;
-                for &byte in v {
-                    // PDF spec: Name objects must escape delimiters, whitespace,
-                    // and '#' using #XX hex notation
-                    if byte == b'#'
-                        || byte == b'/'
-                        || byte == b'('
-                        || byte == b')'
-                        || byte == b'<'
-                        || byte == b'>'
-                        || byte == b'['
-                        || byte == b']'
-                        || byte == b'{'
-                        || byte == b'}'
-                        || byte == b'%'
-                        || byte <= b' '
-                        || byte >= 127
-                    {
-                        write!(f, "#{:02X}", byte)?;
-                    } else {
-                        write!(f, "{}", byte as char)?;
-                    }
-                }
-                Ok(())
-            }
-            Self::String(v) => {
-                // Use a literal string with proper escaping only when every
-                // byte is safely representable there: printable ASCII or one of
-                // tab/newline/carriage-return (written as `\r`). Anything else
-                // (control bytes, and crucially bytes >= 0x7F) must use hex —
-                // otherwise the literal path's `b as char` would UTF-8-encode
-                // high bytes into multiple bytes and corrupt binary strings
-                // like /O and /U.
-                let needs_hex = v.iter().any(|&b| {
-                    !(b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7E).contains(&b))
-                });
-                if needs_hex {
-                    write!(f, "<")?;
-                    for b in v {
-                        write!(f, "{b:02X}")?;
-                    }
-                    write!(f, ">")
-                } else {
-                    write!(f, "(")?;
-                    for &b in v {
-                        match b {
-                            b'(' => write!(f, "\\(")?,
-                            b')' => write!(f, "\\)")?,
-                            b'\\' => write!(f, "\\\\")?,
-                            b'\r' => write!(f, "\\r")?,
-                            _ => write!(f, "{}", b as char)?,
-                        }
-                    }
-                    write!(f, ")")
-                }
-            }
+            Self::Real(v) => write_real(f, *v),
+            Self::Name(v) => write_name(f, v),
+            Self::String(v) => write_string(f, v),
             Self::Array(v) => {
                 write!(f, "[")?;
                 for (i, item) in v.iter().enumerate() {
@@ -373,18 +303,7 @@ impl fmt::Display for PdfObject {
             Self::Dict(d) => {
                 write!(f, "<< ")?;
                 for (key, val) in d.iter() {
-                    write!(f, "/")?;
-                    for &byte in key {
-                        if byte == b'#' || byte == b'/' || byte == b'(' || byte == b')'
-                            || byte == b'<' || byte == b'>' || byte == b'['
-                            || byte == b']' || byte == b'{' || byte == b'}'
-                            || byte == b'%' || byte <= b' ' || byte >= 127
-                        {
-                            write!(f, "#{:02X}", byte)?;
-                        } else {
-                            write!(f, "{}", byte as char)?;
-                        }
-                    }
+                    write_name(f, key)?;
                     write!(f, " {val} ")?;
                 }
                 write!(f, ">>")
@@ -394,6 +313,116 @@ impl fmt::Display for PdfObject {
             }
             Self::Reference(r) => write!(f, "{r}"),
         }
+    }
+}
+
+/// Write a real number as PDF syntax: always with a decimal point; NaN as 0,
+/// ±Inf as ±f32::MAX.
+pub(crate) fn write_real(w: &mut impl fmt::Write, v: f64) -> fmt::Result {
+    let v = if v.is_nan() {
+        0.0
+    } else if v.is_infinite() {
+        f64::from(f32::MAX).copysign(v)
+    } else {
+        v
+    };
+    let text = v.to_string();
+    if text.contains('.') {
+        w.write_str(&text)
+    } else {
+        write!(w, "{text}.0")
+    }
+}
+
+/// Write a name as PDF syntax, with its leading `/`.
+pub(crate) fn write_name(w: &mut impl fmt::Write, name: &[u8]) -> fmt::Result {
+    w.write_char('/')?;
+    for &byte in name {
+        // PDF spec: Name objects must escape delimiters, whitespace,
+        // and '#' using #XX hex notation
+        if byte == b'#'
+            || byte == b'/'
+            || byte == b'('
+            || byte == b')'
+            || byte == b'<'
+            || byte == b'>'
+            || byte == b'['
+            || byte == b']'
+            || byte == b'{'
+            || byte == b'}'
+            || byte == b'%'
+            || byte <= b' '
+            || byte >= 127
+        {
+            write!(w, "#{:02X}", byte)?;
+        } else {
+            w.write_char(byte as char)?;
+        }
+    }
+    Ok(())
+}
+
+/// Write a string as PDF syntax, with its delimiters: literal `(…)` or hex `<…>`.
+pub(crate) fn write_string(w: &mut impl fmt::Write, v: &[u8]) -> fmt::Result {
+    // Use a literal string with proper escaping only when every
+    // byte is safely representable there: printable ASCII or one of
+    // tab/newline/carriage-return (written as `\r`). Anything else
+    // (control bytes, and crucially bytes >= 0x7F) must use hex —
+    // otherwise the literal path's `b as char` would UTF-8-encode
+    // high bytes into multiple bytes and corrupt binary strings
+    // like /O and /U.
+    let needs_hex = v
+        .iter()
+        .any(|&b| !(b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7E).contains(&b)));
+    if needs_hex {
+        w.write_char('<')?;
+        for b in v {
+            write!(w, "{b:02X}")?;
+        }
+        w.write_char('>')
+    } else {
+        w.write_char('(')?;
+        for &b in v {
+            match b {
+                b'(' => w.write_str("\\(")?,
+                b')' => w.write_str("\\)")?,
+                b'\\' => w.write_str("\\\\")?,
+                b'\r' => w.write_str("\\r")?,
+                _ => w.write_char(b as char)?,
+            }
+        }
+        w.write_char(')')
+    }
+}
+
+/// A string as PDF syntax, with its delimiters.
+pub(crate) fn string_syntax(v: &[u8]) -> String {
+    let mut out = String::new();
+    let _ = write_string(&mut out, v);
+    out
+}
+
+/// A name as PDF syntax, with its leading `/`.
+pub(crate) fn name_syntax(name: &[u8]) -> String {
+    let mut out = String::new();
+    let _ = write_name(&mut out, name);
+    out
+}
+
+/// A real number as PDF syntax.
+pub(crate) fn real_syntax(v: f64) -> String {
+    let mut out = String::new();
+    let _ = write_real(&mut out, v);
+    out
+}
+
+/// A `fmt::Write` sink that appends to a byte buffer.
+pub(crate) struct ByteSink<'a>(pub(crate) &'a mut Vec<u8>);
+
+impl fmt::Write for ByteSink<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
     }
 }
 

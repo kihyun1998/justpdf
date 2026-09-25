@@ -9,7 +9,7 @@
 ## Design model
 - 저장소에서 PDF 텍스트 문자열을 올바르게 디코드하는 몇 안 되는 곳이다(`obj_to_string`, UTF-16BE BOM 처리). 다른 읽기 코드는 이것을 재사용하지 않는다.
 - 추가 시 이름 트리 루트 `/Names`에 정렬 없이 덧붙인다(루트에 `/Kids`가 있어도 — 추론).
-- MIME 타입을 `#2F`로 미리 인코딩한 뒤 이름 직렬화기가 `#`을 한 번 더 이스케이프한다 → 다른 리더는 `application#2Fpdf`를 본다(추론) — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md)의 이중 이스케이프 형태.
+- MIME 타입은 `Name(b"application/pdf")`로 두고, `/`의 `#2F` 이스케이프는 직렬화기에 맡긴다(#29). 읽을 때 디코드한 이름에 남은 `#2F`를 `/`로 바꾼다 — #29 전의 justpdf는 `/application#232Fpdf`(이중 이스케이프)로 썼고, 그 파일은 `application#2Fpdf`로 디코드되기 때문이다(`test_mime_type_written_escaped_twice_still_reads`) — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md).
 - `/F`·`/UF`를 UTF-8 그대로 쓴다 — [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
 
 ## Code
@@ -29,5 +29,5 @@
 - [파사드](facade.md) — `embedded_files`.
 
 ## Known holes / open
-- 추가·추출 왕복 테스트가 없다.
-- Tracked: #29 (손으로 쓰는 구문 이스케이프), #33 (텍스트 문자열 인코딩), #58 (extreme의 첨부파일 제거)
+- 추출 왕복 테스트가 없다(추가 후 MIME 되읽기만 있다: `test_mime_type_is_written_once_escaped`).
+- Tracked: #33 (텍스트 문자열 인코딩), #58 (extreme의 첨부파일 제거)

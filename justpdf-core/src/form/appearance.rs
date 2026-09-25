@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use crate::object::{IndirectRef, PdfObject};
+use crate::object::{IndirectRef, PdfObject, string_syntax};
 use crate::writer::encode::make_stream;
 use crate::writer::modify::DocumentModifier;
 
@@ -70,8 +70,7 @@ fn text_field_appearance(field: &FormField, w: f64, h: f64) -> String {
             }
             buf.push_str("0 g\n");
             let _ = write!(buf, "2 {} Td\n", (h - 10.0) / 2.0);
-            let escaped = escape_pdf_string(&text);
-            let _ = write!(buf, "({escaped}) Tj\nET\n");
+            let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
         }
     }
     buf
@@ -154,8 +153,7 @@ fn combo_appearance(field: &FormField, w: f64, h: f64) -> String {
         if !text.is_empty() {
             buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
             let _ = write!(buf, "2 {} Td\n", (h - 10.0) / 2.0);
-            let escaped = escape_pdf_string(&text);
-            let _ = write!(buf, "({escaped}) Tj\nET\n");
+            let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
         }
     }
     buf
@@ -185,8 +183,7 @@ fn list_appearance(field: &FormField, w: f64, h: f64) -> String {
         }
         buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
         let _ = write!(buf, "3 {} Td\n", y + 2.0);
-        let escaped = escape_pdf_string(opt);
-        let _ = write!(buf, "({escaped}) Tj\nET\n");
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(opt.as_bytes()));
         y -= line_height;
     }
     buf
@@ -208,8 +205,7 @@ fn button_appearance(field: &FormField, w: f64, h: f64) -> String {
         if !text.is_empty() {
             buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
             let _ = write!(buf, "{} {} Td\n", 4.0, (h - 10.0) / 2.0);
-            let escaped = escape_pdf_string(&text);
-            let _ = write!(buf, "({escaped}) Tj\nET\n");
+            let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
         }
     }
     buf
@@ -245,17 +241,6 @@ fn append_circle(buf: &mut String, cx: f64, cy: f64, r: f64, k: f64) {
         cx + r, cy - r * k,
         cx + r, cy
     );
-}
-
-fn escape_pdf_string(s: &str) -> String {
-    s.chars()
-        .flat_map(|c| match c {
-            '(' => vec!['\\', '('],
-            ')' => vec!['\\', ')'],
-            '\\' => vec!['\\', '\\'],
-            _ => vec![c],
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -328,9 +313,38 @@ mod tests {
     }
 
     #[test]
-    fn test_escape_pdf_string() {
-        assert_eq!(escape_pdf_string("Hello"), "Hello");
-        assert_eq!(escape_pdf_string("A(B)C"), "A\\(B\\)C");
-        assert_eq!(escape_pdf_string("a\\b"), "a\\\\b");
+    fn test_text_value_reads_back_unchanged() {
+        let text = "1) a\\b\r(c";
+        let field = FormField {
+            name: "name".to_string(),
+            partial_name: "name".to_string(),
+            field_type: FieldType::Text,
+            value: Some(PdfObject::String(text.as_bytes().to_vec())),
+            default_value: None,
+            flags: FieldFlags::default(),
+            options: Vec::new(),
+            rect: Some(Rect {
+                llx: 0.0,
+                lly: 0.0,
+                urx: 200.0,
+                ury: 20.0,
+            }),
+            default_appearance: None,
+            field_ref: IndirectRef {
+                obj_num: 1,
+                gen_num: 0,
+            },
+            page_obj_num: None,
+        };
+        let content = text_field_appearance(&field, 200.0, 20.0);
+
+        let ops = crate::content::parse_content_stream(content.as_bytes()).unwrap();
+        let tj = ops.iter().find(|op| op.operator == b"Tj").unwrap();
+        assert_eq!(
+            tj.operands,
+            vec![crate::content::Operand::String(text.as_bytes().to_vec())]
+        );
+        // No raw CR: a literal string carries it as `\r`
+        assert!(!content.contains('\r'));
     }
 }

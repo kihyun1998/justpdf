@@ -1059,34 +1059,29 @@ fn rewrite_color_operators_to_gray(modifier: &mut DocumentModifier) {
                 b"rg" if op.operands.len() >= 3 => {
                     // RGB non-stroking → grayscale
                     let gray = rgb_to_gray_from_operands(&op.operands);
-                    write_real(&mut new_content, gray);
+                    write_gray(&mut new_content, gray);
                     new_content.extend_from_slice(b" g\n");
                 }
                 b"RG" if op.operands.len() >= 3 => {
                     // RGB stroking → grayscale
                     let gray = rgb_to_gray_from_operands(&op.operands);
-                    write_real(&mut new_content, gray);
+                    write_gray(&mut new_content, gray);
                     new_content.extend_from_slice(b" G\n");
                 }
                 b"k" if op.operands.len() >= 4 => {
                     // CMYK non-stroking → grayscale
                     let gray = cmyk_to_gray_from_operands(&op.operands);
-                    write_real(&mut new_content, gray);
+                    write_gray(&mut new_content, gray);
                     new_content.extend_from_slice(b" g\n");
                 }
                 b"K" if op.operands.len() >= 4 => {
                     // CMYK stroking → grayscale
                     let gray = cmyk_to_gray_from_operands(&op.operands);
-                    write_real(&mut new_content, gray);
+                    write_gray(&mut new_content, gray);
                     new_content.extend_from_slice(b" G\n");
                 }
                 _ => {
-                    // Write operands then operator unchanged
-                    for operand in &op.operands {
-                        write_operand(&mut new_content, operand);
-                        new_content.push(b' ');
-                    }
-                    new_content.extend_from_slice(&op.operator);
+                    op.write_to(&mut new_content);
                     new_content.push(b'\n');
                 }
             }
@@ -1151,74 +1146,10 @@ fn cmyk_to_gray_from_operands(operands: &[crate::content::Operand]) -> f64 {
     0.299 * r + 0.587 * g + 0.114 * b
 }
 
-fn write_real(buf: &mut Vec<u8>, val: f64) {
-    use std::io::Write;
-    if (val - val.round()).abs() < 0.0001 {
-        write!(buf, "{}", val.round() as i64).unwrap();
-    } else {
-        write!(buf, "{:.4}", val).unwrap();
-    }
-}
-
-fn write_operand(buf: &mut Vec<u8>, operand: &crate::content::Operand) {
-    use std::io::Write;
-    match operand {
-        crate::content::Operand::Integer(v) => write!(buf, "{}", v).unwrap(),
-        crate::content::Operand::Real(v) => {
-            if (*v - v.round()).abs() < 0.0001 {
-                write!(buf, "{}", v.round() as i64).unwrap();
-            } else {
-                write!(buf, "{:.4}", v).unwrap();
-            }
-        }
-        crate::content::Operand::Bool(v) => {
-            write!(buf, "{}", if *v { "true" } else { "false" }).unwrap();
-        }
-        crate::content::Operand::Null => buf.extend_from_slice(b"null"),
-        crate::content::Operand::Name(n) => {
-            buf.push(b'/');
-            buf.extend_from_slice(n);
-        }
-        crate::content::Operand::String(s) => {
-            buf.push(b'(');
-            // Escape special chars
-            for &byte in s.iter() {
-                match byte {
-                    b'(' | b')' | b'\\' => {
-                        buf.push(b'\\');
-                        buf.push(byte);
-                    }
-                    _ => buf.push(byte),
-                }
-            }
-            buf.push(b')');
-        }
-        crate::content::Operand::Array(arr) => {
-            buf.push(b'[');
-            for (i, item) in arr.iter().enumerate() {
-                if i > 0 {
-                    buf.push(b' ');
-                }
-                write_operand(buf, item);
-            }
-            buf.push(b']');
-        }
-        crate::content::Operand::Dict(entries) => {
-            buf.extend_from_slice(b"<< ");
-            for (key, val) in entries {
-                buf.push(b'/');
-                buf.extend_from_slice(key);
-                buf.push(b' ');
-                write_operand(buf, val);
-                buf.push(b' ');
-            }
-            buf.extend_from_slice(b">>");
-        }
-        crate::content::Operand::InlineImage { .. } => {
-            // Inline images are complex — write as-is (rare in practice)
-            buf.extend_from_slice(b"BI ");
-        }
-    }
+/// Write a gray value as a real rounded to four decimals.
+fn write_gray(buf: &mut Vec<u8>, val: f64) {
+    let rounded = (val * 10_000.0).round() / 10_000.0;
+    let _ = crate::object::write_real(&mut crate::object::ByteSink(buf), rounded);
 }
 
 /// Subset embedded TrueType fonts to contain only used glyphs.
@@ -3845,6 +3776,83 @@ mod tests {
         let reparsed = PdfDocument::from_bytes(compressed).unwrap();
         let pages = crate::page::collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 1);
+    }
+
+    /// Gray values are written as reals that read back as themselves, rounded
+    /// to four decimals; non-finite ones as finite reals.
+    #[test]
+    fn test_gray_values_read_back_as_reals() {
+        let max = f64::from(f32::MAX);
+        for (gray, expected) in [
+            (0.299, 0.299),
+            (1.0, 1.0),
+            (0.123456, 0.1235),
+            (f64::INFINITY, max),
+            (f64::NAN, 0.0),
+        ] {
+            let mut buf = Vec::new();
+            write_gray(&mut buf, gray);
+            buf.extend_from_slice(b" g");
+            let ops = crate::content::parse_content_stream(&buf).unwrap();
+            assert_eq!(
+                ops[0].operands,
+                vec![crate::content::Operand::Real(expected)],
+                "gray {gray}"
+            );
+        }
+    }
+
+    /// Grayscale rewrites only the color operators; the rest reads back unchanged.
+    #[test]
+    fn test_grayscale_keeps_other_operators_unchanged() {
+        let mut doc = DocumentBuilder::new();
+        let font = doc.add_standard_font("Helvetica");
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.add_font(&font, "Helvetica");
+        page.set_fill_rgb(1.0, 0.0, 0.0);
+        page.begin_text();
+        page.set_font(&font, 12.0);
+        page.move_to(72.123456, 720.0);
+        page.show_text("1) first item");
+        page.end_text();
+        page.draw_inline_image(2, 1, 8, "DeviceGray", &[0x80, 0xFF]);
+        doc.add_page(page);
+        let pdf = doc.build().unwrap();
+
+        let content = |bytes: Vec<u8>| {
+            let doc = PdfDocument::from_bytes(bytes).unwrap();
+            let pages = crate::page::collect_pages(&doc).unwrap();
+            let page = doc.resolve(&pages[0].page_ref).unwrap();
+            let Some(PdfObject::Reference(r)) = page.as_dict().unwrap().get(b"Contents").cloned()
+            else {
+                panic!("expected a content reference")
+            };
+            let PdfObject::Stream { dict, data } = doc.resolve(&r).unwrap() else {
+                panic!("expected a stream")
+            };
+            crate::content::parse_content_stream(
+                &crate::stream::decode_stream(&data, &dict).unwrap(),
+            )
+            .unwrap()
+        };
+        let original = content(pdf.clone());
+
+        let mut options = CompressOptions::preset_low();
+        options.grayscale = true;
+        let (compressed, _) = compress_pdf(&pdf, &options).unwrap();
+        let rewritten = content(compressed);
+
+        let expected: Vec<_> = original
+            .iter()
+            .map(|op| match op.operator.as_slice() {
+                b"rg" => crate::content::ContentOp {
+                    operator: b"g".to_vec(),
+                    operands: vec![crate::content::Operand::Real(0.299)],
+                },
+                _ => op.clone(),
+            })
+            .collect();
+        assert_eq!(rewritten, expected);
     }
 
     /// G-T3: grayscale=false → no conversion.

@@ -99,7 +99,7 @@ fn parse_file_spec_dict(
                     // MIME type from /Subtype
                     if let Some(name) = s_dict.get_name(b"Subtype") {
                         let raw = String::from_utf8_lossy(name).into_owned();
-                        // PDF uses #2F for '/' in names
+                        // `#2F` left after decoding: a MIME type escaped twice
                         mime_type = Some(raw.replace("#2F", "/"));
                     }
 
@@ -307,13 +307,9 @@ pub fn add_embedded_file(
     // /Type /EmbeddedFile
     stream_dict.insert(b"Type".to_vec(), PdfObject::Name(b"EmbeddedFile".to_vec()));
 
-    // /Subtype (MIME type encoded as a PDF name, with '/' -> '#2F')
+    // /Subtype (MIME type as a PDF name)
     if let Some(mt) = mime_type {
-        let name_encoded = mt.replace('/', "#2F");
-        stream_dict.insert(
-            b"Subtype".to_vec(),
-            PdfObject::Name(name_encoded.into_bytes()),
-        );
+        stream_dict.insert(b"Subtype".to_vec(), PdfObject::Name(mt.as_bytes().to_vec()));
     }
 
     // /Params dict
@@ -610,14 +606,58 @@ mod tests {
         assert_eq!(obj_to_string(&obj), None);
     }
 
+    fn one_page_pdf() -> Vec<u8> {
+        let mut doc = crate::writer::document::DocumentBuilder::new();
+        doc.add_page(crate::writer::page::PageBuilder::new(612.0, 792.0));
+        doc.build().unwrap()
+    }
+
     #[test]
-    fn test_mime_type_name_encoding() {
-        // Verify MIME name encoding roundtrip ('#2F' <-> '/')
-        let mime = "application/pdf";
-        let encoded = mime.replace('/', "#2F");
-        assert_eq!(encoded, "application#2Fpdf");
-        let decoded = encoded.replace("#2F", "/");
-        assert_eq!(decoded, mime);
+    fn test_mime_type_is_written_once_escaped() {
+        let doc = PdfDocument::from_bytes(one_page_pdf()).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        add_embedded_file(
+            &mut modifier,
+            "a.pdf",
+            b"data",
+            Some("application/pdf"),
+            None,
+        )
+        .unwrap();
+        let bytes = modifier.build().unwrap();
+
+        let find = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+        assert!(find(b"/Subtype /application#2Fpdf"));
+        assert!(!find(b"#232F"));
+        let files = read_embedded_files(&PdfDocument::from_bytes(bytes).unwrap()).unwrap();
+        assert_eq!(files[0].mime_type.as_deref(), Some("application/pdf"));
+    }
+
+    #[test]
+    fn test_mime_type_written_escaped_twice_still_reads() {
+        // A MIME type escaped twice: `/application#232Fpdf` reads as `application#2Fpdf`.
+        let doc = PdfDocument::from_bytes(one_page_pdf()).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let file_ref = add_embedded_file(&mut modifier, "a.pdf", b"data", None, None).unwrap();
+        let PdfObject::Dict(spec) = modifier.find_object_pub(file_ref.obj_num).unwrap().clone()
+        else {
+            panic!("expected a file specification")
+        };
+        let stream_ref = spec.get_dict(b"EF").unwrap().get_ref(b"F").unwrap().clone();
+        let Some(PdfObject::Stream { mut dict, data }) =
+            modifier.find_object_pub(stream_ref.obj_num).cloned()
+        else {
+            panic!("expected a stream")
+        };
+        dict.insert(
+            b"Subtype".to_vec(),
+            PdfObject::Name(b"application#2Fpdf".to_vec()),
+        );
+        modifier.set_object(stream_ref.obj_num, PdfObject::Stream { dict, data });
+        let bytes = modifier.build().unwrap();
+
+        let files = read_embedded_files(&PdfDocument::from_bytes(bytes).unwrap()).unwrap();
+        assert_eq!(files[0].mime_type.as_deref(), Some("application/pdf"));
     }
 
     #[test]

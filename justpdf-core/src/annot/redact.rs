@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use crate::content::{parse_content_stream, ContentOp, Operand};
+use crate::content::{ContentOp, Operand, parse_content_stream, write_content};
 use crate::error::{JustPdfError, Result};
 use crate::object::{PdfDict, PdfObject};
 use crate::page::{collect_pages, Rect};
@@ -110,31 +110,35 @@ pub fn apply_redactions(
             })?;
 
         let filtered_ops = filter_content_ops(&ops, &redact_rects);
-        let mut new_content = String::new();
-        for op in &filtered_ops {
-            let _ = writeln!(new_content, "{op}");
-        }
+        let mut new_content = write_content(&filtered_ops);
 
         // Add overlay rectangles
-        new_content.push_str("q\n");
+        let mut overlay = String::from("q\n");
         for info in &redact_rects {
             // Fill color
             match &info.color {
-                AnnotColor::Gray(g) => { let _ = writeln!(new_content, "{g} g"); }
-                AnnotColor::Rgb(r, g, b) => { let _ = writeln!(new_content, "{r} {g} {b} rg"); }
-                AnnotColor::Cmyk(c, m, y, k) => { let _ = writeln!(new_content, "{c} {m} {y} {k} k"); }
+                AnnotColor::Gray(g) => {
+                    let _ = writeln!(overlay, "{g} g");
+                }
+                AnnotColor::Rgb(r, g, b) => {
+                    let _ = writeln!(overlay, "{r} {g} {b} rg");
+                }
+                AnnotColor::Cmyk(c, m, y, k) => {
+                    let _ = writeln!(overlay, "{c} {m} {y} {k} k");
+                }
             }
             let _ = writeln!(
-                new_content,
+                overlay,
                 "{} {} {} {} re\nf",
                 info.rect.llx, info.rect.lly,
                 info.rect.width(), info.rect.height()
             );
         }
-        new_content.push_str("Q\n");
+        overlay.push_str("Q\n");
+        new_content.extend_from_slice(overlay.as_bytes());
 
         // Replace page content stream
-        let (stream_dict, stream_data) = make_stream(new_content.as_bytes(), true);
+        let (stream_dict, stream_data) = make_stream(&new_content, true);
         let content_ref = modifier.add_object(PdfObject::Stream {
             dict: stream_dict,
             data: stream_data,
@@ -166,7 +170,8 @@ struct RedactInfo {
     overlay_text: Option<String>,
 }
 
-/// Filter content stream ops, removing text that falls within redaction rects.
+/// Filter content stream ops, removing text, `Do` and inline images that fall
+/// within redaction rects.
 fn filter_content_ops(ops: &[ContentOp], redact_rects: &[RedactInfo]) -> Vec<ContentOp> {
     let mut result = Vec::new();
     let mut in_text = false;
@@ -263,8 +268,8 @@ fn filter_content_ops(ops: &[ContentOp], redact_rects: &[RedactInfo]) -> Vec<Con
             }
         }
 
-        // Check image Do operations
-        if op_name == b"Do" {
+        // Check image Do operations and inline images
+        if op_name == b"Do" || op_name == b"BI" {
             let img_rect = Rect {
                 llx: ctm_e,
                 lly: ctm_f,
@@ -438,6 +443,51 @@ mod tests {
 
         let filtered = filter_content_ops(&ops, &redact);
         assert_eq!(filtered.len(), 4); // All ops kept
+    }
+
+    #[test]
+    fn test_filter_removes_inline_image_in_redact_rect() {
+        let image = |x: f64| {
+            vec![
+                ContentOp {
+                    operator: b"q".to_vec(),
+                    operands: vec![],
+                },
+                ContentOp {
+                    operator: b"cm".to_vec(),
+                    operands: [200.0, 0.0, 0.0, 100.0, x, 705.0]
+                        .map(Operand::Real)
+                        .to_vec(),
+                },
+                ContentOp {
+                    operator: b"BI".to_vec(),
+                    operands: vec![Operand::InlineImage {
+                        dict: vec![(b"W".to_vec(), Operand::Integer(1))],
+                        data: vec![x as u8],
+                    }],
+                },
+                ContentOp {
+                    operator: b"Q".to_vec(),
+                    operands: vec![],
+                },
+            ]
+        };
+        let ops = [image(150.0), image(1000.0)].concat();
+        let redact = vec![RedactInfo {
+            rect: Rect {
+                llx: 100.0,
+                lly: 700.0,
+                urx: 400.0,
+                ury: 820.0,
+            },
+            color: AnnotColor::Rgb(0.0, 0.0, 0.0),
+            overlay_text: None,
+        }];
+
+        let filtered = filter_content_ops(&ops, &redact);
+        let kept: Vec<_> = filtered.iter().filter(|op| op.operator == b"BI").collect();
+        assert_eq!(kept, vec![&ops[6]]);
+        assert_eq!(filtered.len(), ops.len() - 1);
     }
 
     #[test]

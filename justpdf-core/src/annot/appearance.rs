@@ -3,7 +3,7 @@
 use std::fmt::Write;
 
 use crate::error::Result;
-use crate::object::{IndirectRef, PdfDict, PdfObject};
+use crate::object::{IndirectRef, PdfDict, PdfObject, string_syntax};
 use crate::page::Rect;
 use crate::writer::encode::make_stream;
 use crate::writer::modify::DocumentModifier;
@@ -350,17 +350,7 @@ fn stamp_appearance(rect: &Rect, dict: &PdfDict) -> Option<String> {
     buf.push_str("1 0 0 rg\n");
     buf.push_str("BT\n/Helvetica 14 Tf\n");
     let _ = write!(buf, "{} {} Td\n", 8.0, h / 2.0 - 5.0);
-    // Escape parentheses in stamp name
-    let escaped: String = icon_name
-        .chars()
-        .flat_map(|c| match c {
-            '(' => vec!['\\', '('],
-            ')' => vec!['\\', ')'],
-            '\\' => vec!['\\', '\\'],
-            _ => vec![c],
-        })
-        .collect();
-    let _ = write!(buf, "({escaped}) Tj\nET\n");
+    let _ = write!(buf, "{} Tj\nET\n", string_syntax(icon_name.as_bytes()));
     Some(buf)
 }
 
@@ -383,6 +373,28 @@ fn redact_appearance(rect: &Rect, dict: &PdfDict) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_stamp_name_reads_back_unchanged() {
+        let rect = Rect {
+            llx: 0.0,
+            lly: 0.0,
+            urx: 100.0,
+            ury: 40.0,
+        };
+        let mut dict = PdfDict::new();
+        dict.insert(b"Name".to_vec(), PdfObject::Name(b"Draft)\r\\".to_vec()));
+        let content = stamp_appearance(&rect, &dict).unwrap();
+
+        let ops = crate::content::parse_content_stream(content.as_bytes()).unwrap();
+        let tj = ops.iter().find(|op| op.operator == b"Tj").unwrap();
+        assert_eq!(
+            tj.operands,
+            vec![crate::content::Operand::String(b"Draft)\r\\".to_vec())]
+        );
+        // No raw CR: a literal string carries it as `\r`
+        assert!(!content.contains('\r'));
+    }
 
     #[test]
     fn test_highlight_content() {
