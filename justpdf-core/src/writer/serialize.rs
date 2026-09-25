@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use crate::error::Result;
-use crate::object::{IndirectRef, PdfDict, PdfObject};
+use crate::object::{ByteSink, IndirectRef, PdfDict, PdfObject, write_name};
 
 /// Serialize a collection of PDF objects into a complete, valid PDF byte stream.
 ///
@@ -201,8 +201,7 @@ pub(crate) fn serialize_object(buf: &mut Vec<u8>, obj: &PdfObject) -> Result<()>
 pub(crate) fn serialize_dict(buf: &mut Vec<u8>, dict: &PdfDict) -> Result<()> {
     write!(buf, "<< ")?;
     for (key, val) in dict.iter() {
-        buf.push(b'/');
-        write_escaped_name(buf, key);
+        let _ = write_name(&mut ByteSink(buf), key);
         buf.push(b' ');
         serialize_object(buf, val)?;
         write!(buf, " ")?;
@@ -264,36 +263,10 @@ pub fn serialize_pdf_with_xref_stream(
     Ok(buf)
 }
 
-/// Write a PDF name with proper #XX escaping for special characters.
-fn write_escaped_name(buf: &mut Vec<u8>, name: &[u8]) {
-    for &byte in name {
-        if byte == b'#'
-            || byte == b'/'
-            || byte == b'('
-            || byte == b')'
-            || byte == b'<'
-            || byte == b'>'
-            || byte == b'['
-            || byte == b']'
-            || byte == b'{'
-            || byte == b'}'
-            || byte == b'%'
-            || byte <= b' '
-            || byte >= 127
-        {
-            buf.push(b'#');
-            let hex = format!("{:02X}", byte);
-            buf.extend_from_slice(hex.as_bytes());
-        } else {
-            buf.push(byte);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object::{IndirectRef, PdfDict, PdfObject};
+    use crate::object::{IndirectRef, PdfDict, PdfObject, name_syntax};
 
     #[test]
     fn test_serialize_minimal_pdf() {
@@ -476,21 +449,10 @@ mod tests {
 
     #[test]
     fn test_serialize_name_escape_function() {
-        let mut buf = Vec::new();
-        write_escaped_name(&mut buf, b"Hello World");
-        assert_eq!(String::from_utf8(buf).unwrap(), "Hello#20World");
-
-        let mut buf = Vec::new();
-        write_escaped_name(&mut buf, b"Normal");
-        assert_eq!(String::from_utf8(buf).unwrap(), "Normal");
-
-        let mut buf = Vec::new();
-        write_escaped_name(&mut buf, b"A#B");
-        assert_eq!(String::from_utf8(buf).unwrap(), "A#23B");
-
-        let mut buf = Vec::new();
-        write_escaped_name(&mut buf, &[0xFF, 0x00]);
-        assert_eq!(String::from_utf8(buf).unwrap(), "#FF#00");
+        assert_eq!(name_syntax(b"Hello World"), "/Hello#20World");
+        assert_eq!(name_syntax(b"Normal"), "/Normal");
+        assert_eq!(name_syntax(b"A#B"), "/A#23B");
+        assert_eq!(name_syntax(&[0xFF, 0x00]), "/#FF#00");
     }
 
     #[test]

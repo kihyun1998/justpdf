@@ -12,17 +12,17 @@
 - `fix_byte_range`는 파일 전체에서 자리표시자 텍스트의 첫 일치를 패치한다.
 - **증분 구간이 문서에 연결되지 않는다**: 필드를 `/AcroForm /Fields`에 넣지 않고, Catalog를 갱신하지 않고, 위젯을 페이지 `/Annots`에 넣지 않는다. 모듈 주석의 "3. Updated AcroForm 4. Updated Catalog"는 구현되지 않았다. `/M`을 쓰지 않고 `contact_info`는 버려진다.
 - 새 trailer는 `incremental_trailer`로 만든다 — [증분 trailer](../invariant/incremental-trailer.md). 암호화된 입력은 `UnsupportedEncryption`으로 거부한다(비밀번호를 받지 않아 덧붙일 객체를 암호화할 키가 없다 — #26 메인테이너 판단).
-- 서명자 이름 등은 자체 `escape_pdf_string`(`( ) \`만)으로 Rust `&str`의 UTF-8을 literal에 쓴다. `write_pdf_value`는 이름·문자열을 **전혀 이스케이프하지 않는다** — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md), [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
+- 서명 사전과 위젯은 `write!`로 손으로 조립하되, 값은 공유 함수로 쓴다: `/Name`·`/Reason`·`/Location`은 `string_syntax`(Rust `&str`의 UTF-8 바이트 — 비 ASCII면 hex), `/Rect`는 `real_syntax`(NaN → `0.0`, ±Inf → ±`f32::MAX`), 외관 스트림 사전은 `serialize_dict`. 되읽으면 같다(`test_placeholder_values_read_back_unchanged`, #29) — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md), [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
 
 ## Code
-- `justpdf-core/src/sign/sign_pdf.rs` — `sign_pdf`, `build_pdf_with_placeholder`, `create_cms_signed_data`, `build_signer_info`, `build_utctime_now`, `write_pdf_value`, `escape_pdf_string`, `fix_byte_range`, `PLACEHOLDER_SIZE`
+- `justpdf-core/src/sign/sign_pdf.rs` — `sign_pdf`, `build_pdf_with_placeholder`, `create_cms_signed_data`, `build_signer_info`, `build_utctime_now`, `fix_byte_range`, `PLACEHOLDER_SIZE`
 - `justpdf-core/src/sign/byterange.rs` — `compute_byterange_digest`, `detect_modification_after_signing`
 
 ## Reference behaviour
 **None.** 비교 대상 조항: ISO 32000-2 §12.8.1(ByteRange·Contents), §12.8.3. 제3자 검증기(Acrobat 등)로 확인한 기록 없음.
 
 ## Cross-cutting invariants
-- [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — `write_pdf_value`, `escape_pdf_string`.
+- [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — `string_syntax`, `real_syntax`, `serialize_dict`.
 - [텍스트 문자열 인코딩](../invariant/text-string-encoding.md) — `/Name`·`/Reason`·`/Location`.
 - [증분 trailer](../invariant/incremental-trailer.md) — 쓰기 쪽 사이트.
 
@@ -38,4 +38,4 @@
 - 서명 → 검증 왕복 테스트가 없다.
 - CLI `sign`은 "not yet fully implemented"를 출력하고 성공 코드로 끝난다. CLI는 `--cert`를 받지만 core에 PKCS#12 파서가 없다.
 - 암호화 문서는 서명할 수 없다(위).
-- Tracked: #29 (손으로 쓰는 구문 이스케이프), #33 (텍스트 문자열 인코딩), #37 (서명 연결·CLI sign)
+- Tracked: #33 (텍스트 문자열 인코딩), #37 (서명 연결·CLI sign)

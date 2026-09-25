@@ -1,3 +1,7 @@
+use std::fmt::Write;
+
+use crate::object::{ByteSink, write_name, write_real, write_string};
+
 /// A single operand value in a content stream.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operand {
@@ -55,7 +59,7 @@ impl Operand {
 }
 
 /// A single content stream operation: operands followed by an operator.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ContentOp {
     /// The operator keyword (e.g., "cm", "Tf", "Tj", "q", "Q").
     pub operator: Vec<u8>,
@@ -68,54 +72,89 @@ impl ContentOp {
     pub fn operator_str(&self) -> &str {
         std::str::from_utf8(&self.operator).unwrap_or("?")
     }
-}
 
-impl std::fmt::Display for ContentOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, op) in self.operands.iter().enumerate() {
-            if i > 0 {
-                write!(f, " ")?;
-            }
-            write!(f, "{}", format_operand(op))?;
+    /// Append this operation as content stream syntax, without a trailing
+    /// end-of-line. A `BI` operation holding an inline image is written as
+    /// `BI … ID … EI`.
+    pub(crate) fn write_to(&self, buf: &mut Vec<u8>) {
+        if let (b"BI", [image @ Operand::InlineImage { .. }]) =
+            (self.operator.as_slice(), self.operands.as_slice())
+        {
+            image.write_to(buf);
+            return;
         }
-        if !self.operands.is_empty() {
-            write!(f, " ")?;
+        for op in &self.operands {
+            op.write_to(buf);
+            buf.push(b' ');
         }
-        write!(f, "{}", self.operator_str())
+        buf.extend_from_slice(&self.operator);
     }
 }
 
-fn format_operand(op: &Operand) -> String {
-    match op {
-        Operand::Integer(v) => v.to_string(),
-        Operand::Real(v) => format!("{v}"),
-        Operand::Bool(v) => v.to_string(),
-        Operand::Null => "null".into(),
-        Operand::Name(n) => format!("/{}", std::str::from_utf8(n).unwrap_or("?")),
-        Operand::String(s) => match std::str::from_utf8(s) {
-            Ok(text) => format!("({text})"),
-            Err(_) => {
-                let hex: String = s.iter().map(|b| format!("{b:02X}")).collect();
-                format!("<{hex}>")
+impl Operand {
+    /// Append this operand as content stream syntax.
+    pub(crate) fn write_to(&self, buf: &mut Vec<u8>) {
+        let mut sink = ByteSink(buf);
+        let _ = match self {
+            Operand::Integer(v) => write!(sink, "{v}"),
+            Operand::Real(v) => write_real(&mut sink, *v),
+            Operand::Bool(v) => write!(sink, "{v}"),
+            Operand::Null => write!(sink, "null"),
+            Operand::Name(n) => write_name(&mut sink, n),
+            Operand::String(s) => write_string(&mut sink, s),
+            Operand::Array(items) => {
+                buf.push(b'[');
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        buf.push(b' ');
+                    }
+                    item.write_to(buf);
+                }
+                buf.push(b']');
+                Ok(())
             }
-        },
-        Operand::Array(items) => {
-            let inner: Vec<String> = items.iter().map(format_operand).collect();
-            format!("[{}]", inner.join(" "))
-        }
-        Operand::Dict(entries) => {
-            let inner: Vec<String> = entries
-                .iter()
-                .map(|(k, v)| {
-                    format!(
-                        "/{} {}",
-                        std::str::from_utf8(k).unwrap_or("?"),
-                        format_operand(v)
-                    )
-                })
-                .collect();
-            format!("<< {} >>", inner.join(" "))
-        }
-        Operand::InlineImage { .. } => "<inline-image>".into(),
+            Operand::Dict(entries) => {
+                buf.extend_from_slice(b"<<");
+                write_entries(buf, entries);
+                buf.extend_from_slice(b" >>");
+                Ok(())
+            }
+            Operand::InlineImage { dict, data } => {
+                buf.extend_from_slice(b"BI");
+                write_entries(buf, dict);
+                buf.extend_from_slice(b" ID ");
+                buf.extend_from_slice(data);
+                buf.extend_from_slice(b" EI");
+                Ok(())
+            }
+        };
+    }
+}
+
+fn write_entries(buf: &mut Vec<u8>, entries: &[(Vec<u8>, Operand)]) {
+    for (key, value) in entries {
+        buf.push(b' ');
+        let _ = write_name(&mut ByteSink(buf), key);
+        buf.push(b' ');
+        value.write_to(buf);
+    }
+}
+
+/// Write operations as a content stream, one per line.
+pub(crate) fn write_content(ops: &[ContentOp]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    for op in ops {
+        op.write_to(&mut buf);
+        buf.push(b'\n');
+    }
+    buf
+}
+
+impl std::fmt::Display for ContentOp {
+    /// Content stream syntax; inline image data that is not UTF-8 is shown lossily.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buf = Vec::new();
+        self.write_to(&mut buf);
+        f.write_str(&String::from_utf8_lossy(&buf))
     }
 }

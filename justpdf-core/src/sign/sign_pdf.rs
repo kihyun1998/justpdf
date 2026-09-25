@@ -13,6 +13,8 @@ use rsa::pkcs8::DecodePrivateKey;
 use signature::SignatureEncoding;
 
 use crate::error::{JustPdfError, Result};
+use crate::object::{real_syntax, string_syntax};
+use crate::writer::serialize::serialize_dict;
 
 use super::types::{DigestAlgorithm, SigningOptions};
 
@@ -156,12 +158,12 @@ fn build_pdf_with_placeholder(
     buf.extend(std::iter::repeat(b'0').take(contents_length));
     write!(buf, "> ")?;
 
-    write!(buf, "/Name ({}) ", escape_pdf_string(signer_name))?;
+    write!(buf, "/Name {} ", string_syntax(signer_name.as_bytes()))?;
     if !reason.is_empty() {
-        write!(buf, "/Reason ({}) ", escape_pdf_string(reason))?;
+        write!(buf, "/Reason {} ", string_syntax(reason.as_bytes()))?;
     }
     if !location.is_empty() {
-        write!(buf, "/Location ({}) ", escape_pdf_string(location))?;
+        write!(buf, "/Location {} ", string_syntax(location.as_bytes()))?;
     }
     write!(buf, ">>\nendobj\n")?;
     offsets.push((sig_value_num, sig_val_offset));
@@ -175,7 +177,8 @@ fn build_pdf_with_placeholder(
 
     if options.visible {
         let rect = options.appearance_rect.unwrap_or([0.0, 0.0, 200.0, 80.0]);
-        write!(buf, "/Rect [{} {} {} {}] ", rect[0], rect[1], rect[2], rect[3])?;
+        let [llx, lly, urx, ury] = rect.map(real_syntax);
+        write!(buf, "/Rect [{llx} {lly} {urx} {ury}] ")?;
         write!(buf, "/AP << /N {} 0 R >> ", ap_stream_num)?;
         write!(buf, "/F 4 ")?; // Print (visible)
     } else {
@@ -201,13 +204,9 @@ fn build_pdf_with_placeholder(
 
         let ap_offset = buf.len();
         write!(buf, "{} 0 obj\n", ap_stream_num)?;
-        // Write dict entries (make_stream already includes /Length and /Filter)
-        write!(buf, "<< ")?;
-        for (key, value) in ap_dict.iter() {
-            write!(buf, "/{} ", String::from_utf8_lossy(key))?;
-            write_pdf_value(&mut buf, value);
-        }
-        write!(buf, ">>\n")?;
+        // make_stream already includes /Length and /Filter
+        serialize_dict(&mut buf, &ap_dict)?;
+        write!(buf, "\n")?;
         write!(buf, "stream\r\n")?;
         buf.extend_from_slice(&ap_data);
         write!(buf, "\r\nendstream\nendobj\n")?;
@@ -448,58 +447,6 @@ fn build_signer_info(
     Ok(wrap_der_sequence(&si_content))
 }
 
-// --- PDF helpers ---
-
-/// Write a PdfObject value to a byte buffer (for inline dict serialization).
-fn write_pdf_value(buf: &mut Vec<u8>, value: &crate::object::PdfObject) {
-    use crate::object::PdfObject;
-    match value {
-        PdfObject::Name(n) => {
-            buf.extend_from_slice(b"/");
-            buf.extend_from_slice(n);
-            buf.push(b' ');
-        }
-        PdfObject::Integer(i) => {
-            buf.extend_from_slice(format!("{} ", i).as_bytes());
-        }
-        PdfObject::Real(f) => {
-            buf.extend_from_slice(format!("{} ", f).as_bytes());
-        }
-        PdfObject::Array(arr) => {
-            buf.extend_from_slice(b"[");
-            for item in arr {
-                write_pdf_value(buf, item);
-            }
-            buf.extend_from_slice(b"] ");
-        }
-        PdfObject::Dict(d) => {
-            buf.extend_from_slice(b"<< ");
-            for (k, v) in d.iter() {
-                buf.extend_from_slice(b"/");
-                buf.extend_from_slice(k);
-                buf.push(b' ');
-                write_pdf_value(buf, v);
-            }
-            buf.extend_from_slice(b">> ");
-        }
-        PdfObject::String(s) => {
-            buf.extend_from_slice(b"(");
-            buf.extend_from_slice(s);
-            buf.extend_from_slice(b") ");
-        }
-        PdfObject::Reference(r) => {
-            buf.extend_from_slice(format!("{} {} R ", r.obj_num, r.gen_num).as_bytes());
-        }
-        PdfObject::Bool(b_val) => {
-            buf.extend_from_slice(if *b_val { b"true " } else { b"false " });
-        }
-        PdfObject::Null => {
-            buf.extend_from_slice(b"null ");
-        }
-        _ => {} // Stream and other complex types not needed here
-    }
-}
-
 // --- DER helpers ---
 
 /// Build a DER-encoded UTCTime for the current time.
@@ -641,12 +588,6 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-fn escape_pdf_string(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('(', "\\(")
-        .replace(')', "\\)")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,6 +645,61 @@ mod tests {
             original.trailer().get(b"Root")
         );
         assert!(reopened.trailer().get(b"Prev").is_some());
+    }
+
+    #[test]
+    fn test_placeholder_values_read_back_unchanged() {
+        use crate::object::PdfObject;
+        let pdf = create_pdf(false);
+        let first_new = crate::parser::PdfDocument::from_bytes(pdf.clone())
+            .unwrap()
+            .object_count() as u32
+            + 11;
+        let options = SigningOptions {
+            signer_name: Some("A) B\r".into()),
+            reason: Some("R(\u{e9}".into()),
+            location: Some("L\\".into()),
+            visible: true,
+            appearance_rect: Some([0.0, f64::NAN, f64::INFINITY, 80.0]),
+            ..SigningOptions::default()
+        };
+
+        let (signed, _, _) = build_pdf_with_placeholder(&pdf, &options).unwrap();
+        let reopened = crate::parser::PdfDocument::from_bytes(signed).unwrap();
+        let object = |n: u32| {
+            reopened
+                .resolve(&crate::object::IndirectRef {
+                    obj_num: n,
+                    gen_num: 0,
+                })
+                .unwrap()
+        };
+
+        let value = object(first_new);
+        let value = value.as_dict().unwrap();
+        assert_eq!(value.get_string(b"Name"), Some(b"A) B\r".as_slice()));
+        assert_eq!(value.get_string(b"Reason"), Some("R(\u{e9}".as_bytes()));
+        assert_eq!(value.get_string(b"Location"), Some(b"L\\".as_slice()));
+
+        let field = object(first_new + 1);
+        let max = f64::from(f32::MAX);
+        let rect = [0.0, 0.0, max, 80.0].map(PdfObject::Real).to_vec();
+        assert_eq!(
+            field.as_dict().unwrap().get(b"Rect"),
+            Some(&PdfObject::Array(rect))
+        );
+
+        let PdfObject::Stream { dict, .. } = object(first_new + 2) else {
+            panic!("expected a stream")
+        };
+        assert_eq!(dict.get_name(b"Subtype"), Some(b"Form".as_slice()));
+        let bbox = vec![
+            PdfObject::Integer(0),
+            PdfObject::Integer(0),
+            PdfObject::Real(max),
+            PdfObject::Real(0.0),
+        ];
+        assert_eq!(dict.get(b"BBox"), Some(&PdfObject::Array(bbox)));
     }
 
     #[test]

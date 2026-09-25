@@ -14,7 +14,7 @@
 - [주석](../territory/annotations.md) — `build_dict`.
 - [액션](../territory/actions.md) — `build_action`.
 - [첨부파일](../territory/embedded-files.md) — `/F`·`/UF`.
-- [서명](../territory/signing.md) — `/Name`·`/Reason`·`/Location`(literal로 직접).
+- [서명](../territory/signing.md) — `/Name`·`/Reason`·`/Location`(사전을 손으로 조립하며 `string_syntax`로).
 - [페이지 레이블](../territory/page-labels.md) — 접두사.
 
 읽기(`from_utf8_lossy`):

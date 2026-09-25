@@ -376,6 +376,7 @@ use justpdf_core::writer::modify::DocumentModifier;
 use justpdf_core::writer::{PdfWriter, serialize_pdf};
 use justpdf_core::page::Rect;
 use justpdf_core::object::PdfDict;
+use justpdf_core::content::{Operand, parse_content_stream};
 
 fn create_simple_pdf() -> Vec<u8> {
     let mut doc = DocumentBuilder::new();
@@ -902,6 +903,71 @@ fn test_redaction_apply() {
         annots.iter().all(|a| a.annot_type != AnnotationType::Redact),
         "redact annotations should be removed"
     );
+}
+
+/// The decoded content stream of the first page.
+fn first_page_content(bytes: Vec<u8>) -> Vec<u8> {
+    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&mut doc).unwrap();
+    let page = doc.resolve(&pages[0].page_ref).unwrap();
+    let contents = page.as_dict().unwrap().get(b"Contents").unwrap().clone();
+    let PdfObject::Reference(r) = contents else {
+        panic!("expected a content reference")
+    };
+    let PdfObject::Stream { dict, data } = doc.resolve(&r).unwrap() else {
+        panic!("expected a stream")
+    };
+    justpdf_core::stream::decode_stream(&data, &dict).unwrap()
+}
+
+#[test]
+fn test_redaction_keeps_content_outside_the_area_unchanged() {
+    let mut doc = DocumentBuilder::new();
+    let font = doc.add_standard_font("Helvetica");
+    let mut page = PageBuilder::new(612.0, 792.0);
+    page.add_font(&font, "Helvetica");
+    page.begin_text();
+    page.set_font(&font, 12.0);
+    page.move_to(72.0, 720.0);
+    page.show_text("1) first item");
+    page.end_text();
+    page.draw_inline_image(2, 1, 8, "DeviceGray", &[0x80, 0xFF]);
+    doc.add_page(page);
+    let bytes = doc.build().unwrap();
+    let original = parse_content_stream(&first_page_content(bytes.clone())).unwrap();
+
+    let mut doc1 = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&mut doc1).unwrap();
+    let mut modifier = DocumentModifier::from_document(&mut doc1).unwrap();
+    let far_away = Rect {
+        llx: 400.0,
+        lly: 100.0,
+        urx: 500.0,
+        ury: 150.0,
+    };
+    annot::add_annotation(
+        &mut modifier,
+        pages[0].page_ref.obj_num,
+        AnnotationBuilder::redact(far_away),
+    )
+    .unwrap();
+    let with_redact = modifier.build().unwrap();
+
+    let mut doc2 = PdfDocument::from_bytes(with_redact.clone()).unwrap();
+    let mut modifier2 = DocumentModifier::from_document(&mut doc2).unwrap();
+    let mut doc_for_apply = PdfDocument::from_bytes(with_redact).unwrap();
+    annot::redact::apply_redactions(&mut modifier2, &mut doc_for_apply, 0).unwrap();
+    let redacted = parse_content_stream(&first_page_content(modifier2.build().unwrap())).unwrap();
+
+    // Nothing lies in the area: the original operations come first, unchanged,
+    // followed by the overlay.
+    assert_eq!(&redacted[..original.len()], original.as_slice());
+    assert!(
+        original
+            .iter()
+            .any(|op| op.operands == vec![Operand::String(b"1) first item".to_vec())])
+    );
+    assert!(original.iter().any(|op| matches!(&op.operands[..], [Operand::InlineImage { data, .. }] if data == &[0x80, 0xFF])));
 }
 
 // ============================================================

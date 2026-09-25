@@ -7,13 +7,13 @@
 **None.**
 
 ## Design model
-- 자체 `escape_pdf_string`(세 사본 중 하나): `( ) \`만 이스케이프, CR/LF는 그대로, 비 ASCII는 UTF-8 바이트로 WinAnsi 폰트에 들어간다 — [콘텐츠 텍스트 인코딩](../invariant/content-text-encoding.md), [객체 구문 왕복](../invariant/object-syntax-roundtrip.md).
+- `Tj` 문자열은 `string_syntax`로 쓴다(#29): 괄호·역슬래시·CR 이스케이프, 비 ASCII는 UTF-8 바이트를 hex로 — WinAnsi 폰트에 그대로 들어가는 것은 같다 — [콘텐츠 텍스트 인코딩](../invariant/content-text-encoding.md), [객체 구문 왕복](../invariant/object-syntax-roundtrip.md). 좌표 실수는 `write!("{}", f64)` 그대로다(생성기 실수 판단).
 - `/Resources`를 선언하지 않고 `/DR`을 연결하지 않는다. `{da}`는 원문 그대로 삽입된다.
 - 값은 `value_as_string`(`from_utf8_lossy`)을 거치므로 UTF-16BE 값은 U+FFFD가 된다.
 - 서명 필드는 `None`을 돌려준다.
 
 ## Code
-- `justpdf-core/src/form/appearance.rs` — `generate_field_appearance`, `escape_pdf_string`, `radio_appearance`
+- `justpdf-core/src/form/appearance.rs` — `generate_field_appearance`, `radio_appearance`
 
 ## Reference behaviour
 **None.** 비교 대상 조항: ISO 32000-2 §12.7.4.3(가변 텍스트).
@@ -30,4 +30,4 @@
 
 ## Known holes / open
 - 제품 코드 호출처가 없다(자기 테스트뿐).
-- Tracked: #29 (손으로 쓰는 구문 이스케이프), #33 (텍스트 문자열 인코딩), #34 (비 ASCII 콘텐츠 텍스트)
+- Tracked: #33 (텍스트 문자열 인코딩), #34 (비 ASCII 콘텐츠 텍스트)
