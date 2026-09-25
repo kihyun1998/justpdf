@@ -158,7 +158,7 @@ impl FormatDocument for CbzDocument {
     }
 
     fn to_pdf(&self) -> Result<Vec<u8>> {
-        use justpdf_core::writer::{DocumentBuilder, PageBuilder};
+        use justpdf_core::writer::{DocumentBuilder, PageBuilder, embed_rgb};
 
         let mut builder = DocumentBuilder::new();
 
@@ -167,19 +167,13 @@ impl FormatDocument for CbzDocument {
             let h = img.height as f64;
             let mut page = PageBuilder::new(w, h);
 
-            // Decode to raw RGB for inline image
+            // Decode to raw RGB for an image XObject covering the page
             let decoded = image::load_from_memory(&img.data)
                 .map_err(|e| FormatError::Format { detail: format!("image decode: {e}") })?;
             let rgb = decoded.to_rgb8();
-            let rgb_data = rgb.as_raw();
-
-            page.draw_inline_image(
-                img.width,
-                img.height,
-                8,
-                "DeviceRGB",
-                rgb_data,
-            );
+            let (name, image_ref) = embed_rgb(&mut builder, rgb.width(), rgb.height(), rgb.as_raw())?;
+            page.add_image(&name, image_ref);
+            page.draw_image(&name, 0.0, 0.0, w, h);
 
             builder.add_page(page);
         }
@@ -333,6 +327,58 @@ mod tests {
         let doc = CbzDocument::from_bytes(&buf).unwrap();
         let pdf = doc.to_pdf().unwrap();
         assert!(pdf.starts_with(b"%PDF"));
+    }
+
+    /// The operations and the single image XObject's decoded pixels on the
+    /// first page of `pdf`.
+    fn page_image(pdf: Vec<u8>) -> (Vec<justpdf_core::content::ContentOp>, Vec<u8>) {
+        use justpdf_core::PdfObject;
+        let doc = justpdf_core::PdfDocument::from_bytes(pdf).unwrap();
+        let pages = justpdf_core::page::collect_pages(&doc).unwrap();
+        let page = doc.resolve(&pages[0].page_ref).unwrap();
+        let page = page.as_dict().unwrap();
+        let Some(PdfObject::Reference(contents)) = page.get(b"Contents") else { panic!("no contents") };
+        let PdfObject::Stream { dict, data } = doc.resolve(contents).unwrap() else { panic!("no stream") };
+        let ops = justpdf_core::content::parse_content_stream(
+            &justpdf_core::stream::decode_stream(&data, &dict).unwrap(),
+        )
+        .unwrap();
+        let resources = page.get_dict(b"Resources").unwrap();
+        let xobjects = resources.get_dict(b"XObject").unwrap();
+        let (_, PdfObject::Reference(image)) = xobjects.iter().next().unwrap() else { panic!("no image") };
+        let PdfObject::Stream { dict, data } = doc.resolve(image).unwrap() else { panic!("no image stream") };
+        (ops, justpdf_core::stream::decode_stream(&data, &dict).unwrap())
+    }
+
+    #[test]
+    fn test_cbz_to_pdf_draws_each_image_as_an_image_object() {
+        // Two pixels whose bytes hold " EI " — the end marker of an inline image
+        let pixels = [0x20u8, 0x45, 0x49, 0x20, 0x30, 0x10];
+        let mut png = Vec::new();
+        image::ImageEncoder::write_image(
+            image::codecs::png::PngEncoder::new(&mut png),
+            &pixels,
+            2,
+            1,
+            image::ExtendedColorType::Rgb8,
+        )
+        .unwrap();
+        let mut buf = Vec::new();
+        {
+            use std::io::Write;
+            let mut zip = zip::ZipWriter::new(Cursor::new(&mut buf));
+            zip.start_file("img.png", zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(&png).unwrap();
+            zip.finish().unwrap();
+        }
+        let pdf = CbzDocument::from_bytes(&buf).unwrap().to_pdf().unwrap();
+
+        let (ops, image) = page_image(pdf);
+        let operators: Vec<&[u8]> = ops.iter().map(|op| op.operator.as_slice()).collect();
+        assert_eq!(operators, vec![b"q".as_slice(), b"cm", b"Do", b"Q"]);
+        use justpdf_core::content::Operand::Integer;
+        assert_eq!(ops[1].operands, [2, 0, 0, 1, 0, 0].map(Integer).to_vec());
+        assert_eq!(image, pixels);
     }
 
     /// Create a minimal valid 1x1 white PNG.

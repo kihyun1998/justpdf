@@ -579,9 +579,6 @@ pub fn embed_png(doc: &mut DocumentBuilder, png_data: &[u8]) -> Result<(String, 
         }
     };
 
-    // Compress RGB data
-    let compressed_rgb = encode_flate(&rgb_data)?;
-
     // Create SMask if alpha channel exists
     let smask_ref = if let Some(alpha) = alpha_data {
         let compressed_alpha = encode_flate(&alpha)?;
@@ -608,6 +605,37 @@ pub fn embed_png(doc: &mut DocumentBuilder, png_data: &[u8]) -> Result<(String, 
     } else {
         None
     };
+
+    add_rgb_image(doc, width, height, &rgb_data, smask_ref)
+}
+
+/// Embed 8-bit RGB pixels (three bytes per pixel, rows from the top) as a
+/// Flate-compressed image XObject. Returns the resource name and the reference.
+pub fn embed_rgb(
+    doc: &mut DocumentBuilder,
+    width: u32,
+    height: u32,
+    rgb: &[u8],
+) -> Result<(String, IndirectRef)> {
+    let expected = width as usize * height as usize * 3;
+    if rgb.len() != expected {
+        return Err(JustPdfError::StreamDecode {
+            filter: "image".into(),
+            detail: format!("RGB pixels: expected {expected} bytes for {width}x{height}, got {}", rgb.len()),
+        });
+    }
+    add_rgb_image(doc, width, height, rgb, None)
+}
+
+/// Add a Flate-compressed 8-bit DeviceRGB image XObject.
+fn add_rgb_image(
+    doc: &mut DocumentBuilder,
+    width: u32,
+    height: u32,
+    rgb: &[u8],
+    smask_ref: Option<IndirectRef>,
+) -> Result<(String, IndirectRef)> {
+    let compressed_rgb = crate::writer::encode::encode_flate(rgb)?;
 
     // Create Image XObject
     let mut img_dict = PdfDict::new();
@@ -641,6 +669,34 @@ pub fn embed_png(doc: &mut DocumentBuilder, png_data: &[u8]) -> Result<(String, 
 mod tests {
     use super::*;
     use crate::parser::PdfDocument;
+
+    #[test]
+    fn test_embed_rgb_reads_back_as_the_same_pixels() {
+        // Two pixels whose bytes hold " EI " — the end marker of an inline image
+        let pixels = [0x20, 0x45, 0x49, 0x20, 0x30, 0x10];
+        let mut doc = DocumentBuilder::new();
+        let (name, image_ref) = embed_rgb(&mut doc, 2, 1, &pixels).unwrap();
+        let mut page = crate::writer::page::PageBuilder::new(20.0, 10.0);
+        page.add_image(&name, image_ref.clone());
+        page.draw_image(&name, 0.0, 0.0, 20.0, 10.0);
+        doc.add_page(page);
+        let reopened = PdfDocument::from_bytes(doc.build().unwrap()).unwrap();
+
+        let PdfObject::Stream { dict, data } = reopened.resolve(&image_ref).unwrap() else {
+            panic!("expected an image stream")
+        };
+        assert_eq!(dict.get_name(b"ColorSpace"), Some(b"DeviceRGB".as_slice()));
+        assert_eq!(dict.get_i64(b"Width"), Some(2));
+        assert_eq!(dict.get_i64(b"Height"), Some(1));
+        assert_eq!(dict.get_i64(b"BitsPerComponent"), Some(8));
+        assert_eq!(crate::stream::decode_stream(&data, &dict).unwrap(), pixels);
+    }
+
+    #[test]
+    fn test_embed_rgb_rejects_a_wrong_length() {
+        let mut doc = DocumentBuilder::new();
+        assert!(embed_rgb(&mut doc, 2, 1, &[0; 5]).is_err());
+    }
 
     #[test]
     fn test_create_and_parse_pdf() {

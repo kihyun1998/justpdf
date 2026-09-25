@@ -7,7 +7,7 @@
 - [ADR-0001](../../adr/0001-crates-split-by-dependency-layer.md) — `ocr` 기능만 render를 끌어온다(#1).
 
 ## Design model
-- `make_searchable_pdf`는 이미지 배치용 `content_prefix`(`q w 0 0 h 0 0 cm`)를 만들고 **쓰지 않는다** — 이미지가 단위 정사각형에 놓인다(추론).
+- `make_searchable_pdf`는 렌더한 페이지 이미지를 `embed_rgb`로 이미지 XObject로 넣고 `draw_image`로 페이지 전체에 그린다(`test_searchable_pdf_draws_the_page_image_as_an_image_object` — tesseract 없이도 돈다, 텍스트 층만 빈다; #88). #88 전에는 배치용 `content_prefix`(`q w 0 0 h 0 0 cm`)를 만들고 쓰지 않아 인라인 이미지가 1pt×1pt에 놓였다.
 - 주석은 "render mode 3 = invisible"이라 하지만 `Tr`을 쓰지 않고 `PageBuilder`에는 그럴 방법도 없다. "보이지 않는" OCR 텍스트가 1pt Helvetica로 한 자리에 겹쳐 보인다(추론). 비 ASCII는 [콘텐츠 텍스트 인코딩](../invariant/content-text-encoding.md) 문제를 공유한다.
 - 임시 파일로 tesseract와 통신한다.
 
@@ -27,4 +27,4 @@
 
 ## Known holes / open
 - 테스트는 tesseract가 있을 때와 없을 때 각각 한쪽만 단언한다(`test_tesseract_not_found_error`는 없을 때만).
-- Tracked: #34 (비 ASCII 콘텐츠 텍스트), #43 (인라인 이미지 cm 누락)
+- Tracked: #34 (비 ASCII 콘텐츠 텍스트)
