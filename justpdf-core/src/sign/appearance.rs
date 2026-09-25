@@ -137,7 +137,5 @@ mod tests {
                 string("Date: D\\")
             ]
         );
-        // No raw CR: a literal string carries it as `\r`
-        assert!(!content.contains(&b'\r'));
     }
 }

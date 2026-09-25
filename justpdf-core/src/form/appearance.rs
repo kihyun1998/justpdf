@@ -344,7 +344,5 @@ mod tests {
             tj.operands,
             vec![crate::content::Operand::String(text.as_bytes().to_vec())]
         );
-        // No raw CR: a literal string carries it as `\r`
-        assert!(!content.contains('\r'));
     }
 }

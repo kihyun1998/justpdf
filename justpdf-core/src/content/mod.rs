@@ -238,6 +238,12 @@ impl<'a> ArenaContentParser<'a> {
                         _ => result.push(esc),
                     }
                 }
+                b'\r' => {
+                    result.push(b'\n');
+                    if self.pos < self.data.len() && self.data[self.pos] == b'\n' {
+                        self.pos += 1;
+                    }
+                }
                 _ => result.push(b),
             }
         }
@@ -694,6 +700,12 @@ impl<'a> ContentParser<'a> {
                         }
                         b'\n' => {}
                         _ => result.push(esc),
+                    }
+                }
+                b'\r' => {
+                    result.push(b'\n');
+                    if self.pos < self.data.len() && self.data[self.pos] == b'\n' {
+                        self.pos += 1;
                     }
                 }
                 _ => result.push(b),
@@ -1211,6 +1223,28 @@ mod tests {
             ops,
             "written: {:?}",
             String::from_utf8_lossy(&written)
+        );
+    }
+
+    // Unescaped CR, CRLF and LF, then a line continuation (backslash + CR)
+    const LITERAL_WITH_LINE_ENDS: &[u8] = b"(a\rb\r\nc\nd\\\re) Tj";
+
+    #[test]
+    fn test_literal_line_ends_read_as_line_feed() {
+        let ops = parse_content_stream(LITERAL_WITH_LINE_ENDS).unwrap();
+        assert_eq!(
+            ops[0].operands,
+            vec![Operand::String(b"a\nb\nc\nde".to_vec())]
+        );
+    }
+
+    #[cfg(feature = "arena")]
+    #[test]
+    fn test_literal_line_ends_read_as_line_feed_arena() {
+        let ops = parse_content_stream_arena(LITERAL_WITH_LINE_ENDS).unwrap();
+        assert_eq!(
+            ops[0].operands,
+            vec![Operand::String(b"a\nb\nc\nde".to_vec())]
         );
     }
 

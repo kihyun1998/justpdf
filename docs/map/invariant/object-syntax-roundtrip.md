@@ -12,7 +12,7 @@ PDF 구문을 쓰는 코드가 한 곳이 아니다. 규칙은 한 곳에 있다
 - [콘텐츠 스트림 파싱](../territory/content-stream-parsing.md) — `ContentOp::write_to`, `Operand::write_to`, `write_content`(콘텐츠 연산자를 다시 쓰는 유일한 경로, #29).
 - [증분 저장](../territory/incremental-save.md) — 덧붙이는 객체와 trailer를 `serialize_object`/`serialize_dict`로 쓴다(#26 전에는 Display로 써서 스트림이 디버그 형식으로 깨졌다).
 - [파일 직렬화](../territory/file-serialization.md) — 모든 객체가 `serialize_object`를 지난다.
-- [토크나이저](../territory/tokenizer.md), [객체 모델](../territory/object-model.md) — 판정자(되읽는 쪽). CR 정규화가 여기 있다.
+- [토크나이저](../territory/tokenizer.md), [객체 모델](../territory/object-model.md) — 판정자(되읽는 쪽). CR 정규화가 여기 있다. 콘텐츠 스트림 쪽 판정자는 [콘텐츠 스트림 파싱](../territory/content-stream-parsing.md)이고, 같은 CR 정규화를 한다(#87).
 
 Display를 잘못 쓰는 사이트: 없다. [정리(clean)](../territory/clean.md)는 Display 텍스트를 객체 동일성으로 썼으나(스트림 데이터 누락, `Real(1.0)`=`Integer(1)`), #27에서 값 비교로 바꿨다 — Display는 중복 후보의 버킷 키로만 남았다.
 
@@ -59,4 +59,4 @@ Display를 잘못 쓰는 사이트: 없다. [정리(clean)](../territory/clean.m
 - 스트림: `"{}"`로 쓰지 않는가?
 - 가능하면 손으로 쓰지 말고 `PdfObject`를 만들어 Display에 맡기거나, `name_syntax`·`string_syntax`·`real_syntax`·`ContentOp::write_to`를 부른다.
 테스트는 쓰기 결과를 **justpdf 파서로 되읽어** 비교해야 한다. `contains`·`starts_with(b"%PDF")` 류 단언은 이 불변식을 검사하지 못한다.
-- **콘텐츠 스트림의 CR은 되읽기로 보이지 않는다**: [콘텐츠 스트림 파싱](../territory/content-stream-parsing.md)의 파서는 literal 안의 CR을 그대로 두므로(토크나이저와 다르다), 콘텐츠 스트림 사이트에서 CR 이스케이프가 빠져도 되읽은 값은 같다. 다른 리더는 ISO 32000-1 §7.3.4.2대로 LF로 읽는다. 그래서 콘텐츠 사이트 테스트는 되읽기에 더해 "출력에 날 CR이 없다"를 단언한다. 공유 `write_string`의 CR 규칙 자체는 `test_written_objects_read_back_unchanged`(토크나이저로 되읽는다)가 지킨다.
+- 판정자는 표준대로 읽어야 한다. #87 전의 콘텐츠 파서는 literal 안의 CR을 그대로 두어, 콘텐츠 스트림 사이트에서 CR 이스케이프가 빠져도 되읽은 값이 같았다 — 되읽기 테스트가 볼 수 없는 규칙이 있었다. 판정자가 쓰는 쪽과 같은 모델을 공유하면 되읽기는 그 모델의 결함을 볼 수 없다.

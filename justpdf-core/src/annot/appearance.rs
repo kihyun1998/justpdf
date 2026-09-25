@@ -392,8 +392,6 @@ mod tests {
             tj.operands,
             vec![crate::content::Operand::String(b"Draft)\r\\".to_vec())]
         );
-        // No raw CR: a literal string carries it as `\r`
-        assert!(!content.contains('\r'));
     }
 
     #[test]
