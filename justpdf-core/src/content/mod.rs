@@ -177,7 +177,11 @@ impl<'a> ArenaContentParser<'a> {
         if has_dot {
             Ok(Operand::Real(s.parse().unwrap_or(0.0)))
         } else {
-            Ok(Operand::Integer(s.parse().unwrap_or(0)))
+            if let Ok(v) = s.parse::<i64>() {
+                return Ok(Operand::Integer(v));
+            }
+            // Beyond the i64 range: read as the nearest real
+            Ok(s.parse::<f64>().map_or(Operand::Integer(0), Operand::Real))
         }
     }
 
@@ -641,7 +645,11 @@ impl<'a> ContentParser<'a> {
         if has_dot {
             Ok(Operand::Real(s.parse().unwrap_or(0.0)))
         } else {
-            Ok(Operand::Integer(s.parse().unwrap_or(0)))
+            if let Ok(v) = s.parse::<i64>() {
+                return Ok(Operand::Integer(v));
+            }
+            // Beyond the i64 range: read as the nearest real
+            Ok(s.parse::<f64>().map_or(Operand::Integer(0), Operand::Real))
         }
     }
 
@@ -1277,6 +1285,32 @@ mod tests {
         assert_inline_image_dict_values(
             &parse_content_stream_arena(INLINE_IMAGE_WITH_DICT_VALUES).unwrap(),
         );
+    }
+
+    const INTEGERS_BEYOND_I64: &[u8] =
+        b"9223372036854775807 9223372036854775808 100000000000000000000 -100000000000000000000 xx";
+
+    fn assert_integers_beyond_i64(ops: &[ContentOp]) {
+        assert_eq!(
+            ops[0].operands,
+            vec![
+                Operand::Integer(i64::MAX),
+                Operand::Real(9223372036854775808.0),
+                Operand::Real(1e20),
+                Operand::Real(-1e20),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_integer_text_beyond_i64_reads_as_real() {
+        assert_integers_beyond_i64(&parse_content_stream(INTEGERS_BEYOND_I64).unwrap());
+    }
+
+    #[cfg(feature = "arena")]
+    #[test]
+    fn test_integer_text_beyond_i64_reads_as_real_arena() {
+        assert_integers_beyond_i64(&parse_content_stream_arena(INTEGERS_BEYOND_I64).unwrap());
     }
 
     #[test]
