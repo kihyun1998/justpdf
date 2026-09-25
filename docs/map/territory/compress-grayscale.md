@@ -30,4 +30,3 @@
 
 ## Known holes / open
 - `test_grayscale_conversion_reduces_size`는 `if stats.images_grayscaled > 0` 조건부 탈출이 있어 변환이 0건이어도 통과한다.
-- 일부 이미지에서 패닉한다("Invalid buffer length", 저장소 루트의 brochure·test_medium PDF). Tracked: #89
