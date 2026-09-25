@@ -1,5 +1,6 @@
 mod operator;
 
+pub(crate) use operator::write_content;
 pub use operator::{ContentOp, Operand};
 
 use crate::error::Result;
@@ -237,6 +238,12 @@ impl<'a> ArenaContentParser<'a> {
                         _ => result.push(esc),
                     }
                 }
+                b'\r' => {
+                    result.push(b'\n');
+                    if self.pos < self.data.len() && self.data[self.pos] == b'\n' {
+                        self.pos += 1;
+                    }
+                }
                 _ => result.push(b),
             }
         }
@@ -450,13 +457,20 @@ impl<'a> ArenaContentParser<'a> {
                 b'0'..=b'9' | b'+' | b'-' | b'.' => self.read_number()?,
                 b'/' => Operand::Name(self.read_name()),
                 b'(' => Operand::String(self.read_literal_string()?),
-                b'<' => Operand::String(self.read_hex_string()?),
+                b'<' => {
+                    if self.pos + 1 < self.data.len() && self.data[self.pos + 1] == b'<' {
+                        Operand::Dict(self.read_inline_dict()?)
+                    } else {
+                        Operand::String(self.read_hex_string()?)
+                    }
+                }
                 b'[' => self.read_array()?,
                 _ if is_pdf_regular(b) => {
                     let word = self.read_word();
                     match word.as_slice() {
                         b"true" => Operand::Bool(true),
                         b"false" => Operand::Bool(false),
+                        b"null" => Operand::Null,
                         _ => Operand::Name(word),
                     }
                 }
@@ -688,6 +702,12 @@ impl<'a> ContentParser<'a> {
                         _ => result.push(esc),
                     }
                 }
+                b'\r' => {
+                    result.push(b'\n');
+                    if self.pos < self.data.len() && self.data[self.pos] == b'\n' {
+                        self.pos += 1;
+                    }
+                }
                 _ => result.push(b),
             }
         }
@@ -909,13 +929,20 @@ impl<'a> ContentParser<'a> {
                 b'0'..=b'9' | b'+' | b'-' | b'.' => self.read_number()?,
                 b'/' => Operand::Name(self.read_name()),
                 b'(' => Operand::String(self.read_literal_string()?),
-                b'<' => Operand::String(self.read_hex_string()?),
+                b'<' => {
+                    if self.pos + 1 < self.data.len() && self.data[self.pos + 1] == b'<' {
+                        Operand::Dict(self.read_inline_dict()?)
+                    } else {
+                        Operand::String(self.read_hex_string()?)
+                    }
+                }
                 b'[' => self.read_array()?,
                 _ if is_pdf_regular(b) => {
                     let word = self.read_word();
                     match word.as_slice() {
                         b"true" => Operand::Bool(true),
                         b"false" => Operand::Bool(false),
+                        b"null" => Operand::Null,
                         _ => Operand::Name(word),
                     }
                 }
@@ -1082,5 +1109,206 @@ mod tests {
         let ops = parse_content_stream(data).unwrap();
         let op_names: Vec<&[u8]> = ops.iter().map(|o| o.operator.as_slice()).collect();
         assert_eq!(op_names, vec![b"BMC".as_slice(), b"Tj", b"EMC"]);
+    }
+
+    fn op(operator: &[u8], operands: Vec<Operand>) -> ContentOp {
+        ContentOp {
+            operator: operator.to_vec(),
+            operands,
+        }
+    }
+
+    #[test]
+    fn test_written_ops_read_back_unchanged() {
+        let ops = vec![
+            // Strings: parentheses (balanced and not), backslash, line ends, high bytes
+            op(b"Tj", vec![Operand::String(b"1)".to_vec())]),
+            op(b"Tj", vec![Operand::String(b"(".to_vec())]),
+            op(b"Tj", vec![Operand::String(b"f(x)".to_vec())]),
+            op(b"Tj", vec![Operand::String(b"a\\b".to_vec())]),
+            op(b"Tj", vec![Operand::String(b"a\rb\r\nc\nd\te".to_vec())]),
+            op(b"Tj", vec![Operand::String(vec![0x80, 0xE9, 0xFF, 0x00])]),
+            op(b"Tj", vec![Operand::String(Vec::new())]),
+            // Names: space, '#', delimiter, high byte
+            op(
+                b"Tf",
+                vec![Operand::Name(b"F 1".to_vec()), Operand::Integer(12)],
+            ),
+            op(
+                b"Tf",
+                vec![Operand::Name(b"F#1".to_vec()), Operand::Integer(12)],
+            ),
+            op(b"Do", vec![Operand::Name(b"A/B(C)".to_vec())]),
+            op(
+                b"Tf",
+                vec![Operand::Name(vec![b'F', 0xE9, b'1']), Operand::Real(9.5)],
+            ),
+            // Numbers
+            op(
+                b"cm",
+                vec![
+                    Operand::Real(1e20),
+                    Operand::Real(1.0),
+                    Operand::Real(-0.0),
+                    Operand::Real(0.1 + 0.2),
+                    Operand::Real(1e-10),
+                    Operand::Real(f64::from(f32::MAX)),
+                ],
+            ),
+            op(
+                b"xx",
+                vec![
+                    Operand::Integer(i64::MIN),
+                    Operand::Integer(i64::MAX),
+                    Operand::Integer(0),
+                ],
+            ),
+            op(
+                b"xx",
+                vec![Operand::Bool(true), Operand::Bool(false), Operand::Null],
+            ),
+            // Nested array and dictionary, dictionary key order kept
+            op(
+                b"TJ",
+                vec![Operand::Array(vec![
+                    Operand::String(b"A)".to_vec()),
+                    Operand::Integer(-120),
+                    Operand::Real(2.5),
+                    Operand::Array(vec![Operand::Name(b"N M".to_vec())]),
+                ])],
+            ),
+            op(
+                b"BDC",
+                vec![
+                    Operand::Name(b"Span".to_vec()),
+                    Operand::Dict(vec![
+                        (b"Zeta".to_vec(), Operand::Integer(0)),
+                        (b"Actual Text".to_vec(), Operand::String(b"x)".to_vec())),
+                        (b"Alpha".to_vec(), Operand::Array(vec![Operand::Real(1.0)])),
+                    ]),
+                ],
+            ),
+            // Inline images: binary data kept byte for byte
+            op(b"q", vec![]),
+            op(
+                b"BI",
+                vec![Operand::InlineImage {
+                    dict: vec![
+                        (b"W".to_vec(), Operand::Integer(2)),
+                        (b"H".to_vec(), Operand::Integer(1)),
+                        (b"BPC".to_vec(), Operand::Integer(8)),
+                        (b"CS".to_vec(), Operand::Name(b"G".to_vec())),
+                        (
+                            b"D".to_vec(),
+                            Operand::Array(vec![Operand::Real(1.0), Operand::Integer(0)]),
+                        ),
+                    ],
+                    data: vec![b' ', 0x80, b'E', b'I', 0x0D, 0x0A, 0xFF, b'\n'],
+                }],
+            ),
+            op(
+                b"BI",
+                vec![Operand::InlineImage {
+                    dict: vec![(b"W".to_vec(), Operand::Integer(1))],
+                    data: Vec::new(),
+                }],
+            ),
+            op(b"Q", vec![]),
+        ];
+
+        let written = write_content(&ops);
+        let read_back = parse_content_stream(&written).unwrap();
+        assert_eq!(
+            read_back,
+            ops,
+            "written: {:?}",
+            String::from_utf8_lossy(&written)
+        );
+    }
+
+    // Unescaped CR, CRLF and LF, then a line continuation (backslash + CR)
+    const LITERAL_WITH_LINE_ENDS: &[u8] = b"(a\rb\r\nc\nd\\\re) Tj";
+
+    #[test]
+    fn test_literal_line_ends_read_as_line_feed() {
+        let ops = parse_content_stream(LITERAL_WITH_LINE_ENDS).unwrap();
+        assert_eq!(
+            ops[0].operands,
+            vec![Operand::String(b"a\nb\nc\nde".to_vec())]
+        );
+    }
+
+    #[cfg(feature = "arena")]
+    #[test]
+    fn test_literal_line_ends_read_as_line_feed_arena() {
+        let ops = parse_content_stream_arena(LITERAL_WITH_LINE_ENDS).unwrap();
+        assert_eq!(
+            ops[0].operands,
+            vec![Operand::String(b"a\nb\nc\nde".to_vec())]
+        );
+    }
+
+    const INLINE_IMAGE_WITH_DICT_VALUES: &[u8] =
+        b"BI /W 1 /DP << /Predictor 15 /Columns 2 >> /X null ID \x80 EI";
+
+    fn assert_inline_image_dict_values(ops: &[ContentOp]) {
+        let [Operand::InlineImage { dict, .. }] = &ops[0].operands[..] else {
+            panic!("expected an inline image: {ops:?}")
+        };
+        let params = vec![
+            (b"Predictor".to_vec(), Operand::Integer(15)),
+            (b"Columns".to_vec(), Operand::Integer(2)),
+        ];
+        assert_eq!(dict[1], (b"DP".to_vec(), Operand::Dict(params)));
+        assert_eq!(dict[2], (b"X".to_vec(), Operand::Null));
+        assert_eq!(parse_content_stream(&write_content(ops)).unwrap(), ops);
+    }
+
+    #[test]
+    fn test_inline_image_dict_values_read_like_other_dicts() {
+        assert_inline_image_dict_values(
+            &parse_content_stream(INLINE_IMAGE_WITH_DICT_VALUES).unwrap(),
+        );
+    }
+
+    #[cfg(feature = "arena")]
+    #[test]
+    fn test_inline_image_dict_values_read_like_other_dicts_arena() {
+        assert_inline_image_dict_values(
+            &parse_content_stream_arena(INLINE_IMAGE_WITH_DICT_VALUES).unwrap(),
+        );
+    }
+
+    #[test]
+    fn test_inline_image_under_another_operator_keeps_the_operator() {
+        let image = Operand::InlineImage {
+            dict: vec![(b"W".to_vec(), Operand::Integer(1))],
+            data: vec![0x80],
+        };
+        let mut written = Vec::new();
+        op(b"Do", vec![image]).write_to(&mut written);
+        assert!(
+            written.ends_with(b" Do"),
+            "{:?}",
+            String::from_utf8_lossy(&written)
+        );
+    }
+
+    #[test]
+    fn test_non_finite_operands_are_written_as_finite_reals() {
+        let ops = vec![op(
+            b"cm",
+            vec![
+                Operand::Real(f64::NAN),
+                Operand::Real(f64::INFINITY),
+                Operand::Real(f64::NEG_INFINITY),
+            ],
+        )];
+        let read_back = parse_content_stream(&write_content(&ops)).unwrap();
+        let max = f64::from(f32::MAX);
+        assert_eq!(
+            read_back[0].operands,
+            vec![Operand::Real(0.0), Operand::Real(max), Operand::Real(-max)]
+        );
     }
 }

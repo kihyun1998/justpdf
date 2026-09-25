@@ -1,4 +1,4 @@
-use crate::object::{IndirectRef, PdfDict, PdfObject};
+use crate::object::{ByteSink, IndirectRef, PdfDict, PdfObject, name_syntax, write_string};
 use crate::writer::encode::make_stream;
 use crate::writer::PdfWriter;
 
@@ -30,10 +30,16 @@ impl PageBuilder {
         }
     }
 
-    /// Set the current font and size. Emits `BT /{name} {size} Tf`.
+    /// Set the current font and size: `/{name} {size} Tf`, the name escaped.
     pub fn set_font(&mut self, resource_name: &str, size: f64) {
         use std::io::Write;
-        write!(self.content, "/{} {} Tf\n", resource_name, size).unwrap();
+        write!(
+            self.content,
+            "{} {} Tf\n",
+            name_syntax(resource_name.as_bytes()),
+            size
+        )
+        .unwrap();
     }
 
     /// Begin a text object: `BT`.
@@ -52,18 +58,11 @@ impl PageBuilder {
         write!(self.content, "{} {} Td\n", x, y).unwrap();
     }
 
-    /// Show text string with PDF string escaping: `(text) Tj`.
+    /// Show a text string: `(text) Tj`, or `<hex> Tj` when it holds bytes
+    /// outside printable ASCII.
     pub fn show_text(&mut self, text: &str) {
-        self.content.push(b'(');
-        for &b in text.as_bytes() {
-            match b {
-                b'\\' => self.content.extend_from_slice(b"\\\\"),
-                b'(' => self.content.extend_from_slice(b"\\("),
-                b')' => self.content.extend_from_slice(b"\\)"),
-                _ => self.content.push(b),
-            }
-        }
-        self.content.extend_from_slice(b") Tj\n");
+        let _ = write_string(&mut ByteSink(&mut self.content), text.as_bytes());
+        self.content.extend_from_slice(b" Tj\n");
     }
 
     /// Set fill color in RGB: `r g b rg`.
@@ -101,15 +100,20 @@ impl PageBuilder {
         use std::io::Write;
         write!(
             self.content,
-            "q {} 0 0 {} {} {} cm /{} Do Q\n",
-            w, h, x, y, name
+            "q {} 0 0 {} {} {} cm {} Do Q\n",
+            w,
+            h,
+            x,
+            y,
+            name_syntax(name.as_bytes())
         )
         .unwrap();
     }
 
     /// Draw an inline image directly in the content stream.
     ///
-    /// Writes `BI /W {width} /H {height} /BPC {bpc} /CS /{cs} ID {data} EI`.
+    /// Writes `BI /W {width} /H {height} /BPC {bpc} /CS /{cs} ID {data} EI`,
+    /// the color space name escaped.
     pub fn draw_inline_image(
         &mut self,
         width: u32,
@@ -121,8 +125,11 @@ impl PageBuilder {
         use std::io::Write;
         write!(
             self.content,
-            "BI /W {} /H {} /BPC {} /CS /{} ID ",
-            width, height, bpc, color_space
+            "BI /W {} /H {} /BPC {} /CS {} ID ",
+            width,
+            height,
+            bpc,
+            name_syntax(color_space.as_bytes())
         )
         .unwrap();
         self.content.extend_from_slice(data);
@@ -243,6 +250,38 @@ impl Default for PageBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content::{Operand, parse_content_stream};
+
+    #[test]
+    fn test_written_names_and_text_read_back_unchanged() {
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.begin_text();
+        page.set_font("F 1#", 12.0);
+        page.show_text("1) a\\b\r\n(c");
+        page.end_text();
+        page.draw_image("Im/1", 0.0, 0.0, 10.0, 10.0);
+        page.draw_inline_image(1, 1, 8, "Device Gray", &[0x80]);
+
+        let ops = parse_content_stream(&page.content).unwrap();
+        let operands = |operator: &[u8]| {
+            ops.iter()
+                .find(|op| op.operator == operator)
+                .unwrap()
+                .operands
+                .clone()
+        };
+        assert_eq!(operands(b"Tf")[0], Operand::Name(b"F 1#".to_vec()));
+        assert_eq!(
+            operands(b"Tj"),
+            vec![Operand::String(b"1) a\\b\r\n(c".to_vec())]
+        );
+        assert_eq!(operands(b"Do"), vec![Operand::Name(b"Im/1".to_vec())]);
+        let [Operand::InlineImage { dict, data }] = &operands(b"BI")[..] else {
+            panic!("expected an inline image")
+        };
+        assert!(dict.contains(&(b"CS".to_vec(), Operand::Name(b"Device Gray".to_vec()))));
+        assert_eq!(data, &[0x80]);
+    }
 
     #[test]
     fn test_page_builder_content() {

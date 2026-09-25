@@ -1,6 +1,6 @@
 //! Signature appearance stream generation.
 
-use crate::object::{PdfDict, PdfObject};
+use crate::object::{PdfDict, PdfObject, string_syntax};
 use crate::writer::encode::make_stream;
 
 /// Generate a signature appearance Form XObject.
@@ -34,22 +34,22 @@ pub fn generate_signature_appearance(
     // "Digitally signed by: ..."
     content.push_str(&format!("{} {} Td\n", margin, y));
     content.push_str(&format!(
-        "({}) Tj\n",
-        escape_pdf_string(&format!("Digitally signed by: {}", signer_name))
+        "{} Tj\n",
+        string_syntax(format!("Digitally signed by: {}", signer_name).as_bytes())
     ));
     if let Some(reason) = reason {
         content.push_str(&format!("{} {} Td\n", 0.0, -(font_size + 2.0)));
         content.push_str(&format!(
-            "({}) Tj\n",
-            escape_pdf_string(&format!("Reason: {}", reason))
+            "{} Tj\n",
+            string_syntax(format!("Reason: {}", reason).as_bytes())
         ));
     }
 
     if let Some(date) = date {
         content.push_str(&format!("{} {} Td\n", 0.0, -(font_size + 2.0)));
         content.push_str(&format!(
-            "({}) Tj\n",
-            escape_pdf_string(&format!("Date: {}", date))
+            "{} Tj\n",
+            string_syntax(format!("Date: {}", date).as_bytes())
         ));
     }
 
@@ -82,13 +82,6 @@ pub fn generate_signature_appearance(
     stream_dict.insert(b"Resources".to_vec(), PdfObject::Dict(resources));
 
     (stream_dict, stream_data)
-}
-
-/// Escape special characters in a PDF string.
-fn escape_pdf_string(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('(', "\\(")
-        .replace(')', "\\)")
 }
 
 #[cfg(test)]
@@ -124,8 +117,25 @@ mod tests {
     }
 
     #[test]
-    fn test_escape_pdf_string() {
-        assert_eq!(escape_pdf_string("Hello (World)"), "Hello \\(World\\)");
-        assert_eq!(escape_pdf_string("Back\\slash"), "Back\\\\slash");
+    fn test_text_reads_back_unchanged() {
+        let (dict, data) =
+            generate_signature_appearance("A) B\r", Some("R(\u{e9}"), Some("D\\"), 200.0, 80.0);
+        let content = crate::stream::decode_stream(&data, &dict).unwrap();
+
+        let ops = crate::content::parse_content_stream(&content).unwrap();
+        let shown: Vec<_> = ops
+            .iter()
+            .filter(|op| op.operator == b"Tj")
+            .map(|op| op.operands.clone())
+            .collect();
+        let string = |s: &str| vec![crate::content::Operand::String(s.as_bytes().to_vec())];
+        assert_eq!(
+            shown,
+            vec![
+                string("Digitally signed by: A) B\r"),
+                string("Reason: R(\u{e9}"),
+                string("Date: D\\")
+            ]
+        );
     }
 }
