@@ -22,7 +22,7 @@
 **None.**
 
 ## Cross-cutting invariants
-- [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — Display 텍스트를 버킷 키로 쓴다. 판정은 값 비교라 Display 왕복 구멍(#28)이 결과를 바꾸지 않는다.
+- [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — Display 텍스트를 버킷 키로 쓴다. 판정은 값 비교라 Display 표기가 모호해도(#28 전의 `Real(1.0)`=`"1"`) 합치기 결과는 바뀌지 않는다.
 
 ## Blast radius
 - [압축 dedup](compress-dedup.md) — `merge_duplicates` 공유. 동일성 규칙을 바꾸면 두 경로가 함께 바뀐다.

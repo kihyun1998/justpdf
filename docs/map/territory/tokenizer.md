@@ -10,7 +10,7 @@ PDF 파일 본문(객체 구문)을 바이트 단위로 읽어 토큰(숫자, �
 코드에서 읽어낸 규칙이다(상위 설계 문서 없음).
 - 알려진 키워드 집합 밖의 단어는 에러다. 그래서 콘텐츠 스트림 연산자는 이 토크나이저로 읽을 수 없고, [콘텐츠 스트림 파싱](content-stream-parsing.md)은 문자 분류 함수만 빌려 쓰는 별도 렉서를 가진다.
 - 홀수 자리 hex 문자열은 뒤에 0을 붙인다.
-- literal 문자열 안의 줄바꿈(CR, CRLF)은 `\n`으로 정규화된다. **쓰기 쪽이 CR을 literal에 그대로 쓰면 왕복이 깨지는 지점이 바로 여기다** — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md)의 읽기 쪽 절반.
+- literal 문자열 안의 줄바꿈(CR, CRLF)은 `\n`으로 정규화된다. ISO 32000 §7.3.4.2가 요구하는 동작이다. **쓰기 쪽이 CR을 literal에 그대로 쓰면 왕복이 깨지는 지점이 바로 여기다** — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md)의 읽기 쪽 절반. [객체 직렬화](object-serialization.md)는 CR을 `\r`로 쓴다(#28).
 - 알 수 없는 이스케이프는 백슬래시만 버린다.
 
 ## Code
@@ -31,5 +31,4 @@ PDF 파일 본문(객체 구문)을 바이트 단위로 읽어 토큰(숫자, �
 - [콘텐츠 스트림 파싱](content-stream-parsing.md) — `reader`의 문자 분류 함수를 공유한다.
 
 ## Known holes / open
-- literal 문자열의 CR 정규화 때문에, 쓰기 쪽이 CR을 hex로 보내지 않으면 값이 바뀐다(현재 쓰기 쪽은 CR을 literal로 보낸다 — [객체 직렬화](object-serialization.md#known-holes--open)).
-- Tracked: #28 (Display 왕복 구멍(CR·Real·NaN))
+- i64를 넘는 정수 텍스트(`100000000000000000000`)는 `invalid integer` 에러다. MuPDF·Acrobat는 wrap하고 pdf.js는 근사 실수로 읽어 둘 다 파일을 연다. Tracked: #84

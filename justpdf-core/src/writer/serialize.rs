@@ -536,6 +536,102 @@ mod tests {
         }
     }
 
+    /// `obj` written by Display and by `serialize_object`, each read back
+    /// with the tokenizer.
+    fn written_and_read_back(obj: &PdfObject) -> [PdfObject; 2] {
+        let read = |bytes: &[u8]| {
+            crate::object::parse_object(&mut crate::tokenizer::Tokenizer::new(bytes))
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{obj:?} written as {:?}: {e}",
+                        String::from_utf8_lossy(bytes)
+                    )
+                })
+        };
+        let mut serialized = Vec::new();
+        serialize_object(&mut serialized, obj).unwrap();
+        [read(obj.to_string().as_bytes()), read(&serialized)]
+    }
+
+    /// Values whose written form must read back as the same value: strings
+    /// with line breaks, parentheses, backslashes and high bytes, names and
+    /// dictionary keys needing `#XX`, integers at the i64 limits, and reals.
+    fn round_trip_cases() -> Vec<PdfObject> {
+        let strings: Vec<&[u8]> = vec![
+            b"",
+            b"a\rb",
+            b"a\r\nb",
+            b"a\nb",
+            b"a\tb",
+            b"hello(world)end",
+            b"unbalanced ) and (",
+            b"back\\slash",
+            &[0x41, 0xE9, 0x42],
+            &[0x80, 0xFF, 0x00, 0x7F],
+        ];
+        let names: Vec<&[u8]> = vec![
+            b"Pretendard Black",
+            b"A#B",
+            b"a/b(c)[d]<e>{f}%",
+            &[0x41, 0xE9],
+        ];
+        let mut cases: Vec<PdfObject> = strings
+            .into_iter()
+            .map(|s| PdfObject::String(s.to_vec()))
+            .chain(names.into_iter().map(|n| PdfObject::Name(n.to_vec())))
+            .chain([0, i64::MIN, i64::MAX].map(PdfObject::Integer))
+            .chain(
+                [
+                    1.0,
+                    -0.0,
+                    1e20,
+                    f64::from(f32::MAX),
+                    1e-10,
+                    0.1 + 0.2,
+                    2.5,
+                    -7.25,
+                ]
+                .map(PdfObject::Real),
+            )
+            .collect();
+        let mut dict = PdfDict::new();
+        for (i, case) in cases.iter().enumerate() {
+            dict.insert(format!("K{i}").into_bytes(), case.clone());
+        }
+        for key in [&b"Base Font"[..], b"A#B", b"a/b(c)", &[0x41, 0xE9]] {
+            dict.insert(key.to_vec(), PdfObject::Integer(1));
+        }
+        cases.push(PdfObject::Array(cases.clone()));
+        cases.push(PdfObject::Dict(dict));
+        cases
+    }
+
+    #[test]
+    fn test_written_objects_read_back_unchanged() {
+        for case in round_trip_cases() {
+            for back in written_and_read_back(&case) {
+                assert_eq!(back, case);
+                if let (PdfObject::Real(written), PdfObject::Real(read)) = (&case, &back) {
+                    assert_eq!(read.to_bits(), written.to_bits(), "{written}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_non_finite_reals_are_written_as_finite_ones() {
+        let max = f64::from(f32::MAX);
+        for (value, written) in [
+            (f64::NAN, 0.0),
+            (f64::INFINITY, max),
+            (f64::NEG_INFINITY, -max),
+        ] {
+            for back in written_and_read_back(&PdfObject::Real(value)) {
+                assert_eq!(back, PdfObject::Real(written), "{value}");
+            }
+        }
+    }
+
     #[test]
     fn test_serialize_string_with_parens_roundtrip() {
         let mut catalog = PdfDict::new();
