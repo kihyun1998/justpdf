@@ -13,7 +13,7 @@
 - **다시 쓰는 쪽은 이 파서가 만든 연산의 역연산이다**: 이 파서가 만든 `ContentOp` 목록을 `write_content`로 쓰고 되읽으면 같은 목록이다(`test_written_ops_read_back_unchanged`, #29). 손으로 만든 연산은 그렇지 않을 수 있다 — 인라인 이미지 데이터에 공백+`EI`+공백/구분자가 들어 있으면 파서가 거기서 이미지를 끊는다(이 파서가 만든 데이터에는 그 패턴이 없다). `BI`가 아닌 연산자에 인라인 이미지 피연산자를 넣으면 이미지 뒤에 그 연산자를 쓴다. 이름·문자열·실수는 `PdfObject` Display와 같은 함수(`write_name`·`write_string`·`write_real`)로 쓴다. 인라인 이미지는 `BI <dict> ID <data> EI`로 데이터를 바이트 그대로 쓴다 — `ID` 뒤 공백 하나와 `EI` 앞 공백 하나를 파서가 떼어 내므로 그 둘을 쓴다. 사전(`Operand::Dict`)은 `PdfDict`(`BTreeMap`)로 바꾸지 않고 쓴다 — 바꾸면 `BDC` 속성 사전의 키 순서가 바뀐다 — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md).
 - `ContentOp`의 Display는 `write_to`의 결과를 보여 준다. `String`이라 인라인 이미지의 UTF-8 아닌 데이터는 손실되어 보이므로, 구문을 쓰는 쪽은 Display가 아니라 `write_to`를 쓴다.
 - literal 문자열 안의 이스케이프 없는 CR·CRLF를 LF로 읽는다 — 토크나이저와 같고, ISO 32000-1 §7.3.4.2("An end-of-line marker appearing within a literal string without a preceding REVERSE SOLIDUS shall be treated as a byte value of (0Ah)")를 따른다(`test_literal_line_ends_read_as_line_feed`, 일반·arena 두 파서, #87). #87 전에는 CR을 그대로 두어, 이 파서로 되읽는 테스트가 쓰는 쪽의 CR 이스케이프 누락을 볼 수 없었다.
-- i64를 넘는 정수 텍스트는 `Integer(0)`이 된다(`parse().unwrap_or(0)`, 토크나이저는 같은 텍스트를 에러로 낸다 — #84).
+- i64를 넘는 정수 텍스트는 가장 가까운 `Real`로 읽는다 — [토크나이저](tokenizer.md)와 같은 규칙(두 파서 모두, `test_integer_text_beyond_i64_reads_as_real`, #84). #84 전에는 `Integer(0)`이었다(`parse().unwrap_or(0)`).
 - arena 파서(`parse_content_stream_arena`, feature `arena`)는 core 밖에서 호출되지 않는다.
 
 ## Code
@@ -36,5 +36,4 @@
 - `Operand` 변형을 추가하면 `Operand::write_to`를 고친다(`match`가 빠진 변형을 컴파일 에러로 알린다).
 
 ## Known holes / open
-- Tracked: #84 (i64를 넘는 정수 텍스트)
 

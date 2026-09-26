@@ -23,7 +23,9 @@ Display를 잘못 쓰는 사이트: 없다. [정리(clean)](../territory/clean.m
 - [문서 빌더](../territory/document-builder.md) — `PageBuilder`의 `set_font`·`draw_image`·`draw_inline_image` 이름은 `name_syntax`, `show_text`는 `write_string`.
 - [첨부파일](../territory/embedded-files.md) — MIME을 `Name(b"application/pdf")`로 두고 직렬화기에 맡긴다.
 
-아직 손으로 쓰는 것 — 실수: 외관 생성기(폼·주석·서명 외관)와 `PageBuilder`의 좌표·색, 리댁션의 덮개 사각형·색은 `write!("{}", f64)`로 쓴다. NaN·inf가 들어오면 `NaN`·`inf`가 나가고, 정수값 실수는 소수점 없이 나간다. **메인테이너 판단(2026-09-25, #29 read-it)**: #29는 이슈가 명시한 실수(콘텐츠 연산자 재작성, 서명 `/Rect`·외관 사전)만 고치고 이 사이트들(약 38곳)은 제외한다. 제시된 것: 사이트 수, NaN이 그대로 나간다는 사실, 포함하면 `DocumentBuilder` 출력 바이트가 바뀐다는 사실(정수값 실수 → `1.0`). 이 판단은 생성기 실수에 대한 것이고, 생성기의 이름·문자열은 위처럼 옮겼다. Tracked: #90
+생성기의 실수 — 외관 생성기(폼·주석·서명 외관), `PageBuilder`의 좌표·색·폰트 크기, 리댁션의 덮개 사각형·색 — 는 `Number`로 쓴다(#90): 정수값이고 32비트 범위 안이면 정수(`612`), 그 밖은 `write_real`(소수점과 함께), NaN → `0`, ±Inf → ±`f32::MAX`. 정상 출력은 `{}`로 쓰던 때와 같다 — 달라지는 것은 NaN·inf·`-0`·32비트를 넘는 정수값뿐이다.
+- **메인테이너 판단(2026-09-25, #90)**: 생성기용 규칙. 제시된 대안: #28 규칙 그대로(항상 소수점 — `612` → `612.0`, `DocumentBuilder` 출력 전부 변경). 제시된 사실: 콘텐츠 스트림 연산자는 정수·실수를 구분하지 않는다, 32비트 정수부 리더(#85), MuPDF `fmt_obj`도 정수값을 정수로 쓴다. 그래서 객체(`PdfObject` Display)와 생성된 콘텐츠의 실수 규칙이 다르다 — 앞은 값 왕복(`Real`이 `Real`로), 뒤는 출력 불변이 기준이다.
+- 이전 판단(2026-09-25, #29 read-it): #29는 이 사이트들을 제외했다 — 그 후속이 #90이다.
 
 바이트 보존에 기대는 사이트(도구가 볼 수 없는 절반 — 호출이 아니라 가정이다):
 - [객체 암호화](../territory/object-encryption.md), [키 유도](../territory/key-derivation.md) — 암호문·`/O`·`/U`가 고바이트를 포함해도 그대로 남아야 한다. #20이 여기서 드러났다.
@@ -54,7 +56,7 @@ Display를 잘못 쓰는 사이트: 없다. [정리(clean)](../territory/clean.m
 ## Where it will recur
 **PDF 구문 바이트를 `PdfObject` Display / `serialize_object` 밖에서 만드는 함수는 이 불변식의 대상이다.** 새로 쓰거나 고칠 때 확인할 것:
 - 문자열: 0x20–0x7E와 `\n\r\t` 밖의 바이트(특히 ≥0x7F)를 literal로 내보내는가? 그러면 hex로. CR을 literal에 날로 쓰는가? 그러면 `\r`로.
-- 실수: 정수값을 소수점 없이 쓰는가(→ `Integer`로 되읽힘, i64를 넘으면 파싱 에러)? NaN·inf를 그대로 쓰는가?
+- 실수: 정수값을 소수점 없이 쓰는가(→ `Integer`로 되읽힘, i64를 넘으면 `Real`로 — #84 전에는 파싱 에러)? NaN·inf를 그대로 쓰는가?
 - 이름: 구분자·공백·`#`·≥0x7F를 `#XX`로 이스케이프하는가? 이미 인코딩된 값을 다시 이스케이프하지 않는가?
 - 스트림: `"{}"`로 쓰지 않는가?
 - 가능하면 손으로 쓰지 말고 `PdfObject`를 만들어 Display에 맡기거나, `name_syntax`·`string_syntax`·`real_syntax`·`ContentOp::write_to`를 부른다.

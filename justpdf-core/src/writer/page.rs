@@ -1,4 +1,4 @@
-use crate::object::{ByteSink, IndirectRef, PdfDict, PdfObject, name_syntax, write_string};
+use crate::object::{ByteSink, IndirectRef, Number, PdfDict, PdfObject, name_syntax, write_string};
 use crate::writer::encode::make_stream;
 use crate::writer::PdfWriter;
 
@@ -37,7 +37,7 @@ impl PageBuilder {
             self.content,
             "{} {} Tf\n",
             name_syntax(resource_name.as_bytes()),
-            size
+            Number(size)
         )
         .unwrap();
     }
@@ -55,7 +55,7 @@ impl PageBuilder {
     /// Move to position (x, y): `x y Td`.
     pub fn move_to(&mut self, x: f64, y: f64) {
         use std::io::Write;
-        write!(self.content, "{} {} Td\n", x, y).unwrap();
+        write!(self.content, "{} {} Td\n", Number(x), Number(y)).unwrap();
     }
 
     /// Show a text string: `(text) Tj`, or `<hex> Tj` when it holds bytes
@@ -68,31 +68,52 @@ impl PageBuilder {
     /// Set fill color in RGB: `r g b rg`.
     pub fn set_fill_rgb(&mut self, r: f64, g: f64, b: f64) {
         use std::io::Write;
-        write!(self.content, "{} {} {} rg\n", r, g, b).unwrap();
+        write!(self.content, "{} {} {} rg\n", Number(r), Number(g), Number(b)).unwrap();
     }
 
     /// Set stroke color in RGB: `r g b RG`.
     pub fn set_stroke_rgb(&mut self, r: f64, g: f64, b: f64) {
         use std::io::Write;
-        write!(self.content, "{} {} {} RG\n", r, g, b).unwrap();
+        write!(self.content, "{} {} {} RG\n", Number(r), Number(g), Number(b)).unwrap();
     }
 
     /// Draw a line from (x1,y1) to (x2,y2) and stroke: `x1 y1 m x2 y2 l S`.
     pub fn draw_line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64) {
         use std::io::Write;
-        write!(self.content, "{} {} m {} {} l S\n", x1, y1, x2, y2).unwrap();
+        write!(
+            self.content,
+            "{} {} m {} {} l S\n",
+            Number(x1),
+            Number(y1),
+            Number(x2),
+            Number(y2)
+        ).unwrap();
     }
 
     /// Draw a stroked rectangle: `x y w h re S`.
     pub fn draw_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
         use std::io::Write;
-        write!(self.content, "{} {} {} {} re S\n", x, y, w, h).unwrap();
+        write!(
+            self.content,
+            "{} {} {} {} re S\n",
+            Number(x),
+            Number(y),
+            Number(w),
+            Number(h)
+        ).unwrap();
     }
 
     /// Draw a filled rectangle: `x y w h re f`.
     pub fn fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
         use std::io::Write;
-        write!(self.content, "{} {} {} {} re f\n", x, y, w, h).unwrap();
+        write!(
+            self.content,
+            "{} {} {} {} re f\n",
+            Number(x),
+            Number(y),
+            Number(w),
+            Number(h)
+        ).unwrap();
     }
 
     /// Draw an image with transformation: `q w 0 0 h x y cm /name Do Q`.
@@ -101,10 +122,10 @@ impl PageBuilder {
         write!(
             self.content,
             "q {} 0 0 {} {} {} cm {} Do Q\n",
-            w,
-            h,
-            x,
-            y,
+            Number(w),
+            Number(h),
+            Number(x),
+            Number(y),
             name_syntax(name.as_bytes())
         )
         .unwrap();
@@ -253,6 +274,43 @@ impl Default for PageBuilder {
 mod tests {
     use super::*;
     use crate::content::{Operand, parse_content_stream};
+
+    #[test]
+    fn test_numbers_read_back_as_integers_or_finite_reals() {
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.set_fill_rgb(f64::NAN, 0.0, 1.0);
+        page.set_stroke_rgb(0.25, f64::INFINITY, 1.0);
+        page.begin_text();
+        page.set_font("F1", 1e20);
+        page.move_to(f64::NAN, f64::NEG_INFINITY);
+        page.end_text();
+        page.draw_line(-0.0, 612.0, 0.5, 2147483648.0);
+        page.draw_rect(f64::NAN, 1.0, 2.0, 3.0);
+        page.fill_rect(1.0, f64::INFINITY, 2.0, 3.0);
+        page.draw_image("Im1", f64::NAN, 0.0, 10.0, 10.0);
+
+        let max = f64::from(f32::MAX);
+        let ops = parse_content_stream(&page.content).unwrap();
+        let operands = |operator: &[u8]| {
+            ops.iter().find(|op| op.operator == operator).unwrap().operands.clone()
+        };
+        use Operand::{Integer, Real};
+        assert_eq!(operands(b"rg"), vec![Integer(0), Integer(0), Integer(1)]);
+        assert_eq!(operands(b"RG"), vec![Real(0.25), Real(max), Integer(1)]);
+        assert_eq!(operands(b"Tf"), vec![Operand::Name(b"F1".to_vec()), Real(1e20)]);
+        assert_eq!(operands(b"Td"), vec![Integer(0), Real(-max)]);
+        assert_eq!(operands(b"m"), vec![Integer(0), Integer(612)]);
+        assert_eq!(operands(b"l"), vec![Real(0.5), Real(2147483648.0)]);
+        let rects: Vec<_> = ops.iter().filter(|op| op.operator == b"re").map(|op| op.operands.clone()).collect();
+        assert_eq!(
+            rects,
+            vec![
+                vec![Integer(0), Integer(1), Integer(2), Integer(3)],
+                vec![Integer(1), Real(max), Integer(2), Integer(3)],
+            ]
+        );
+        assert_eq!(operands(b"cm"), vec![Integer(10), Integer(0), Integer(0), Integer(10), Integer(0), Integer(0)]);
+    }
 
     #[test]
     fn test_written_names_and_text_read_back_unchanged() {

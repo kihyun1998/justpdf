@@ -1,6 +1,6 @@
 //! Signature appearance stream generation.
 
-use crate::object::{PdfDict, PdfObject, string_syntax};
+use crate::object::{Number, PdfDict, PdfObject, string_syntax};
 use crate::writer::encode::make_stream;
 
 /// Generate a signature appearance Form XObject.
@@ -23,7 +23,8 @@ pub fn generate_signature_appearance(
     // Border
     content.push_str(&format!(
         "0.5 0.5 0.5 RG 0.95 0.95 0.95 rg 0 0 {} {} re B\n",
-        width, height
+        Number(width),
+        Number(height)
     ));
 
     // Text
@@ -32,13 +33,13 @@ pub fn generate_signature_appearance(
     content.push_str("0 0 0 rg\n");
 
     // "Digitally signed by: ..."
-    content.push_str(&format!("{} {} Td\n", margin, y));
+    content.push_str(&format!("{} {} Td\n", Number(margin), Number(y)));
     content.push_str(&format!(
         "{} Tj\n",
         string_syntax(format!("Digitally signed by: {}", signer_name).as_bytes())
     ));
     if let Some(reason) = reason {
-        content.push_str(&format!("{} {} Td\n", 0.0, -(font_size + 2.0)));
+        content.push_str(&format!("0 {} Td\n", Number(-(font_size + 2.0))));
         content.push_str(&format!(
             "{} Tj\n",
             string_syntax(format!("Reason: {}", reason).as_bytes())
@@ -46,7 +47,7 @@ pub fn generate_signature_appearance(
     }
 
     if let Some(date) = date {
-        content.push_str(&format!("{} {} Td\n", 0.0, -(font_size + 2.0)));
+        content.push_str(&format!("0 {} Td\n", Number(-(font_size + 2.0))));
         content.push_str(&format!(
             "{} Tj\n",
             string_syntax(format!("Date: {}", date).as_bytes())
@@ -87,6 +88,23 @@ pub fn generate_signature_appearance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Operators in `content` that come from a number written as `NaN` or `inf`.
+    fn non_finite_operators(content: &[u8]) -> Vec<Vec<u8>> {
+        crate::content::parse_content_stream(content)
+            .unwrap()
+            .into_iter()
+            .map(|op| op.operator)
+            .filter(|op| op.starts_with(b"NaN") || op.starts_with(b"inf") || op.starts_with(b"-inf"))
+            .collect()
+    }
+
+    #[test]
+    fn test_non_finite_sizes_are_written_as_numbers() {
+        let (dict, data) = generate_signature_appearance("A", Some("R"), Some("D"), f64::NAN, f64::INFINITY);
+        let content = crate::stream::decode_stream(&data, &dict).unwrap();
+        assert_eq!(non_finite_operators(&content), Vec::<Vec<u8>>::new(), "{}", String::from_utf8_lossy(&content));
+    }
 
     #[test]
     fn test_generate_appearance() {

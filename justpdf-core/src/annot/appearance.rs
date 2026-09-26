@@ -3,7 +3,7 @@
 use std::fmt::Write;
 
 use crate::error::Result;
-use crate::object::{IndirectRef, PdfDict, PdfObject, string_syntax};
+use crate::object::{IndirectRef, Number, PdfDict, PdfObject, string_syntax};
 use crate::page::Rect;
 use crate::writer::encode::make_stream;
 use crate::writer::modify::DocumentModifier;
@@ -96,18 +96,18 @@ pub fn generate_appearance(
 
 fn set_stroke_color(buf: &mut String, color: &Option<AnnotColor>) {
     match color {
-        Some(AnnotColor::Gray(g)) => { let _ = writeln!(buf, "{g} G"); }
-        Some(AnnotColor::Rgb(r, g, b)) => { let _ = writeln!(buf, "{r} {g} {b} RG"); }
-        Some(AnnotColor::Cmyk(c, m, y, k)) => { let _ = writeln!(buf, "{c} {m} {y} {k} K"); }
+        Some(AnnotColor::Gray(g)) => { let _ = writeln!(buf, "{} G", Number(*g)); }
+        Some(AnnotColor::Rgb(r, g, b)) => { let _ = writeln!(buf, "{} {} {} RG", Number(*r), Number(*g), Number(*b)); }
+        Some(AnnotColor::Cmyk(c, m, y, k)) => { let _ = writeln!(buf, "{} {} {} {} K", Number(*c), Number(*m), Number(*y), Number(*k)); }
         None => { buf.push_str("0 G\n"); }
     }
 }
 
 fn set_fill_color(buf: &mut String, color: &Option<AnnotColor>) {
     match color {
-        Some(AnnotColor::Gray(g)) => { let _ = writeln!(buf, "{g} g"); }
-        Some(AnnotColor::Rgb(r, g, b)) => { let _ = writeln!(buf, "{r} {g} {b} rg"); }
-        Some(AnnotColor::Cmyk(c, m, y, k)) => { let _ = writeln!(buf, "{c} {m} {y} {k} k"); }
+        Some(AnnotColor::Gray(g)) => { let _ = writeln!(buf, "{} g", Number(*g)); }
+        Some(AnnotColor::Rgb(r, g, b)) => { let _ = writeln!(buf, "{} {} {} rg", Number(*r), Number(*g), Number(*b)); }
+        Some(AnnotColor::Cmyk(c, m, y, k)) => { let _ = writeln!(buf, "{} {} {} {} k", Number(*c), Number(*m), Number(*y), Number(*k)); }
         None => { buf.push_str("0 g\n"); }
     }
 }
@@ -122,7 +122,7 @@ fn highlight_appearance(
     let _ = write!(
         buf,
         "{} {} {} {} re\nf\n",
-        rect.llx, rect.lly, rect.width(), rect.height()
+        Number(rect.llx), Number(rect.lly), Number(rect.width()), Number(rect.height())
     );
     Some(buf)
 }
@@ -135,8 +135,15 @@ fn underline_appearance(
 ) -> Option<String> {
     let mut buf = String::new();
     set_stroke_color(&mut buf, color);
-    let _ = write!(buf, "{width} w\n");
-    let _ = write!(buf, "{} {} m\n{} {} l\nS\n", rect.llx, rect.lly, rect.urx, rect.lly);
+    let _ = write!(buf, "{} w\n", Number(width));
+    let _ = write!(
+        buf,
+        "{} {} m\n{} {} l\nS\n",
+        Number(rect.llx),
+        Number(rect.lly),
+        Number(rect.urx),
+        Number(rect.lly)
+    );
     Some(buf)
 }
 
@@ -148,9 +155,16 @@ fn strikeout_appearance(
 ) -> Option<String> {
     let mut buf = String::new();
     set_stroke_color(&mut buf, color);
-    let _ = write!(buf, "{width} w\n");
+    let _ = write!(buf, "{} w\n", Number(width));
     let mid_y = (rect.lly + rect.ury) / 2.0;
-    let _ = write!(buf, "{} {} m\n{} {} l\nS\n", rect.llx, mid_y, rect.urx, mid_y);
+    let _ = write!(
+        buf,
+        "{} {} m\n{} {} l\nS\n",
+        Number(rect.llx),
+        Number(mid_y),
+        Number(rect.urx),
+        Number(mid_y)
+    );
     Some(buf)
 }
 
@@ -162,19 +176,19 @@ fn squiggly_appearance(
 ) -> Option<String> {
     let mut buf = String::new();
     set_stroke_color(&mut buf, color);
-    let _ = write!(buf, "{width} w\n");
+    let _ = write!(buf, "{} w\n", Number(width));
 
     // Simple zigzag at bottom
     let step = 4.0;
     let amp = 2.0;
     let y_base = rect.lly;
     let mut x = rect.llx;
-    let _ = write!(buf, "{x} {y_base} m\n");
+    let _ = write!(buf, "{} {} m\n", Number(x), Number(y_base));
     let mut up = true;
     while x < rect.urx {
         x += step;
         let y = if up { y_base + amp } else { y_base };
-        let _ = write!(buf, "{x} {y} l\n");
+        let _ = write!(buf, "{} {} l\n", Number(x), Number(y));
         up = !up;
     }
     buf.push_str("S\n");
@@ -189,13 +203,13 @@ fn square_appearance(
 ) -> Option<String> {
     let mut buf = String::new();
     set_stroke_color(&mut buf, color);
-    let _ = write!(buf, "{width} w\n");
+    let _ = write!(buf, "{} w\n", Number(width));
 
     let ic = dict.get_array(b"IC").and_then(AnnotColor::from_array);
     let _ = write!(
         buf,
         "{} {} {} {} re\n",
-        rect.llx, rect.lly, rect.width(), rect.height()
+        Number(rect.llx), Number(rect.lly), Number(rect.width()), Number(rect.height())
     );
     if ic.is_some() {
         set_fill_color(&mut buf, &ic);
@@ -214,7 +228,7 @@ fn circle_appearance(
 ) -> Option<String> {
     let mut buf = String::new();
     set_stroke_color(&mut buf, color);
-    let _ = write!(buf, "{width} w\n");
+    let _ = write!(buf, "{} w\n", Number(width));
 
     let ic = dict.get_array(b"IC").and_then(AnnotColor::from_array);
 
@@ -225,34 +239,34 @@ fn circle_appearance(
     let ry = rect.height() / 2.0;
     let k = 0.5522847498; // magic number for bezier circle approximation
 
-    let _ = write!(buf, "{} {} m\n", cx + rx, cy);
+    let _ = write!(buf, "{} {} m\n", Number(cx + rx), Number(cy));
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        cx + rx, cy + ry * k,
-        cx + rx * k, cy + ry,
-        cx, cy + ry
+        Number(cx + rx), Number(cy + ry * k),
+        Number(cx + rx * k), Number(cy + ry),
+        Number(cx), Number(cy + ry)
     );
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        cx - rx * k, cy + ry,
-        cx - rx, cy + ry * k,
-        cx - rx, cy
+        Number(cx - rx * k), Number(cy + ry),
+        Number(cx - rx), Number(cy + ry * k),
+        Number(cx - rx), Number(cy)
     );
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        cx - rx, cy - ry * k,
-        cx - rx * k, cy - ry,
-        cx, cy - ry
+        Number(cx - rx), Number(cy - ry * k),
+        Number(cx - rx * k), Number(cy - ry),
+        Number(cx), Number(cy - ry)
     );
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        cx + rx * k, cy - ry,
-        cx + rx, cy - ry * k,
-        cx + rx, cy
+        Number(cx + rx * k), Number(cy - ry),
+        Number(cx + rx), Number(cy - ry * k),
+        Number(cx + rx), Number(cy)
     );
 
     if ic.is_some() {
@@ -279,8 +293,15 @@ fn line_appearance(
 
     let mut buf = String::new();
     set_stroke_color(&mut buf, color);
-    let _ = write!(buf, "{width} w\n");
-    let _ = write!(buf, "{} {} m\n{} {} l\nS\n", l[0], l[1], l[2], l[3]);
+    let _ = write!(buf, "{} w\n", Number(width));
+    let _ = write!(
+        buf,
+        "{} {} m\n{} {} l\nS\n",
+        Number(l[0]),
+        Number(l[1]),
+        Number(l[2]),
+        Number(l[3])
+    );
     Some(buf)
 }
 
@@ -294,16 +315,16 @@ fn ink_appearance(
 
     let mut buf = String::new();
     set_stroke_color(&mut buf, color);
-    let _ = write!(buf, "{width} w\n1 J\n"); // round cap
+    let _ = write!(buf, "{} w\n1 J\n", Number(width)); // round cap
 
     for stroke in ink_list {
         if let Some(coords) = stroke.as_array() {
             let points: Vec<f64> = coords.iter().filter_map(|o| o.as_f64()).collect();
             if points.len() >= 2 {
-                let _ = write!(buf, "{} {} m\n", points[0], points[1]);
+                let _ = write!(buf, "{} {} m\n", Number(points[0]), Number(points[1]));
                 let mut i = 2;
                 while i + 1 < points.len() {
-                    let _ = write!(buf, "{} {} l\n", points[i], points[i + 1]);
+                    let _ = write!(buf, "{} {} l\n", Number(points[i]), Number(points[i + 1]));
                     i += 2;
                 }
                 buf.push_str("S\n");
@@ -321,14 +342,19 @@ fn text_note_appearance(rect: &Rect) -> Option<String> {
 
     let mut buf = String::new();
     buf.push_str("1 1 0 rg\n"); // yellow fill
-    let _ = write!(buf, "0 0 {w} {h} re\nf\n");
+    let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
     buf.push_str("0 G\n0.5 w\n");
-    let _ = write!(buf, "0 0 {w} {h} re\nS\n");
+    let _ = write!(buf, "0 0 {} {} re\nS\n", Number(w), Number(h));
     // Fold triangle
     let _ = write!(
         buf,
         "{} {} m\n{} {} l\n{} {} l\nS\n",
-        w - fold, h, w, h - fold, w - fold, h - fold
+        Number(w - fold),
+        Number(h),
+        Number(w),
+        Number(h - fold),
+        Number(w - fold),
+        Number(h - fold)
     );
     Some(buf)
 }
@@ -345,11 +371,11 @@ fn stamp_appearance(rect: &Rect, dict: &PdfDict) -> Option<String> {
     let mut buf = String::new();
     // Red border
     buf.push_str("1 0 0 RG\n2 w\n");
-    let _ = write!(buf, "2 2 {} {} re\nS\n", w - 4.0, h - 4.0);
+    let _ = write!(buf, "2 2 {} {} re\nS\n", Number(w - 4.0), Number(h - 4.0));
     // Red text (centered approximately)
     buf.push_str("1 0 0 rg\n");
     buf.push_str("BT\n/Helvetica 14 Tf\n");
-    let _ = write!(buf, "{} {} Td\n", 8.0, h / 2.0 - 5.0);
+    let _ = write!(buf, "8 {} Td\n", Number(h / 2.0 - 5.0));
     let _ = write!(buf, "{} Tj\nET\n", string_syntax(icon_name.as_bytes()));
     Some(buf)
 }
@@ -365,7 +391,7 @@ fn redact_appearance(rect: &Rect, dict: &PdfDict) -> Option<String> {
     let _ = write!(
         buf,
         "{} {} {} {} re\nf\n",
-        rect.llx, rect.lly, rect.width(), rect.height()
+        Number(rect.llx), Number(rect.lly), Number(rect.width()), Number(rect.height())
     );
     Some(buf)
 }
@@ -373,6 +399,49 @@ fn redact_appearance(rect: &Rect, dict: &PdfDict) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Operators in `content` that come from a number written as `NaN` or `inf`.
+    fn non_finite_operators(content: &[u8]) -> Vec<Vec<u8>> {
+        crate::content::parse_content_stream(content)
+            .unwrap()
+            .into_iter()
+            .map(|op| op.operator)
+            .filter(|op| op.starts_with(b"NaN") || op.starts_with(b"inf") || op.starts_with(b"-inf"))
+            .collect()
+    }
+
+    #[test]
+    fn test_non_finite_numbers_are_written_as_numbers() {
+        let rect = Rect { llx: f64::NAN, lly: f64::INFINITY, urx: 10.0, ury: f64::NEG_INFINITY };
+        let color = Some(AnnotColor::Rgb(f64::NAN, f64::INFINITY, 0.5));
+        let w = f64::NAN;
+        let nan = PdfObject::Real(f64::NAN);
+        let inf = PdfObject::Real(f64::INFINITY);
+        let mut dict = PdfDict::new();
+        dict.insert(b"L".to_vec(), PdfObject::Array(vec![nan.clone(), inf.clone(), nan.clone(), inf.clone()]));
+        dict.insert(
+            b"InkList".to_vec(),
+            PdfObject::Array(vec![PdfObject::Array(vec![nan.clone(), inf.clone(), nan, inf])]),
+        );
+        dict.insert(b"IC".to_vec(), PdfObject::Array(vec![PdfObject::Real(f64::NAN)]));
+        let contents = [
+            highlight_appearance(&rect, &color, &dict),
+            underline_appearance(&rect, &color, w, &dict),
+            strikeout_appearance(&rect, &color, w, &dict),
+            squiggly_appearance(&rect, &color, w, &dict),
+            square_appearance(&rect, &color, w, &dict),
+            circle_appearance(&rect, &color, w, &dict),
+            line_appearance(&rect, &color, w, &dict),
+            ink_appearance(&rect, &color, w, &dict),
+            text_note_appearance(&rect),
+            stamp_appearance(&rect, &dict),
+            redact_appearance(&rect, &dict),
+        ];
+        for (i, content) in contents.iter().enumerate() {
+            let content = content.as_ref().unwrap();
+            assert_eq!(non_finite_operators(content.as_bytes()), Vec::<Vec<u8>>::new(), "generator {i}: {content}");
+        }
+    }
 
     #[test]
     fn test_stamp_name_reads_back_unchanged() {

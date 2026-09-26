@@ -319,18 +319,37 @@ impl fmt::Display for PdfObject {
 /// Write a real number as PDF syntax: always with a decimal point; NaN as 0,
 /// ±Inf as ±f32::MAX.
 pub(crate) fn write_real(w: &mut impl fmt::Write, v: f64) -> fmt::Result {
-    let v = if v.is_nan() {
+    let text = finite(v).to_string();
+    if text.contains('.') {
+        w.write_str(&text)
+    } else {
+        write!(w, "{text}.0")
+    }
+}
+
+/// `v` with NaN as 0 and ±Inf as ±f32::MAX.
+fn finite(v: f64) -> f64 {
+    if v.is_nan() {
         0.0
     } else if v.is_infinite() {
         f64::from(f32::MAX).copysign(v)
     } else {
         v
-    };
-    let text = v.to_string();
-    if text.contains('.') {
-        w.write_str(&text)
-    } else {
-        write!(w, "{text}.0")
+    }
+}
+
+/// A number in generated content: an integer value within the 32-bit range as
+/// an integer, any other value as a real; NaN as 0, ±Inf as ±f32::MAX.
+pub(crate) struct Number(pub(crate) f64);
+
+impl fmt::Display for Number {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let v = finite(self.0);
+        if v.fract() == 0.0 && (f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&v) {
+            write!(f, "{}", v as i32)
+        } else {
+            write_real(f, v)
+        }
     }
 }
 
@@ -429,6 +448,22 @@ impl fmt::Write for ByteSink<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_number_writes_integer_values_as_integers() {
+        let written = |v: f64| Number(v).to_string();
+        assert_eq!(written(612.0), "612");
+        assert_eq!(written(-0.0), "0");
+        assert_eq!(written(0.5), "0.5");
+        assert_eq!(written(-12.25), "-12.25");
+        assert_eq!(written(2147483647.0), "2147483647");
+        assert_eq!(written(-2147483647.0), "-2147483647");
+        assert_eq!(written(2147483648.0), "2147483648.0");
+        assert_eq!(written(1e20), "100000000000000000000.0");
+        assert_eq!(written(f64::NAN), "0");
+        assert_eq!(written(f64::INFINITY), "340282346638528860000000000000000000000.0");
+        assert_eq!(written(f64::NEG_INFINITY), "-340282346638528860000000000000000000000.0");
+    }
 
     #[test]
     fn test_indirect_ref_display() {

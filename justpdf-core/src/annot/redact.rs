@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use crate::content::{ContentOp, Operand, parse_content_stream, write_content};
 use crate::error::{JustPdfError, Result};
-use crate::object::{PdfDict, PdfObject};
+use crate::object::{Number, PdfDict, PdfObject};
 use crate::page::{collect_pages, Rect};
 use crate::parser::PdfDocument;
 use crate::stream;
@@ -118,20 +118,29 @@ pub fn apply_redactions(
             // Fill color
             match &info.color {
                 AnnotColor::Gray(g) => {
-                    let _ = writeln!(overlay, "{g} g");
+                    let _ = writeln!(overlay, "{} g", Number(*g));
                 }
                 AnnotColor::Rgb(r, g, b) => {
-                    let _ = writeln!(overlay, "{r} {g} {b} rg");
+                    let _ = writeln!(overlay, "{} {} {} rg", Number(*r), Number(*g), Number(*b));
                 }
                 AnnotColor::Cmyk(c, m, y, k) => {
-                    let _ = writeln!(overlay, "{c} {m} {y} {k} k");
+                    let _ = writeln!(
+                        overlay,
+                        "{} {} {} {} k",
+                        Number(*c),
+                        Number(*m),
+                        Number(*y),
+                        Number(*k)
+                    );
                 }
             }
             let _ = writeln!(
                 overlay,
                 "{} {} {} {} re\nf",
-                info.rect.llx, info.rect.lly,
-                info.rect.width(), info.rect.height()
+                Number(info.rect.llx),
+                Number(info.rect.lly),
+                Number(info.rect.width()),
+                Number(info.rect.height())
             );
         }
         overlay.push_str("Q\n");

@@ -7,7 +7,7 @@
 **None.**
 
 ## Design model
-- `Tj` 문자열은 `string_syntax`로 쓴다(#29): 괄호·역슬래시·CR 이스케이프, 비 ASCII는 UTF-8 바이트를 hex로 — WinAnsi 폰트에 그대로 들어가는 것은 같다 — [콘텐츠 텍스트 인코딩](../invariant/content-text-encoding.md), [객체 구문 왕복](../invariant/object-syntax-roundtrip.md). 좌표 실수는 `write!("{}", f64)` 그대로다(생성기 실수 판단).
+- `Tj` 문자열은 `string_syntax`로 쓴다(#29): 괄호·역슬래시·CR 이스케이프, 비 ASCII는 UTF-8 바이트를 hex로 — WinAnsi 폰트에 그대로 들어가는 것은 같다 — [콘텐츠 텍스트 인코딩](../invariant/content-text-encoding.md), [객체 구문 왕복](../invariant/object-syntax-roundtrip.md). 좌표 실수는 `Number`로 쓴다(#90).
 - `/Resources`를 선언하지 않고 `/DR`을 연결하지 않는다. `{da}`는 원문 그대로 삽입된다.
 - 값은 `value_as_string`(`from_utf8_lossy`)을 거치므로 UTF-16BE 값은 U+FFFD가 된다.
 - 서명 필드는 `None`을 돌려준다.

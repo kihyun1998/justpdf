@@ -300,8 +300,12 @@ impl<'a> Tokenizer<'a> {
             }
         } else {
             let s = std::str::from_utf8(&buf).unwrap_or("?");
-            match s.parse::<i64>() {
-                Ok(v) => Ok(Some(Token::Integer(v))),
+            if let Ok(v) = s.parse::<i64>() {
+                return Ok(Some(Token::Integer(v)));
+            }
+            // Beyond the i64 range: read as the nearest real
+            match s.parse::<f64>() {
+                Ok(v) => Ok(Some(Token::Real(v))),
                 Err(_) => Err(JustPdfError::InvalidToken {
                     offset: start,
                     detail: format!("invalid integer: {s}"),
@@ -354,6 +358,19 @@ fn hex_val(b: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_integer_text_beyond_i64_reads_as_real() {
+        assert_eq!(
+            tokenize(b"9223372036854775807 9223372036854775808 100000000000000000000 -100000000000000000000"),
+            vec![
+                Token::Integer(i64::MAX),
+                Token::Real(9223372036854775808.0),
+                Token::Real(1e20),
+                Token::Real(-1e20),
+            ]
+        );
+    }
 
     fn tokenize(input: &[u8]) -> Vec<Token> {
         let mut t = Tokenizer::new(input);
