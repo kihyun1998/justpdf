@@ -35,7 +35,7 @@ pub use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 
 // Re-export the builder API
 pub use justpdf_core::writer::{DocumentBuilder, DocumentModifier, PageBuilder};
-pub use justpdf_core::writer::{embed_jpeg, embed_png, merge_documents};
+pub use justpdf_core::writer::{embed_jpeg, embed_png, embed_rgb, merge_documents};
 
 // Re-export render types
 pub use justpdf_render::render::{OutputFormat, RenderOptions};

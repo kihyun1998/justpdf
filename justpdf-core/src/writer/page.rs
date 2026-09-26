@@ -134,7 +134,9 @@ impl PageBuilder {
     /// Draw an inline image directly in the content stream.
     ///
     /// Writes `BI /W {width} /H {height} /BPC {bpc} /CS /{cs} ID {data} EI`,
-    /// the color space name escaped.
+    /// the color space name escaped, mapped to the unit square. For small
+    /// images whose data holds no whitespace + `EI` + whitespace; a raster
+    /// goes through [`embed_rgb`](crate::writer::embed_rgb) and `draw_image`.
     pub fn draw_inline_image(
         &mut self,
         width: u32,

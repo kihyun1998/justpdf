@@ -10,7 +10,7 @@ pub mod serialize;
 
 pub use clean::{clean_objects, CleanStats};
 pub use compress::{compress_pdf, analyze_pdf, CompressOptions, CompressStats, AnalyzeResult};
-pub use document::{DocumentBuilder, embed_jpeg, embed_png};
+pub use document::{DocumentBuilder, embed_jpeg, embed_png, embed_rgb};
 pub use encode::{encode_flate, make_stream};
 pub use linearize::linearize as linearize_pdf;
 pub use modify::{merge_documents, incremental_save, DocumentModifier};

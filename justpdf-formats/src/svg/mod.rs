@@ -1394,14 +1394,21 @@ impl FormatDocument for SvgDocument {
         let h = self.height;
         let mut page = justpdf_core::writer::PageBuilder::new(w, h);
 
-        // Convert RGBA to RGB for inline image
+        // Convert RGBA to RGB for an image XObject covering the page
         let rgb_data: Vec<u8> = rendered
             .data
             .chunks(4)
             .flat_map(|px| [px[0], px[1], px[2]])
             .collect();
 
-        page.draw_inline_image(rendered.width, rendered.height, 8, "DeviceRGB", &rgb_data);
+        let (name, image_ref) = justpdf_core::writer::embed_rgb(
+            &mut builder,
+            rendered.width,
+            rendered.height,
+            &rgb_data,
+        )?;
+        page.add_image(&name, image_ref);
+        page.draw_image(&name, 0.0, 0.0, w, h);
         builder.add_page(page);
         Ok(builder.build()?)
     }
@@ -1481,6 +1488,43 @@ mod tests {
         let doc = SvgDocument::from_string(svg).unwrap();
         let png = doc.render_page_png(0, 72.0).unwrap();
         assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    /// The operations and the single image XObject's decoded pixels on the
+    /// first page of `pdf`.
+    fn page_image(pdf: Vec<u8>) -> (Vec<justpdf_core::content::ContentOp>, Vec<u8>) {
+        use justpdf_core::PdfObject;
+        let doc = justpdf_core::PdfDocument::from_bytes(pdf).unwrap();
+        let pages = justpdf_core::page::collect_pages(&doc).unwrap();
+        let page = doc.resolve(&pages[0].page_ref).unwrap();
+        let page = page.as_dict().unwrap();
+        let Some(PdfObject::Reference(contents)) = page.get(b"Contents") else { panic!("no contents") };
+        let PdfObject::Stream { dict, data } = doc.resolve(contents).unwrap() else { panic!("no stream") };
+        let ops = justpdf_core::content::parse_content_stream(
+            &justpdf_core::stream::decode_stream(&data, &dict).unwrap(),
+        )
+        .unwrap();
+        let resources = page.get_dict(b"Resources").unwrap();
+        let xobjects = resources.get_dict(b"XObject").unwrap();
+        let (_, PdfObject::Reference(image)) = xobjects.iter().next().unwrap() else { panic!("no image") };
+        let PdfObject::Stream { dict, data } = doc.resolve(image).unwrap() else { panic!("no image stream") };
+        (ops, justpdf_core::stream::decode_stream(&data, &dict).unwrap())
+    }
+
+    #[test]
+    fn test_to_pdf_draws_the_raster_as_an_image_object() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">
+            <rect x="0" y="0" width="100" height="50" fill="#008000"/>
+        </svg>"##;
+        let pdf = SvgDocument::from_string(svg).unwrap().to_pdf().unwrap();
+
+        let (ops, image) = page_image(pdf);
+        let operators: Vec<&[u8]> = ops.iter().map(|op| op.operator.as_slice()).collect();
+        assert_eq!(operators, vec![b"q".as_slice(), b"cm", b"Do", b"Q"]);
+        use justpdf_core::content::Operand::Integer;
+        assert_eq!(ops[1].operands, [100, 0, 0, 50, 0, 0].map(Integer).to_vec());
+        assert_eq!(image.len(), 100 * 50 * 3);
+        assert_eq!(&image[..3], &[0, 128, 0]);
     }
 
     #[test]

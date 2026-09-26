@@ -119,7 +119,7 @@ pub fn make_searchable_pdf(
     language: Option<&str>,
 ) -> Result<Vec<u8>> {
     use justpdf_core::page;
-    use justpdf_core::writer::{DocumentBuilder, PageBuilder};
+    use justpdf_core::writer::{DocumentBuilder, PageBuilder, embed_rgb};
 
     let pages = page::collect_pages(doc).map_err(SpecialError::Pdf)?;
 
@@ -154,16 +154,15 @@ pub fn make_searchable_pdf(
         let mut page = PageBuilder::new(w, h);
         page.add_font(&font_name, "Helvetica");
 
-        // Draw the scanned image as background (inline image)
+        // Draw the scanned image as background, scaled to the page
         let img = image::load_from_memory(&png_data).map_err(|e| SpecialError::Feature {
             detail: format!("decode: {e}"),
         })?;
         let rgb = img.to_rgb8();
-        // Save/restore graphics state, scale image to page size
-        use std::io::Write as _;
-        let mut content_prefix = Vec::new();
-        write!(content_prefix, "q {} 0 0 {} 0 0 cm\n", w, h).unwrap();
-        page.draw_inline_image(rgb.width(), rgb.height(), 8, "DeviceRGB", rgb.as_raw());
+        let (image_name, image_ref) =
+            embed_rgb(&mut builder, rgb.width(), rgb.height(), rgb.as_raw()).map_err(SpecialError::Pdf)?;
+        page.add_image(&image_name, image_ref);
+        page.draw_image(&image_name, 0.0, 0.0, w, h);
 
         // Add invisible text overlay (render mode 3 = invisible)
         if !ocr_text.trim().is_empty() {
@@ -188,6 +187,35 @@ pub fn make_searchable_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_searchable_pdf_draws_the_page_image_as_an_image_object() {
+        use justpdf_core::PdfObject;
+        use justpdf_core::content::Operand::Integer;
+        let mut builder = justpdf_core::writer::DocumentBuilder::new();
+        builder.add_page(justpdf_core::writer::PageBuilder::new(200.0, 100.0));
+        let source = justpdf_core::PdfDocument::from_bytes(builder.build().unwrap()).unwrap();
+
+        // Without tesseract the text layer is empty; the page image is still drawn
+        let pdf = make_searchable_pdf(&source, 36.0, None).unwrap();
+
+        let doc = justpdf_core::PdfDocument::from_bytes(pdf).unwrap();
+        let pages = justpdf_core::page::collect_pages(&doc).unwrap();
+        let page = doc.resolve(&pages[0].page_ref).unwrap();
+        let page = page.as_dict().unwrap();
+        let Some(PdfObject::Reference(contents)) = page.get(b"Contents") else { panic!("no contents") };
+        let PdfObject::Stream { dict, data } = doc.resolve(contents).unwrap() else { panic!("no stream") };
+        let ops = justpdf_core::content::parse_content_stream(
+            &justpdf_core::stream::decode_stream(&data, &dict).unwrap(),
+        )
+        .unwrap();
+        let image_ops: Vec<_> = ops.iter().take(4).map(|op| op.operator.as_slice()).collect();
+        assert_eq!(image_ops, vec![b"q".as_slice(), b"cm", b"Do", b"Q"]);
+        assert_eq!(ops[1].operands, [200, 0, 0, 100, 0, 0].map(Integer).to_vec());
+        assert!(ops.iter().all(|op| op.operator != b"BI"));
+        let xobjects = page.get_dict(b"Resources").unwrap().get_dict(b"XObject").unwrap();
+        assert_eq!(xobjects.len(), 1);
+    }
 
     #[test]
     fn test_tesseract_availability_check() {
