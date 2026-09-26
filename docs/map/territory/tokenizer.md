@@ -12,6 +12,7 @@ PDF 파일 본문(객체 구문)을 바이트 단위로 읽어 토큰(숫자, �
 - 홀수 자리 hex 문자열은 뒤에 0을 붙인다.
 - literal 문자열 안의 줄바꿈(CR, CRLF)은 `\n`으로 정규화된다. ISO 32000 §7.3.4.2가 요구하는 동작이다. **쓰기 쪽이 CR을 literal에 그대로 쓰면 왕복이 깨지는 지점이 바로 여기다** — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md)의 읽기 쪽 절반. [객체 직렬화](object-serialization.md)는 CR을 `\r`로 쓴다(#28).
 - 알 수 없는 이스케이프는 백슬래시만 버린다.
+- i64를 넘는 정수 텍스트(`100000000000000000000`)는 가장 가까운 `Real`로 읽는다(`test_integer_text_beyond_i64_reads_as_real`). #84 전에는 `invalid integer` 에러라 다른 도구가 쓴 그런 파일을 열지 못했다. **메인테이너 판단(2026-09-25, #84)**: pdf.js처럼 근사 실수로 읽는다. 제시된 대안: MuPDF·Acrobat처럼 잘라 읽기(wrap), i64::MAX/MIN 포화. [콘텐츠 스트림 파싱](content-stream-parsing.md)도 같은 규칙이다.
 
 ## Code
 - `justpdf-core/src/tokenizer/mod.rs` — `Tokenizer`, `next_token`, `seek`, `read_literal_string`, `read_hex_string`, `read_name`, `classify_keyword`
@@ -31,4 +32,3 @@ PDF 파일 본문(객체 구문)을 바이트 단위로 읽어 토큰(숫자, �
 - [콘텐츠 스트림 파싱](content-stream-parsing.md) — `reader`의 문자 분류 함수를 공유한다.
 
 ## Known holes / open
-- i64를 넘는 정수 텍스트(`100000000000000000000`)는 `invalid integer` 에러다. MuPDF·Acrobat는 wrap하고 pdf.js는 근사 실수로 읽어 둘 다 파일을 연다. Tracked: #84
