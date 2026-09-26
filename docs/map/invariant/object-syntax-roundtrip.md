@@ -56,7 +56,7 @@ Display를 잘못 쓰는 사이트: 없다. [정리(clean)](../territory/clean.m
 ## Where it will recur
 **PDF 구문 바이트를 `PdfObject` Display / `serialize_object` 밖에서 만드는 함수는 이 불변식의 대상이다.** 새로 쓰거나 고칠 때 확인할 것:
 - 문자열: 0x20–0x7E와 `\n\r\t` 밖의 바이트(특히 ≥0x7F)를 literal로 내보내는가? 그러면 hex로. CR을 literal에 날로 쓰는가? 그러면 `\r`로.
-- 실수: 정수값을 소수점 없이 쓰는가(→ `Integer`로 되읽힘, i64를 넘으면 파싱 에러)? NaN·inf를 그대로 쓰는가?
+- 실수: 정수값을 소수점 없이 쓰는가(→ `Integer`로 되읽힘, i64를 넘으면 `Real`로 — #84 전에는 파싱 에러)? NaN·inf를 그대로 쓰는가?
 - 이름: 구분자·공백·`#`·≥0x7F를 `#XX`로 이스케이프하는가? 이미 인코딩된 값을 다시 이스케이프하지 않는가?
 - 스트림: `"{}"`로 쓰지 않는가?
 - 가능하면 손으로 쓰지 말고 `PdfObject`를 만들어 Display에 맡기거나, `name_syntax`·`string_syntax`·`real_syntax`·`ContentOp::write_to`를 부른다.
