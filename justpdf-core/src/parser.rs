@@ -427,13 +427,22 @@ impl PdfDocument {
     }
 
     /// Load an object, tracking visited refs to detect cycles.
-    /// Applies decryption if the document is encrypted.
+    /// Applies decryption with the object's own key if the document is
+    /// encrypted; an object from an object stream comes back already
+    /// decrypted with its stream.
     fn load_object(
         &self,
         iref: &IndirectRef,
         visited: &mut HashSet<IndirectRef>,
     ) -> Result<PdfObject> {
         let obj = self.load_object_raw(iref, visited)?;
+
+        if matches!(
+            self.xref.get(iref.obj_num),
+            Some(XrefEntry::Compressed { .. })
+        ) {
+            return Ok(obj);
+        }
 
         // Apply decryption if needed
         if let Some(ref sec) = self.security {
@@ -445,7 +454,9 @@ impl PdfDocument {
         Ok(obj)
     }
 
-    /// Load an object without decryption (used for the encryption dict itself).
+    /// Load an object without its own decryption (used for the encryption
+    /// dict itself). An object from an object stream comes back decrypted
+    /// with its stream.
     fn load_object_raw(
         &self,
         iref: &IndirectRef,
