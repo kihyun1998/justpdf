@@ -191,22 +191,21 @@ fn stream_crypt_method(dict: &PdfDict, state: &SecurityState) -> CryptMethod {
             _ => vec![],
         };
 
-        // If /Crypt filter is present, check DecodeParms for the filter name
+        // If /Crypt filter is present, its DecodeParms /Name picks the
+        // filter; without one it is /Identity
         if filter_names.contains(&b"Crypt".as_slice()) {
-            // Look for the crypt filter name in DecodeParms
-            if let Some(params) = dict.get(b"DecodeParms") {
-                let filter_name = extract_crypt_filter_name(params, &filter_names);
-                if let Some(name) = filter_name {
-                    if name == b"Identity" {
-                        return CryptMethod::None;
-                    }
-                    // Look up in CF map
-                    if let Some(ref cf) = state.encrypt_dict.cf {
-                        for (n, f) in &cf.filters {
-                            if n == name {
-                                return f.cfm;
-                            }
-                        }
+            let name = dict
+                .get(b"DecodeParms")
+                .and_then(|params| extract_crypt_filter_name(params, &filter_names))
+                .unwrap_or(b"Identity");
+            if name == b"Identity" {
+                return CryptMethod::None;
+            }
+            // Look up in CF map
+            if let Some(ref cf) = state.encrypt_dict.cf {
+                for (n, f) in &cf.filters {
+                    if n == name {
+                        return f.cfm;
                     }
                 }
             }
@@ -467,5 +466,122 @@ mod tests {
             cleaned.get(b"Filter"),
             Some(&PdfObject::Name(b"FlateDecode".to_vec()))
         );
+    }
+
+    /// An RC4 document whose `/CF` holds `/StdCF` as AESV2.
+    fn make_state_with_std_cf() -> SecurityState {
+        let mut state = make_state(CryptMethod::V2);
+        state.encrypt_dict.cf = Some(crate::crypto::types::CryptFilterMap {
+            filters: vec![(
+                b"StdCF".to_vec(),
+                crate::crypto::types::CryptFilter {
+                    cfm: CryptMethod::AESV2,
+                    key_length: 16,
+                },
+            )],
+        });
+        state
+    }
+
+    /// Decrypt object 7 as a stream with `entries` in its dictionary.
+    fn decrypt_stream(
+        state: &SecurityState,
+        entries: Vec<(&[u8], PdfObject)>,
+        data: Vec<u8>,
+    ) -> (PdfDict, Vec<u8>) {
+        let mut dict = PdfDict::new();
+        for (k, v) in entries {
+            dict.insert(k.to_vec(), v);
+        }
+        match decrypt_object(PdfObject::Stream { dict, data }, state, 7, 0).unwrap() {
+            PdfObject::Stream { dict, data } => (dict, data),
+            other => panic!("expected Stream, got {other:?}"),
+        }
+    }
+
+    fn name(n: &[u8]) -> PdfObject {
+        PdfObject::Name(n.to_vec())
+    }
+
+    #[test]
+    fn test_crypt_filter_without_name_is_identity() {
+        let state = make_state_with_std_cf();
+        let plain = b"left as written".to_vec();
+        let mut params = PdfDict::new();
+        params.insert(b"Type".to_vec(), name(b"CryptFilterDecodeParms"));
+        let cases: Vec<Vec<(&[u8], PdfObject)>> = vec![
+            vec![(b"Filter", name(b"Crypt"))],
+            vec![
+                (b"Filter", name(b"Crypt")),
+                (b"DecodeParms", PdfObject::Dict(params)),
+            ],
+            vec![(
+                b"Filter",
+                PdfObject::Array(vec![name(b"Crypt"), name(b"FlateDecode")]),
+            )],
+            vec![
+                (
+                    b"Filter",
+                    PdfObject::Array(vec![name(b"Crypt"), name(b"FlateDecode")]),
+                ),
+                (
+                    b"DecodeParms",
+                    PdfObject::Array(vec![PdfObject::Null, PdfObject::Null]),
+                ),
+            ],
+        ];
+        for (i, entries) in cases.into_iter().enumerate() {
+            let (_, data) = decrypt_stream(&state, entries, plain.clone());
+            assert_eq!(data, plain, "case {i}");
+        }
+    }
+
+    #[test]
+    fn test_crypt_filter_named_identity_is_identity() {
+        let state = make_state_with_std_cf();
+        let mut params = PdfDict::new();
+        params.insert(b"Name".to_vec(), name(b"Identity"));
+        let plain = b"left as written".to_vec();
+        let (_, data) = decrypt_stream(
+            &state,
+            vec![
+                (b"Filter", name(b"Crypt")),
+                (b"DecodeParms", PdfObject::Dict(params)),
+            ],
+            plain.clone(),
+        );
+        assert_eq!(data, plain);
+    }
+
+    #[test]
+    fn test_crypt_filter_named_in_cf_uses_that_method() {
+        let state = make_state_with_std_cf();
+        let obj_key = key::compute_object_key(state.file_key.as_ref().unwrap(), 7, 0, true);
+        let plain = b"aes under a named filter".to_vec();
+        let encrypted = aes_cipher::encrypt_aes_cbc(&obj_key, &plain, &[3u8; 16]).unwrap();
+        let mut params = PdfDict::new();
+        params.insert(b"Name".to_vec(), name(b"StdCF"));
+        let (_, data) = decrypt_stream(
+            &state,
+            vec![
+                (b"Filter", name(b"Crypt")),
+                (b"DecodeParms", PdfObject::Dict(params)),
+            ],
+            encrypted,
+        );
+        assert_eq!(data, plain);
+    }
+
+    #[test]
+    fn test_stream_without_crypt_filter_uses_the_default_method() {
+        let state = make_state_with_std_cf();
+        let obj_key = key::compute_object_key(state.file_key.as_ref().unwrap(), 7, 0, false);
+        let plain = b"rc4 by default".to_vec();
+        let (_, data) = decrypt_stream(
+            &state,
+            vec![(b"Filter", name(b"FlateDecode"))],
+            rc4::rc4(&obj_key, &plain),
+        );
+        assert_eq!(data, plain);
     }
 }
