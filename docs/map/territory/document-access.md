@@ -9,7 +9,7 @@
 ## Design model
 - **내부 가변성**: `resolve`가 `&self`만 요구하도록 `RwLock`을 쓴다(`Sync`). I/O 중에는 락을 잡지 않는다.
 - 캐시 적중 경로도 LRU 순서 갱신 때문에 `write()` 락을 잡는다.
-- **암호화 훅 세 지점**: `/Encrypt` 사전은 `load_object_raw`(복호화 안 함), 일반 객체는 인증 후 `load_object`에서 복호화, 미인증이면 `EncryptedDocument` 에러. 열 때 빈 비밀번호를 자동 시도하고, `authenticate`는 두 캐시를 비운다. 보안 핸들러는 `Standard`만 받는다.
+- **암호화 훅 세 지점**: `/Encrypt` 사전은 `load_object_raw`(복호화 안 함), 일반 객체는 인증 후 `load_object`에서 자기 번호로 복호화(object stream 안 객체는 ObjStm과 함께 `load_compressed_object`에서 복호화되고 여기서 건너뛴다 — [객체 복호화](object-decryption.md)), 미인증이면 `EncryptedDocument` 에러. 열 때 빈 비밀번호를 자동 시도하고, `authenticate`는 두 캐시를 비운다. 보안 핸들러는 `Standard`만 받는다.
 - xref 조회는 세대 번호를 무시한다. free 엔트리는 `Null`.
 - 순환 참조는 `resolve` 호출 단위의 `visited`로 끊는다.
 

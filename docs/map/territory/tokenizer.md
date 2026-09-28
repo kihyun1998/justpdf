@@ -32,3 +32,4 @@ PDF 파일 본문(객체 구문)을 바이트 단위로 읽어 토큰(숫자, �
 - [콘텐츠 스트림 파싱](content-stream-parsing.md) — `reader`의 문자 분류 함수를 공유한다.
 
 ## Known holes / open
+**None.** 알려진 구멍이 없다 — 이 노트가 추적하던 구멍은 모두 고쳐졌다.
