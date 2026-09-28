@@ -11,16 +11,17 @@
 - **ObjStm 안 객체는 ObjStm과 함께 한 번만 복호화된다.** `load_compressed_object`가 스트림 전체를 스트림 번호로 복호화하고, `load_object`는 xref 타입 2 엔트리에서 온 객체에 객체별 복호화를 하지 않는다 — ISO 32000-1 §7.5.7 "strings occurring anywhere in an object stream shall not be separately encrypted". MuPDF `pdf_cache_object`도 `pdf_crypt_obj`를 타입 `n` 엔트리에만 부른다.
 - 스트림 사전 안의 문자열은 문자열 방식으로 복호화한다 — 스트림 데이터의 방식(`/Crypt` 필터, Identity 포함)과 따로다(MuPDF `pdf_crypt_obj`도 사전 문자열에 `strf`를 쓴다). 복호화되지 않는 문자열(AES 길이·패딩 오류)은 쓰인 그대로 둔다(`decrypt_strings_or_keep`) — 사전 문자열 하나 때문에 콘텐츠·폰트·이미지 스트림 전체가 열리지 않게 하지 않으려는 것으로, MuPDF도 경고만 하고 원래 문자열을 둔다. ISO 32000-1 §7.6.1(원문 대조)의 예외는 trailer `/ID`, `/Encrypt` 사전의 문자열, 스트림 **안**의 문자열뿐이다.
 - `/Type /XRef` 스트림은 데이터·사전 모두 복호화하지 않는다(`is_xref_stream`) — §7.5.8.2 "The cross-reference stream shall not be encrypted and strings appearing in the cross-reference stream dictionary shall not be encrypted". 그 사전에는 `/ID`가 들어 있다.
+- 스트림의 `/Filter`에 `/Crypt`가 있으면 그 `DecodeParms`의 `/Name`이 방식을 정하고(`stream_crypt_method`), `/Name`이 없으면 Identity다(복호화하지 않음) — ISO 32000-1 Table 14 "Default value: Identity". MuPDF도 `/Crypt`가 있는 스트림에는 기본 방식을 적용하지 않고 `/Name`이 없으면 데이터를 그대로 두며(`pdf-stream.c`), qpdf `interpretCF`도 이름이 없으면 Identity다. `/Name`이 `/CF`에도 없고 Identity도 아니면 문서의 기본 스트림 방식으로 복호화한다 — qpdf도 같다(`e_unknown` → `/StmF`). Identity인 스트림은 `/Filter`에 `/Crypt`를 남기고, [스트림 필터](stream-filters.md)가 이를 통과시킨다.
 - 이 규칙 이전의 justpdf는 스트림 사전 문자열을 평문으로 썼다. 그렇게 쓴 암호화 파일을 지금 읽으면 그 문자열(예: 첨부파일 `/Params`의 `/ModDate`·`/CheckSum`)은 깨져 읽힌다 — qpdf도 같게 읽는다.
 - 서명 `/Contents`는 스펙상 암호화되지 않지만 `resolve`를 지나며 복호화된다(추론) — [서명 감지](signature-detection.md).
 
 ## Code
-- `justpdf-core/src/crypto/decrypt.rs` — `decrypt_object`, `decrypt_strings_or_keep`, `is_xref_stream`, `decrypt_bytes`, `stream_crypt_method`, `remove_crypt_filter`
+- `justpdf-core/src/crypto/decrypt.rs` — `decrypt_object`, `decrypt_strings_or_keep`, `is_xref_stream`, `decrypt_bytes`, `stream_crypt_method`, `extract_crypt_filter_name`, `remove_crypt_filter`, `test_crypt_filter_without_name_is_identity`, `test_crypt_filter_named_in_cf_uses_that_method`
 - `justpdf-core/tests/integration.rs` — `test_stream_dictionary_strings_decrypt_in_third_party_files`, `test_object_stream_strings_decrypt_once_in_third_party_files`, `test_object_stream_objects_survive_rewriting_without_encryption`
 - `justpdf-core/src/parser.rs` — `load_object`, `load_compressed_object`
 
 ## Reference behaviour
-ISO 32000-1:2008 원문(Adobe 무료 사본, 2026-09-24)과 대조: §7.6.1의 암호화 예외 목록(trailer `/ID`, `/Encrypt` 사전의 문자열, 스트림 안의 문자열)과 §7.5.8.2의 xref 스트림 규칙 — 스트림 사전 문자열과 xref 스트림 처리가 이를 따른다. qpdf 12.3.2가 만든 R3·R4·R6 파일(Known holes의 픽스처)로 스트림 사전 문자열 복호화를 확인한다. ISO 32000-1 §7.5.7(원문, 2026-09-27)의 object stream 규칙과 MuPDF `pdf_cache_object`(`source/pdf/pdf-xref.c`, master 원문, 2026-09-27)와 대조 — ObjStm 안 객체의 한 번 복호화가 이를 따르고, qpdf 12.4.1이 만든 R3·R4·R6 파일(Known holes의 픽스처)로 확인한다. 아직 대조하지 않은 조항: ISO 32000-2의 같은 규칙(§7.5.7), §7.6.2.
+ISO 32000-1:2008 원문(Adobe 무료 사본, 2026-09-24)과 대조: §7.6.1의 암호화 예외 목록(trailer `/ID`, `/Encrypt` 사전의 문자열, 스트림 안의 문자열)과 §7.5.8.2의 xref 스트림 규칙 — 스트림 사전 문자열과 xref 스트림 처리가 이를 따른다. qpdf 12.3.2가 만든 R3·R4·R6 파일(Known holes의 픽스처)로 스트림 사전 문자열 복호화를 확인한다. ISO 32000-1 §7.5.7(원문, 2026-09-27)의 object stream 규칙과 MuPDF `pdf_cache_object`(`source/pdf/pdf-xref.c`, master 원문, 2026-09-27)와 대조 — ObjStm 안 객체의 한 번 복호화가 이를 따르고, qpdf 12.4.1이 만든 R3·R4·R6 파일(Known holes의 픽스처)로 확인한다. ISO 32000-1 Table 14(`/Crypt` 필터 `/Name`의 기본값 Identity, 원문 2026-09-27)와 MuPDF `source/pdf/pdf-stream.c`, qpdf `libqpdf/QPDF_encryption.cc`(각 master/main 원문, 2026-09-27)와 대조 — `/Name` 없는 `/Crypt`의 처리가 이를 따른다. 아직 대조하지 않은 조항: ISO 32000-2의 같은 규칙(§7.5.7), §7.6.2.
 
 ## Cross-cutting invariants
 **None.**
