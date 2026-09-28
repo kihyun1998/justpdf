@@ -4,9 +4,10 @@
 직렬화 직전에 각 객체의 문자열·스트림 데이터를 암호화한다. `EncryptionConfig`가 리비전별 `/Encrypt` 사전과 키를 만들고, `serialize_pdf_encrypted`가 객체마다 `encrypt_object`를 부른다. IV·파일 키·솔트·`/Perms` 난수 바이트·파일 ID 생성도 여기 있다.
 
 ## Governing decisions
-결정 기록(ADR)은 없다. 유지보수자의 판단 두 가지(2026-09-24, #31) — 판단이므로 더 나은 논증이 아니라 유지보수자만 뒤집는다:
+결정 기록(ADR)은 없다. 유지보수자의 판단 세 가지 — 판단이므로 더 나은 논증이 아니라 유지보수자만 뒤집는다:
 - CLI `encrypt`는 원본 `/ID` 첫 원소를 유지한다(아래 Design model — #75 이후 [문서 수정기](document-modifier.md)가 이 규칙을 갖는다). 보여 준 것: MuPDF `pdf-write.c`의 유지 동작, ISO의 영구 식별자 규정, 같은 원본·비밀번호·권한의 R3/R4 재암호화가 같은 파일 키를 갖는다는 결과. 대안: 항상 새 무작위.
-- R6 `/Perms` 12–15바이트를 난수로 채운다. 보여 준 것: 스펙이 난수를 요구하고 MuPDF가 `fz_memrnd`로 채운다는 것. 대안: 이번 변경에서 제외.
+- R6 `/Perms` 12–15바이트를 난수로 채운다(2026-09-24, #31). 보여 준 것: 스펙이 난수를 요구하고 MuPDF가 `fz_memrnd`로 채운다는 것. 대안: 이번 변경에서 제외.
+- `/EncryptMetadata false`로 쓸 때 catalog `/Metadata` 스트림은 데이터를 평문으로 두고 **명시 Identity crypt 필터**(`/Filter`의 첫 필터 `/Crypt`, `/DecodeParms << /Type /CryptFilterDecodeParms /Name /Identity >>`)를 붙인다(2026-09-27). 보여 준 것: ISO 32000-1 §7.6.5 예시가 평문 메타데이터를 이렇게 표시한다는 것, qpdf는 필터 없이 평문만 쓰고 루트 메타데이터 예외로 읽는다는 것, MuPDF 읽기 쪽에는 그 예외가 없어 필터 없는 평문을 깨뜨린다는 것(소스 전체 검색). 대안: qpdf처럼 필터 없이 평문, 쓰기 쪽은 이번에 제외.
 
 ## Design model
 - **난수는 전부 OS 엔트로피다**: IV(`generate_iv`), R6 파일 키(`generate_random_key`), R6 솔트 4개(`generate_random_salt`), R6 `/Perms` 12–15바이트, 새 파일 ID(`random_file_id`)가 모두 `fill_random` → `getrandom` 0.2를 거친다. 난수원이 없으면 `EncryptionError`로 실패하고 다른 값으로 대체하지 않는다. MuPDF도 같은 자리(IV·솔트·R6 키·`/Perms` 12–15·새 `/ID`)를 모두 `fz_memrnd`로 채운다(`pdf-crypt.c`, `pdf-write.c` 원문 대조, 2026-09-24).
@@ -14,13 +15,15 @@
 - **파일 ID**: [문서 빌더](document-builder.md)의 `build`는 `random_file_id`로 16바이트를 만들고 `/ID`의 두 원소를 같은 값으로 쓴다(새로 쓰는 파일). 기존 문서를 암호화해 다시 쓰는 [문서 수정기](document-modifier.md)의 `build`(`set_encryption` 후 — [CLI](cli.md) `encrypt`가 이 경로다)는 원본 trailer `/ID` 첫 원소를 영구 식별자로 유지하고 둘째 원소를 새 `random_file_id`로 쓴다. 원본에 `/ID`가 없거나 첫 원소가 빈 문자열·문자열 아닌 값이면 새로 쓰는 파일로 보고 `random_file_id` 하나를 두 원소에 쓴다(빈 ID는 키 유도에 아무것도 보태지 않는다). 파일 키는 영구 식별자로 유도한다. 원본 첫 원소는 읽기 쪽과 같은 `extract_file_id`(parser, `pub(crate)`)로 읽는다 — 첫 원소는 문서의 영구 식별자이기 때문이다(MuPDF도 원본 첫 원소를 유지하고 그것으로 키를 유도한다). 그래서 같은 원본·비밀번호·권한으로 R3/R4 재암호화를 두 번 하면 파일 키가 같다. 이 선택은 유지보수자의 판단이다(2026-09-24, #31): MuPDF·ISO의 영구 식별자 규정과 이 같은-키 결과를 보고 "항상 새 무작위" 대신 골랐다. 둘째 원소 규칙은 이 판단이 다루지 않았고, ISO 32000-1 §14.4와 MuPDF `change_identity`에서 끌어냈다(#75).
 - `generate_file_id(title, timestamp)`는 공개 API로 남아 있지만 core·CLI 어디서도 부르지 않는다. 같은 입력이면 같은 ID를 낸다.
 - 세대 번호는 항상 0.
+- **catalog `/Metadata` 스트림**: `/EncryptMetadata false`(V 4·5 — AES 방식)면 `encrypt_object_for_writing`이 위 판단대로 Identity 필터를 앞에 붙이고(기존 `/Crypt`는 빼고) 사전 문자열만 암호화한다. 두 writer — `serialize_pdf_impl`(새로 쓰기)과 `incremental_save` — 가 `document_metadata_num`으로 그 객체를 찾는다. RC4(V 2)는 플래그와 상관없이 암호화한다. ISO 32000-1 §7.4.10: "The Crypt filter shall be the first filter in the Filter array entry."
 - 스트림 사전 안의 문자열도 문자열 방식(`string_method`)으로 암호화한다. `/Type /XRef` 스트림은 데이터·사전 모두 암호화하지 않는다([객체 복호화](object-decryption.md)와 같은 규칙, ISO 32000-1 §7.6.1·§7.5.8.2 원문 대조).
 - 암호문 문자열은 고바이트를 포함하므로 [객체 직렬화](object-serialization.md)의 hex 경로를 탄다 — #20의 원인이 여기서 드러났다.
 
 ## Code
-- `justpdf-core/src/crypto/encrypt.rs` — `EncryptionConfig`, `build_r3`, `build_r4`, `build_r6`, `encrypt_object`, `encrypt_bytes`, `fill_random`, `generate_iv`, `generate_random_key`, `generate_random_salt`, `random_file_id`, `generate_file_id`, `make_id_array`, `test_r6_perms_tail_is_random`, `test_r6_file_keys_and_salts_differ_across_builds`, `test_aes_ivs_are_distinct`, `test_stream_dictionary_strings_are_encrypted`, `test_undecryptable_stream_dictionary_string_is_kept`, `test_xref_stream_is_left_unencrypted`
+- `justpdf-core/src/crypto/encrypt.rs` — `EncryptionConfig`, `build_r3`, `build_r4`, `build_r6`, `encrypt_object`, `encrypt_bytes`, `fill_random`, `generate_iv`, `generate_random_key`, `generate_random_salt`, `random_file_id`, `generate_file_id`, `make_id_array`, `test_r6_perms_tail_is_random`, `test_r6_file_keys_and_salts_differ_across_builds`, `test_aes_ivs_are_distinct`, `test_stream_dictionary_strings_are_encrypted`, `test_undecryptable_stream_dictionary_string_is_kept`, `test_xref_stream_is_left_unencrypted`, `encrypt_object_for_writing`, `with_identity_crypt_filter`
 - `justpdf-core/src/crypto/aes_cipher.rs` — `encrypt_aes_cbc`
-- `justpdf-core/tests/integration.rs` — `test_encrypt_roundtrip_across_password_combinations`, `test_encrypted_builds_get_distinct_file_ids`
+- `justpdf-core/tests/integration.rs` — `test_encrypt_roundtrip_across_password_combinations`, `test_encrypted_builds_get_distinct_file_ids`, `test_document_metadata_written_plain_when_encrypt_metadata_false`, `test_document_metadata_survives_rewriting_with_either_flag`, `test_incremental_save_keeps_changed_document_metadata_plain`
+- `justpdf-core/src/writer/serialize.rs` — `document_metadata_num`, `serialize_pdf_impl`
 - `justpdf-cli/tests/encrypt.rs` — `encrypt_keeps_the_source_permanent_id`, `encrypt_without_source_id_gets_a_fresh_one`, `encrypt_with_empty_source_id_gets_a_fresh_one`
 
 ## Reference behaviour

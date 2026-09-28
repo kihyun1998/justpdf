@@ -14,6 +14,8 @@ mod rc4;
 mod types;
 
 pub use decrypt::decrypt_object;
+pub(crate) use decrypt::{decrypt_stream_dict, metadata_stream_left_plain};
+pub(crate) use encrypt::encrypt_object_for_writing;
 pub use encrypt::{
     EncryptionConfig, EncryptionMethod, encrypt_object, generate_file_id, random_file_id,
 };

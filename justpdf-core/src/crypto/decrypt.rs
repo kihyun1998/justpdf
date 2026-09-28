@@ -59,7 +59,10 @@ pub fn decrypt_object(
             let method = stream_crypt_method(&dict, state);
             if method == CryptMethod::None {
                 // Identity — no decryption needed
-                return Ok(PdfObject::Stream { dict, data });
+                return Ok(PdfObject::Stream {
+                    dict: remove_crypt_filter(dict),
+                    data,
+                });
             }
 
             let decrypted = decrypt_bytes(
@@ -95,6 +98,53 @@ pub fn decrypt_object(
         }
         // Other types don't need decryption
         other => Ok(other),
+    }
+}
+
+/// Whether `dict` is an XML metadata stream whose data stays unencrypted
+/// when it is the document-level one: `/EncryptMetadata false` applies and
+/// the stream has no `/Crypt` filter of its own.
+pub(crate) fn metadata_stream_left_plain(dict: &PdfDict, state: &SecurityState) -> bool {
+    metadata_left_plain(state) && is_xml_metadata(dict) && !has_crypt_filter(dict)
+}
+
+/// Whether `/EncryptMetadata false` applies: crypt filters in use (V 4 or 5)
+/// and the flag false.
+pub(super) fn metadata_left_plain(state: &SecurityState) -> bool {
+    state.encrypt_dict.v >= 4 && !state.encrypt_dict.encrypt_metadata
+}
+
+/// Whether `dict` is an XML metadata stream's (`/Type /Metadata /Subtype /XML`).
+pub(super) fn is_xml_metadata(dict: &PdfDict) -> bool {
+    dict.get_name(b"Type") == Some(b"Metadata".as_slice())
+        && dict.get_name(b"Subtype") == Some(b"XML".as_slice())
+}
+
+/// Whether a stream's `/Filter` names `/Crypt`.
+fn has_crypt_filter(dict: &PdfDict) -> bool {
+    match dict.get(b"Filter") {
+        Some(PdfObject::Name(n)) => n == b"Crypt",
+        Some(PdfObject::Array(arr)) => arr.iter().any(|o| o.as_name() == Some(b"Crypt")),
+        _ => false,
+    }
+}
+
+/// Decrypt the strings of a stream's dictionary and keep its data as
+/// written.
+pub(crate) fn decrypt_stream_dict(
+    obj: PdfObject,
+    state: &SecurityState,
+    obj_num: u32,
+    gen_num: u16,
+) -> PdfObject {
+    match obj {
+        PdfObject::Stream { dict, data } => {
+            match decrypt_strings_or_keep(PdfObject::Dict(dict), state, obj_num, gen_num) {
+                PdfObject::Dict(dict) => PdfObject::Stream { dict, data },
+                _ => unreachable!("a dictionary decrypts to a dictionary"),
+            }
+        }
+        other => other,
     }
 }
 
@@ -243,7 +293,7 @@ fn extract_crypt_filter_name<'a>(
 }
 
 /// Remove /Crypt from the filter chain in a stream dict.
-fn remove_crypt_filter(mut dict: PdfDict) -> PdfDict {
+pub(super) fn remove_crypt_filter(mut dict: PdfDict) -> PdfDict {
     if let Some(filter) = dict.get(b"Filter").cloned() {
         match filter {
             PdfObject::Name(ref n) if n == b"Crypt" => {

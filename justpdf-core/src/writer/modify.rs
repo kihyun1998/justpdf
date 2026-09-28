@@ -432,10 +432,20 @@ pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result
         buf.push(b'\n');
     }
 
+    let metadata_num = crate::writer::serialize::document_metadata_num(
+        &modifier.writer.objects,
+        modifier.catalog_ref().obj_num,
+    );
     let mut offsets: Vec<(u32, usize)> = Vec::new();
     for (obj_num, obj) in changed {
         let write_obj = match security {
-            Some(state) => crate::crypto::encrypt_object(obj, state, *obj_num, 0)?,
+            Some(state) => crate::crypto::encrypt_object_for_writing(
+                obj,
+                state,
+                *obj_num,
+                0,
+                Some(*obj_num) == metadata_num,
+            )?,
             None => obj.clone(),
         };
         offsets.push((*obj_num, buf.len()));

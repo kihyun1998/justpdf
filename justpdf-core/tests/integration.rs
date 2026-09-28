@@ -1136,6 +1136,190 @@ fn test_stream_dictionary_strings_decrypt_in_third_party_files() {
     }
 }
 
+/// Decoded data of the stream the catalog's `key` points at.
+fn catalog_stream_data(doc: &PdfDocument, key: &[u8]) -> Vec<u8> {
+    let catalog = doc.catalog_ref().unwrap().clone();
+    let iref = match doc.resolve(&catalog).unwrap() {
+        PdfObject::Dict(d) => d.get_ref(key).cloned().unwrap(),
+        other => panic!("unexpected catalog {other:?}"),
+    };
+    match doc.resolve(&iref).unwrap() {
+        PdfObject::Stream { dict, data } => {
+            justpdf_core::stream::decode_stream(&data, &dict).unwrap()
+        }
+        other => panic!("{iref:?} is not a stream: {other:?}"),
+    }
+}
+
+/// `metadata_{name}.pdf` (qpdf, user `user`, owner `owner`), authenticated.
+/// The catalog's `/Metadata` is XMP whose `dc:title` is `hello-xmp`; its
+/// `/Probe` is another `/Type /Metadata /Subtype /XML` stream holding
+/// `probe body`.
+fn metadata_fixture(name: &str) -> PdfDocument {
+    let mut doc =
+        PdfDocument::from_bytes(std::fs::read(fixture(&format!("metadata_{name}.pdf"))).unwrap())
+            .unwrap();
+    doc.authenticate(b"user").unwrap();
+    doc
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+#[test]
+fn test_document_metadata_left_plain_reads_as_written_in_third_party_files() {
+    for name in ["plain_r4", "plain_r6", "encrypted_r4"] {
+        let doc = metadata_fixture(name);
+        let xmp = catalog_stream_data(&doc, b"Metadata");
+        assert!(xmp.starts_with(b"<?xpacket begin="), "{name}: {xmp:?}");
+        assert!(contains(&xmp, b"hello-xmp"), "{name}");
+        assert_eq!(catalog_stream_data(&doc, b"Probe"), b"probe body", "{name}");
+    }
+}
+
+/// A one-page document whose catalog has `/Metadata` (XML metadata holding
+/// `hello-xmp`) and `/Probe` (another XML metadata stream holding
+/// `probe body`), written with `method` and `encrypt_metadata`.
+fn write_with_metadata(
+    method: justpdf_core::crypto::EncryptionMethod,
+    encrypt_metadata: bool,
+) -> Vec<u8> {
+    let mut builder = DocumentBuilder::new();
+    builder.add_page(PageBuilder::new(200.0, 200.0));
+    let doc = PdfDocument::from_bytes(builder.build().unwrap()).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+    let xml_stream = |data: &[u8]| {
+        let mut dict = PdfDict::new();
+        dict.insert(b"Type".to_vec(), PdfObject::Name(b"Metadata".to_vec()));
+        dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"XML".to_vec()));
+        PdfObject::Stream {
+            dict,
+            data: data.to_vec(),
+        }
+    };
+    let metadata = modifier.add_object(xml_stream(b"<x:xmpmeta>hello-xmp</x:xmpmeta>"));
+    let probe = modifier.add_object(xml_stream(b"probe body"));
+    let catalog_num = modifier.catalog_ref().obj_num;
+    let mut catalog = match modifier.find_object_pub(catalog_num) {
+        Some(PdfObject::Dict(d)) => d.clone(),
+        other => panic!("unexpected catalog {other:?}"),
+    };
+    catalog.insert(b"Metadata".to_vec(), PdfObject::Reference(metadata));
+    catalog.insert(b"Probe".to_vec(), PdfObject::Reference(probe));
+    modifier.set_object(catalog_num, PdfObject::Dict(catalog));
+    modifier.set_encryption(justpdf_core::crypto::EncryptionConfig {
+        user_password: b"user".to_vec(),
+        owner_password: b"owner".to_vec(),
+        permissions: justpdf_core::crypto::Permissions::allow_all(),
+        method,
+        encrypt_metadata,
+    });
+    modifier.build().unwrap()
+}
+
+#[test]
+fn test_document_metadata_written_plain_when_encrypt_metadata_false() {
+    use justpdf_core::crypto::EncryptionMethod::{AES128, AES256, RC4_128};
+    // (method, encrypt_metadata, whether the XMP stays plain in the file)
+    for (method, flag, plain) in [
+        (AES128, false, true),
+        (AES256, false, true),
+        (AES128, true, false),
+        (RC4_128, false, false),
+    ] {
+        let case = format!("{method:?} encrypt_metadata={flag}");
+        let bytes = write_with_metadata(method, flag);
+        assert_eq!(contains(&bytes, b"hello-xmp"), plain, "{case}");
+        assert_eq!(
+            contains(&bytes, b"/CryptFilterDecodeParms"),
+            plain,
+            "{case}"
+        );
+        assert_eq!(contains(&bytes, b"/Identity"), plain, "{case}");
+        assert!(!contains(&bytes, b"probe body"), "{case}");
+
+        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        doc.authenticate(b"user").unwrap();
+        assert_eq!(
+            catalog_stream_data(&doc, b"Metadata"),
+            b"<x:xmpmeta>hello-xmp</x:xmpmeta>",
+            "{case}"
+        );
+        assert_eq!(catalog_stream_data(&doc, b"Probe"), b"probe body", "{case}");
+    }
+}
+
+#[test]
+fn test_document_metadata_survives_rewriting_with_either_flag() {
+    use justpdf_core::crypto::EncryptionMethod::AES128;
+    for flag in [false, true] {
+        let mut doc = PdfDocument::from_bytes(write_with_metadata(AES128, false)).unwrap();
+        doc.authenticate(b"user").unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_encryption(justpdf_core::crypto::EncryptionConfig {
+            user_password: b"user".to_vec(),
+            owner_password: b"owner".to_vec(),
+            permissions: justpdf_core::crypto::Permissions::allow_all(),
+            method: AES128,
+            encrypt_metadata: flag,
+        });
+        let bytes = modifier.build().unwrap();
+        assert_eq!(
+            contains(&bytes, b"hello-xmp"),
+            !flag,
+            "encrypt_metadata={flag}"
+        );
+
+        let mut out = PdfDocument::from_bytes(bytes).unwrap();
+        out.authenticate(b"user").unwrap();
+        assert_eq!(
+            catalog_stream_data(&out, b"Metadata"),
+            b"<x:xmpmeta>hello-xmp</x:xmpmeta>",
+            "encrypt_metadata={flag}"
+        );
+        assert_eq!(
+            catalog_stream_data(&out, b"Probe"),
+            b"probe body",
+            "encrypt_metadata={flag}"
+        );
+    }
+}
+
+#[test]
+fn test_incremental_save_keeps_changed_document_metadata_plain() {
+    for name in ["plain_r4", "plain_r6"] {
+        let doc = metadata_fixture(name);
+        let catalog = doc.catalog_ref().unwrap().clone();
+        let metadata = match doc.resolve(&catalog).unwrap() {
+            PdfObject::Dict(d) => d.get_ref(b"Metadata").cloned().unwrap(),
+            other => panic!("unexpected catalog {other:?}"),
+        };
+        let mut dict = PdfDict::new();
+        dict.insert(b"Type".to_vec(), PdfObject::Name(b"Metadata".to_vec()));
+        dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"XML".to_vec()));
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_object(
+            metadata.obj_num,
+            PdfObject::Stream {
+                dict,
+                data: b"<x:xmpmeta>changed-xmp</x:xmpmeta>".to_vec(),
+            },
+        );
+        let bytes = justpdf_core::writer::modify::incremental_save(&doc, modifier).unwrap();
+        assert!(contains(&bytes, b"changed-xmp"), "{name}");
+
+        let mut out = PdfDocument::from_bytes(bytes).unwrap();
+        out.authenticate(b"user").unwrap();
+        assert_eq!(
+            catalog_stream_data(&out, b"Metadata"),
+            b"<x:xmpmeta>changed-xmp</x:xmpmeta>",
+            "{name}"
+        );
+        assert_eq!(catalog_stream_data(&out, b"Probe"), b"probe body", "{name}");
+    }
+}
+
 /// `aes256_r5_user_owner.pdf`: AES-256 R5 written by qpdf, user password
 /// `userpw`, owner password `ownerpw`, one page reading "R5 secret text".
 fn r5_user_owner_bytes() -> Vec<u8> {
