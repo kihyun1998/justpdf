@@ -77,6 +77,38 @@ impl Document {
         Ok(Self { inner, pages })
     }
 
+    /// Open a PDF file from a path, authenticating with `password`.
+    ///
+    /// `password` may be the user or the owner password. A document that
+    /// opens without a password opens regardless of `password`.
+    pub fn open_with_password<P: AsRef<Path>>(path: P, password: &[u8]) -> Result<Self> {
+        Self::authenticated(PdfDocument::open(path.as_ref())?, password)
+    }
+
+    /// Parse a PDF from in-memory bytes, authenticating with `password`.
+    ///
+    /// `password` may be the user or the owner password. A document that
+    /// opens without a password opens regardless of `password`.
+    pub fn from_bytes_with_password(data: Vec<u8>, password: &[u8]) -> Result<Self> {
+        Self::authenticated(PdfDocument::from_bytes(data)?, password)
+    }
+
+    /// Open with memory-mapped I/O, authenticating with `password`
+    /// (requires `mmap` feature).
+    ///
+    /// `password` may be the user or the owner password. A document that
+    /// opens without a password opens regardless of `password`.
+    #[cfg(feature = "mmap")]
+    pub fn open_mmap_with_password<P: AsRef<Path>>(path: P, password: &[u8]) -> Result<Self> {
+        Self::authenticated(PdfDocument::open_mmap(path.as_ref())?, password)
+    }
+
+    fn authenticated(mut inner: PdfDocument, password: &[u8]) -> Result<Self> {
+        inner.authenticate(password)?;
+        let pages = justpdf_core::page::collect_pages(&inner)?;
+        Ok(Self { inner, pages })
+    }
+
     /// Authenticate an encrypted document with a password.
     pub fn authenticate(&mut self, password: &[u8]) -> Result<()> {
         self.inner.authenticate(password)?;
@@ -258,12 +290,12 @@ impl Document {
 
     /// Create a modifier for editing this document.
     ///
-    /// The modifier works on a copy of the raw PDF bytes, so the original
-    /// `Document` is not affected.
+    /// The modifier works on a copy of this document's objects, so the
+    /// original `Document` is not affected. The objects of an encrypted
+    /// document are copied decrypted, and the modifier writes them without
+    /// encryption unless encryption is set through `inner_mut()`.
     pub fn modify(&self) -> Result<Modifier> {
-        let bytes = self.inner.raw_data().to_vec();
-        let doc = PdfDocument::from_bytes(bytes)?;
-        let modifier = DocumentModifier::from_document(&doc)?;
+        let modifier = DocumentModifier::from_document(&self.inner)?;
         Ok(Modifier { modifier })
     }
 
@@ -922,5 +954,90 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("5"));
         assert!(msg.contains("3"));
+    }
+
+    const R5_USER_OWNER: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../justpdf-core/tests/fixtures/aes256_r5_user_owner.pdf"
+    );
+
+    fn r5_user_owner_bytes() -> Vec<u8> {
+        std::fs::read(R5_USER_OWNER).unwrap()
+    }
+
+    fn first_page_text(doc: &Document) -> String {
+        doc.page(0).unwrap().text().unwrap().trim().to_string()
+    }
+
+    #[test]
+    fn test_user_password_file_does_not_open_without_password() {
+        let err = Document::from_bytes(r5_user_owner_bytes()).err().unwrap();
+        assert!(
+            matches!(err, Error::Core(JustPdfError::EncryptedDocument)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_from_bytes_with_user_password() {
+        let doc = Document::from_bytes_with_password(r5_user_owner_bytes(), b"userpw").unwrap();
+        assert!(doc.is_encrypted());
+        assert!(doc.is_authenticated());
+        assert_eq!(doc.page_count(), 1);
+        assert_eq!(first_page_text(&doc), "R5 secret text");
+    }
+
+    #[test]
+    fn test_from_bytes_with_owner_password() {
+        let doc = Document::from_bytes_with_password(r5_user_owner_bytes(), b"ownerpw").unwrap();
+        assert!(doc.is_authenticated());
+        assert_eq!(doc.page_count(), 1);
+        assert_eq!(first_page_text(&doc), "R5 secret text");
+    }
+
+    #[test]
+    fn test_from_bytes_with_wrong_password() {
+        let err = Document::from_bytes_with_password(r5_user_owner_bytes(), b"totally-wrong")
+            .err()
+            .unwrap();
+        assert!(
+            matches!(err, Error::Core(JustPdfError::IncorrectPassword)),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_from_bytes_with_password_on_unencrypted_file() {
+        let doc = Document::from_bytes_with_password(build_test_pdf(), b"anything").unwrap();
+        assert!(!doc.is_encrypted());
+        assert_eq!(doc.page_count(), 1);
+    }
+
+    #[test]
+    fn test_open_with_password() {
+        let doc = Document::open_with_password(R5_USER_OWNER, b"userpw").unwrap();
+        assert_eq!(doc.page_count(), 1);
+        assert_eq!(first_page_text(&doc), "R5 secret text");
+    }
+
+    #[cfg(feature = "mmap")]
+    #[test]
+    fn test_open_mmap_with_password() {
+        let doc = Document::open_mmap_with_password(R5_USER_OWNER, b"userpw").unwrap();
+        assert_eq!(doc.page_count(), 1);
+        assert_eq!(first_page_text(&doc), "R5 secret text");
+    }
+
+    #[test]
+    fn test_modify_keeps_authentication() {
+        let doc = Document::from_bytes_with_password(r5_user_owner_bytes(), b"userpw").unwrap();
+        let mut modifier = doc.modify().unwrap();
+        modifier.set_title("edited");
+        let out = modifier.build().unwrap();
+
+        let doc2 = Document::from_bytes(out).unwrap();
+        assert_eq!(doc2.page_count(), 1);
+        assert_eq!(doc2.title().as_deref(), Some("edited"));
+        assert_eq!(first_page_text(&doc2), "R5 secret text");
     }
 }

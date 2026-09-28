@@ -15,14 +15,14 @@ let doc = Document::from_bytes(bytes)?;
 
 ## Password-Protected PDFs
 
-Opening tries the empty password automatically. If that fails, authenticate explicitly:
+Opening tries the empty password automatically, so a file whose user password is empty opens with `open`/`from_bytes`. A file with a user password fails there with `EncryptedDocument`; open it with its user or owner password:
 
 ```rust
-let mut doc = Document::open("encrypted.pdf")?;
-if doc.is_encrypted() && !doc.is_authenticated() {
-    doc.authenticate(b"password")?;
-}
+let doc = Document::open_with_password("encrypted.pdf", b"password")?;
+// or: Document::from_bytes_with_password(bytes, b"password")?
 ```
+
+A wrong password returns `IncorrectPassword`.
 
 ## Accessing Metadata
 

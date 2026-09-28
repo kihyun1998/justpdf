@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - `crypto::random_file_id` — a random 16-byte file identifier for a newly written file (#31)
 - `DocumentModifier::set_encryption` — `build` then writes the document encrypted, keeping `/Info`; the trailer `/ID` keeps the source's first element and gets a new second element (#75)
 - `ContentOp` is now `PartialEq` (#29)
+- `Document::from_bytes_with_password`, `open_with_password` and `open_mmap_with_password` (`mmap` feature) — open an encrypted document with its user or owner password (#99)
 
 ### Changed
 - `justpdf-special`: `justpdf-render` is now optional and only pulled in by the `ocr` feature (#1)
@@ -19,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - **`incremental_save` appends only what changed** — it takes the source document instead of its bytes (`incremental_save(&doc, modifier)`, where `doc` is the document the modifier was created from). It appends only the objects whose value differs from the document's and the new ones, marks the objects the modifier removed as free (`65535 f`), and returns the original bytes unchanged when nothing changed; before, every object was appended again (#25)
 
 ### Fixed
+- **`justpdf::Document` could not open a file with a user password** — `open`, `from_bytes` and `open_mmap` collect the pages while opening, which fails with `EncryptedDocument` before `authenticate` can be called, so such a file could not be opened at all. Open it with the new `*_with_password` constructors; `open`, `from_bytes` and `open_mmap` are unchanged. `Document::modify` now works on the document itself instead of parsing its bytes again, so a document opened with a password can be modified; as before, the modifier writes an encrypted document without encryption unless encryption is set through `inner_mut()` (#99)
 - **Strings in an object stream of an encrypted file** — an object stored in an object stream was decrypted twice: once with the object stream and again with its own number, although ISO 32000 says strings in an object stream are not separately encrypted. With RC4 the strings (such as `/Info` values) came out as garbage; with AES, resolving the object failed, and `DocumentModifier` — and so CLI `decrypt` — silently left the object out of the file it wrote. Such an object is now decrypted only with its object stream (#32)
 - **A `/Crypt` stream filter without a `/Name`** — decrypted the stream with the document's default stream method; ISO 32000-1 says the name defaults to `/Identity`, so the data is not encrypted. Such a stream is now read as written, as MuPDF does
 - **`/EncryptMetadata false` was ignored** — reading decrypted the document's XMP metadata stream although such a file leaves it unencrypted (with AES it failed to resolve), and writing with `EncryptionConfig { encrypt_metadata: false }` encrypted it anyway. The catalog's `/Metadata` stream is now read as written, as qpdf does, and written plain behind an Identity crypt filter (ISO 32000-1 §7.6.5's example); RC4 still encrypts it
