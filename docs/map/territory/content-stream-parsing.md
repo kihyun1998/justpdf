@@ -36,4 +36,4 @@
 - `Operand` 변형을 추가하면 `Operand::write_to`를 고친다(`match`가 빠진 변형을 컴파일 에러로 알린다).
 
 ## Known holes / open
-
+**None.** 알려진 구멍이 없다 — 이 노트가 추적하던 구멍은 모두 고쳐졌다.

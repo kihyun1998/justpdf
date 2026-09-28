@@ -1136,6 +1136,98 @@ fn test_stream_dictionary_strings_decrypt_in_third_party_files() {
     }
 }
 
+/// `objstm_string_{tag}.pdf` (qpdf, user `user`, owner `owner`) resolved
+/// through `key`: the catalog's `/Probe` dictionary, whose `/Note` is
+/// `(hello-objstm)`, or the trailer's `/Info`, whose `/Title` is
+/// `(hello-title)`. Both sit in an object stream.
+fn objstm_dict(tag: &str, key: &[u8]) -> justpdf_core::PdfDict {
+    let mut doc = PdfDocument::from_bytes(
+        std::fs::read(fixture(&format!("objstm_string_{tag}.pdf"))).unwrap(),
+    )
+    .unwrap();
+    doc.authenticate(b"user").unwrap();
+    let iref = match key {
+        b"Probe" => {
+            let catalog = doc.catalog_ref().unwrap().clone();
+            match doc.resolve(&catalog).unwrap() {
+                PdfObject::Dict(d) => d.get_ref(b"Probe").cloned().unwrap(),
+                other => panic!("{tag}: unexpected catalog {other:?}"),
+            }
+        }
+        _ => doc.trailer().get_ref(key).cloned().unwrap(),
+    };
+    assert!(
+        matches!(
+            doc.xref.get(iref.obj_num),
+            Some(justpdf_core::xref::XrefEntry::Compressed { .. })
+        ),
+        "{tag}: {iref:?} is not in an object stream"
+    );
+    match doc.resolve(&iref).unwrap() {
+        PdfObject::Dict(d) => d,
+        other => panic!("{tag}: {iref:?} is not a dictionary: {other:?}"),
+    }
+}
+
+#[test]
+fn test_object_stream_strings_decrypt_once_in_third_party_files() {
+    for tag in ["r3", "r4", "r6"] {
+        assert_eq!(
+            objstm_dict(tag, b"Probe").get(b"Note"),
+            Some(&PdfObject::String(b"hello-objstm".to_vec())),
+            "{tag}"
+        );
+        assert_eq!(
+            objstm_dict(tag, b"Info").get(b"Title"),
+            Some(&PdfObject::String(b"hello-title".to_vec())),
+            "{tag}"
+        );
+    }
+}
+
+#[test]
+fn test_object_stream_objects_survive_rewriting_without_encryption() {
+    for tag in ["r3", "r4", "r6"] {
+        let mut doc = PdfDocument::from_bytes(
+            std::fs::read(fixture(&format!("objstm_string_{tag}.pdf"))).unwrap(),
+        )
+        .unwrap();
+        doc.authenticate(b"user").unwrap();
+        let bytes = DocumentModifier::from_document(&doc)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let out = PdfDocument::from_bytes(bytes).unwrap();
+        assert!(!out.is_encrypted(), "{tag}");
+        let catalog = out.catalog_ref().unwrap().clone();
+        let probe = match out.resolve(&catalog).unwrap() {
+            PdfObject::Dict(d) => d.get_ref(b"Probe").cloned(),
+            other => panic!("{tag}: unexpected catalog {other:?}"),
+        };
+        let note = probe.map(|r| out.resolve(&r).unwrap());
+        assert_eq!(
+            note.as_ref()
+                .and_then(|o| o.as_dict())
+                .and_then(|d| d.get(b"Note")),
+            Some(&PdfObject::String(b"hello-objstm".to_vec())),
+            "{tag}"
+        );
+        let info = out
+            .trailer()
+            .get_ref(b"Info")
+            .cloned()
+            .map(|r| out.resolve(&r).unwrap());
+        assert_eq!(
+            info.as_ref()
+                .and_then(|o| o.as_dict())
+                .and_then(|d| d.get(b"Title")),
+            Some(&PdfObject::String(b"hello-title".to_vec())),
+            "{tag}"
+        );
+    }
+}
+
 /// Decoded data of the stream the catalog's `key` points at.
 fn catalog_stream_data(doc: &PdfDocument, key: &[u8]) -> Vec<u8> {
     let catalog = doc.catalog_ref().unwrap().clone();
