@@ -10,7 +10,7 @@
 - `/Filter /Standard`만 받는다(문서 열기에서 판정).
 - V=4면 이름 붙은 crypt filter를 쓰고, 모르는 V는 V2(RC4)로 떨어진다.
 - `to_pdf_dict`는 항상 `/AuthEvent /DocOpen`을 쓴다.
-- `/EncryptMetadata false`는 어느 스트림을 복호화하는지에 영향을 주지 않는다.
+- `/EncryptMetadata false`는 V 4·5에서만 뜻을 갖는다(`metadata_left_plain`) — 키 유도([키 유도](key-derivation.md))와, catalog `/Metadata` 스트림 데이터를 암호화하지 않는 규칙([객체 복호화](object-decryption.md), [객체 암호화](object-encryption.md))에 쓰인다.
 
 ## Code
 - `justpdf-core/src/crypto/types.rs` — `EncryptionDict`, `from_dict`, `to_pdf_dict`, `key_length_bytes`, `CryptFilterMap`, `CryptFilter`, `CryptMethod`, `SecurityState`, `resolve_crypt_method`
@@ -28,4 +28,4 @@
 - [권한](permissions.md) — `/P`.
 
 ## Known holes / open
-- `/EncryptMetadata false` 미반영.
+**None.** 알려진 구멍이 없다.

@@ -70,6 +70,14 @@ pub(crate) fn serialize_writer_encrypted(
     )
 }
 
+/// Object number of the catalog's `/Metadata` stream among `objects`.
+pub(crate) fn document_metadata_num(objects: &[(u32, PdfObject)], catalog_num: u32) -> Option<u32> {
+    objects.iter().find_map(|(num, obj)| match obj {
+        PdfObject::Dict(d) if *num == catalog_num => d.get_ref(b"Metadata").map(|r| r.obj_num),
+        _ => None,
+    })
+}
+
 /// Internal implementation handling both encrypted and unencrypted serialization.
 fn serialize_pdf_impl(
     objects: &[(u32, PdfObject)],
@@ -90,6 +98,7 @@ fn serialize_pdf_impl(
     // Track byte offsets for xref
     let mut offsets: Vec<(u32, usize)> = Vec::with_capacity(objects.len());
 
+    let metadata_num = document_metadata_num(objects, catalog_ref.obj_num);
     for (obj_num, obj) in objects {
         let offset = buf.len();
         offsets.push((*obj_num, offset));
@@ -100,7 +109,13 @@ fn serialize_pdf_impl(
                 // Don't encrypt the encryption dictionary itself
                 obj.clone()
             } else {
-                crate::crypto::encrypt_object(obj, state, *obj_num, 0)?
+                crate::crypto::encrypt_object_for_writing(
+                    obj,
+                    state,
+                    *obj_num,
+                    0,
+                    Some(*obj_num) == metadata_num,
+                )?
             }
         } else {
             obj.clone()

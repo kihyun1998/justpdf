@@ -21,7 +21,9 @@ pub struct EncryptionConfig {
     pub permissions: Permissions,
     /// Encryption method.
     pub method: EncryptionMethod,
-    /// Whether to encrypt metadata streams.
+    /// Whether to encrypt the document-level metadata stream (the catalog's
+    /// `/Metadata`). With `false` and an AES method it is written plain
+    /// behind an Identity crypt filter; RC4 always encrypts it.
     pub encrypt_metadata: bool,
 }
 
@@ -265,6 +267,73 @@ pub fn encrypt_object(
         }
         other => Ok(other.clone()),
     }
+}
+
+/// Encrypt `obj` for writing. When it is the document-level metadata stream
+/// (`is_document_metadata`) and `/EncryptMetadata false` applies, its data is
+/// written unencrypted behind an Identity crypt filter and only the strings
+/// of its dictionary are encrypted.
+pub(crate) fn encrypt_object_for_writing(
+    obj: &PdfObject,
+    state: &SecurityState,
+    obj_num: u32,
+    gen_num: u16,
+    is_document_metadata: bool,
+) -> Result<PdfObject> {
+    if let PdfObject::Stream { dict, data } = obj
+        && is_document_metadata
+        && super::decrypt::metadata_left_plain(state)
+        && super::decrypt::is_xml_metadata(dict)
+    {
+        let dict = with_identity_crypt_filter(dict.clone());
+        let dict = match encrypt_object(&PdfObject::Dict(dict), state, obj_num, gen_num)? {
+            PdfObject::Dict(d) => d,
+            _ => unreachable!("a dictionary encrypts to a dictionary"),
+        };
+        return Ok(PdfObject::Stream {
+            dict,
+            data: data.clone(),
+        });
+    }
+    encrypt_object(obj, state, obj_num, gen_num)
+}
+
+/// `dict` with `/Crypt` as its first filter, named `/Identity` in its
+/// `/DecodeParms`, in place of any `/Crypt` filter it had.
+fn with_identity_crypt_filter(dict: PdfDict) -> PdfDict {
+    let mut dict = super::decrypt::remove_crypt_filter(dict);
+    let mut parms = PdfDict::new();
+    parms.insert(
+        b"Type".to_vec(),
+        PdfObject::Name(b"CryptFilterDecodeParms".to_vec()),
+    );
+    parms.insert(b"Name".to_vec(), PdfObject::Name(b"Identity".to_vec()));
+    let crypt = PdfObject::Name(b"Crypt".to_vec());
+    match dict.get(b"Filter").cloned() {
+        None => {
+            dict.insert(b"Filter".to_vec(), crypt);
+            dict.insert(b"DecodeParms".to_vec(), PdfObject::Dict(parms));
+        }
+        Some(filter) => {
+            let filters = match filter {
+                PdfObject::Array(arr) => arr,
+                other => vec![other],
+            };
+            let mut params = match dict.get(b"DecodeParms").cloned() {
+                None => Vec::new(),
+                Some(PdfObject::Array(arr)) => arr,
+                Some(other) => vec![other],
+            };
+            params.resize(filters.len(), PdfObject::Null);
+            let mut new_filters = vec![crypt];
+            new_filters.extend(filters);
+            let mut new_params = vec![PdfObject::Dict(parms)];
+            new_params.extend(params);
+            dict.insert(b"Filter".to_vec(), PdfObject::Array(new_filters));
+            dict.insert(b"DecodeParms".to_vec(), PdfObject::Array(new_params));
+        }
+    }
+    dict
 }
 
 /// Encrypt raw bytes using the appropriate method.

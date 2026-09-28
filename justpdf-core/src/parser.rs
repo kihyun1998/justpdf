@@ -447,11 +447,42 @@ impl PdfDocument {
         // Apply decryption if needed
         if let Some(ref sec) = self.security {
             if sec.is_authenticated() {
+                if self.is_plain_document_metadata(iref, &obj, sec) {
+                    return Ok(crypto::decrypt_stream_dict(
+                        obj,
+                        sec,
+                        iref.obj_num,
+                        iref.gen_num,
+                    ));
+                }
                 return crypto::decrypt_object(obj, sec, iref.obj_num, iref.gen_num);
             }
         }
 
         Ok(obj)
+    }
+
+    /// Whether `obj`, loaded as `iref`, is the catalog's `/Metadata` stream
+    /// and `/EncryptMetadata false` leaves its data unencrypted.
+    fn is_plain_document_metadata(
+        &self,
+        iref: &IndirectRef,
+        obj: &PdfObject,
+        sec: &crypto::SecurityState,
+    ) -> bool {
+        let PdfObject::Stream { dict, .. } = obj else {
+            return false;
+        };
+        if !crypto::metadata_stream_left_plain(dict, sec) {
+            return false;
+        }
+        let Some(catalog) = self.catalog_ref().cloned() else {
+            return false;
+        };
+        match self.resolve(&catalog) {
+            Ok(PdfObject::Dict(d)) => d.get_ref(b"Metadata") == Some(iref),
+            _ => false,
+        }
     }
 
     /// Load an object without its own decryption (used for the encryption
