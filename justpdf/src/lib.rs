@@ -293,7 +293,8 @@ impl Document {
     /// The modifier works on a copy of this document's objects, so the
     /// original `Document` is not affected. The objects of an encrypted
     /// document are copied decrypted, and the modifier writes them without
-    /// encryption unless encryption is set through `inner_mut()`.
+    /// encryption unless `Modifier::preserve_encryption` is called or
+    /// encryption is set through `inner_mut()`.
     pub fn modify(&self) -> Result<Modifier> {
         let modifier = DocumentModifier::from_document(&self.inner)?;
         Ok(Modifier { modifier })
@@ -564,6 +565,13 @@ impl Modifier {
     /// Set the document keywords.
     pub fn set_keywords(&mut self, keywords: &str) {
         self.modifier.set_info(b"Keywords", keywords);
+    }
+
+    /// Write the document encrypted as the source document is, so the
+    /// source's user and owner passwords both open it. An unencrypted
+    /// document is written unencrypted.
+    pub fn preserve_encryption(&mut self) {
+        self.modifier.preserve_encryption();
     }
 
     /// Run garbage collection to remove unreachable objects.
@@ -1026,6 +1034,22 @@ mod tests {
         let doc = Document::open_mmap_with_password(R5_USER_OWNER, b"userpw").unwrap();
         assert_eq!(doc.page_count(), 1);
         assert_eq!(first_page_text(&doc), "R5 secret text");
+    }
+
+    #[test]
+    fn test_modify_preserve_encryption() {
+        let doc = Document::from_bytes_with_password(r5_user_owner_bytes(), b"userpw").unwrap();
+        let mut modifier = doc.modify().unwrap();
+        modifier.preserve_encryption();
+        let out = modifier.build().unwrap();
+
+        let err = Document::from_bytes(out.clone()).err().unwrap();
+        assert!(
+            matches!(err, Error::Core(JustPdfError::EncryptedDocument)),
+            "got {err:?}"
+        );
+        let reopened = Document::from_bytes_with_password(out, b"ownerpw").unwrap();
+        assert_eq!(first_page_text(&reopened), "R5 secret text");
     }
 
     #[test]

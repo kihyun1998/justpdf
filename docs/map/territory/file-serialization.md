@@ -23,6 +23,7 @@
 
 ## Cross-cutting invariants
 - [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — 모든 객체가 `serialize_object`를 거쳐 여기서 파일이 된다.
+- [xref 항목 형식](../invariant/xref-entry-format.md) — `serialize_pdf_impl`의 고전 xref 테이블.
 
 ## Blast radius
 - [xref](xref.md) — 여기서 쓴 xref·trailer를 읽는 쪽.

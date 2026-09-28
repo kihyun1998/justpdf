@@ -31,6 +31,7 @@ MuPDF `pdf-write.c`(`dowriteobject`의 `pdf_xref_is_incremental` 필터, 증분 
 ## Cross-cutting invariants
 - [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — 스트림을 Display로 쓰는 사이트.
 - [증분 trailer](../invariant/incremental-trailer.md) — 쓰기 쪽 사이트 둘 중 하나.
+- [xref 항목 형식](../invariant/xref-entry-format.md) — 덧붙인 구간의 xref 테이블.
 
 ## Blast radius
 - [xref](xref.md) — 덧붙인 구간을 읽는 쪽.

@@ -578,7 +578,7 @@ fn write_linearized_inner(
         write!(buf, "0 {}\n", xref_size)?;
 
         // Entry 0: free list head
-        buf.extend_from_slice(b"0000000000 65535 f \r\n");
+        buf.extend_from_slice(b"0000000000 65535 f \n");
 
         // Build offset map
         let mut offset_map: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
@@ -588,9 +588,9 @@ fn write_linearized_inner(
 
         for obj_num in 1..xref_size {
             if let Some(&off) = offset_map.get(&obj_num) {
-                write!(buf, "{:010} {:05} n \r\n", off, 0)?;
+                writeln!(buf, "{:010} {:05} n ", off, 0)?;
             } else {
-                buf.extend_from_slice(b"0000000000 00000 f \r\n");
+                buf.extend_from_slice(b"0000000000 00000 f \n");
             }
         }
     }

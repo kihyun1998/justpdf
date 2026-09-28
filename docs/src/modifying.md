@@ -2,7 +2,7 @@
 
 ## Using the Modifier
 
-`Document::modify` returns a `Modifier` working on a copy of the document; the original `Document` is not changed. An encrypted document is modified as it was opened — open a file with a user password with `Document::open_with_password` — and is written without encryption unless you set it again (see [Encryption](#encryption)).
+`Document::modify` returns a `Modifier` working on a copy of the document; the original `Document` is not changed. An encrypted document is modified as it was opened — open a file with a user password with `Document::open_with_password` — and is written without encryption unless you keep or set it (see [Encryption](#encryption)).
 
 ```rust
 use justpdf::Document;
@@ -40,7 +40,17 @@ for i in 0..doc.page_count() {
 
 ## Encryption
 
-The high-level `Modifier` has no encryption method of its own; set it on the core modifier through `inner_mut()`, and `build()`/`save()` then write the document encrypted. The document information dictionary is kept, and the first `/ID` element of the original stays as the file's permanent identifier.
+To keep an encrypted document's encryption, call `preserve_encryption`. The output is encrypted as the original is — same `/Encrypt` dictionary and file key — so both of its passwords still open it, even when you opened it with only one of them:
+
+```rust
+let doc = Document::open_with_password("locked.pdf", b"user")?;
+let mut m = doc.modify()?;
+m.set_title("Edited");
+m.preserve_encryption();
+m.save("still-locked.pdf")?;
+```
+
+To encrypt with new passwords, set the encryption on the core modifier through `inner_mut()`, and `build()`/`save()` then write the document encrypted. Of `preserve_encryption` and `set_encryption`, the later call wins. The document information dictionary is kept, and the first `/ID` element of the original stays as the file's permanent identifier.
 
 ```rust
 use justpdf::core::crypto::{EncryptionConfig, EncryptionMethod, Permissions};

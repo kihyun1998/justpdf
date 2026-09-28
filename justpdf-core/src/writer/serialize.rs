@@ -137,7 +137,7 @@ fn serialize_pdf_impl(
     write!(buf, "0 {}\n", xref_size)?;
 
     // Entry 0: free list head
-    buf.extend_from_slice(b"0000000000 65535 f \r\n");
+    buf.extend_from_slice(b"0000000000 65535 f \n");
 
     // Build a map for quick lookup
     let mut offset_map = std::collections::HashMap::new();
@@ -148,10 +148,10 @@ fn serialize_pdf_impl(
     // Entries 1..xref_size
     for obj_num in 1..xref_size {
         if let Some(&off) = offset_map.get(&obj_num) {
-            write!(buf, "{:010} {:05} n \r\n", off, 0)?;
+            writeln!(buf, "{:010} {:05} n ", off, 0)?;
         } else {
             // Free entry
-            buf.extend_from_slice(b"0000000000 00000 f \r\n");
+            buf.extend_from_slice(b"0000000000 00000 f \n");
         }
     }
 
@@ -351,9 +351,9 @@ mod tests {
         let text = String::from_utf8_lossy(&bytes);
 
         // Verify xref contains the free entry
-        assert!(text.contains("0000000000 65535 f \r\n"));
+        assert!(text.contains("\n0000000000 65535 f \n0"));
         // Verify xref contains an in-use entry with 10-digit offset
-        assert!(text.contains(" 00000 n \r\n"));
+        assert!(text.contains(" 00000 n \ntrailer"));
     }
 
     #[test]

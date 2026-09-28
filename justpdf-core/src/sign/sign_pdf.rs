@@ -220,7 +220,7 @@ fn build_pdf_with_placeholder(
     // Write subsections
     for (obj_num, offset) in &offsets {
         write!(buf, "{} 1\n", obj_num)?;
-        write!(buf, "{:010} {:05} n \r\n", offset, 0)?;
+        writeln!(buf, "{:010} {:05} n ", offset, 0)?;
     }
 
     // Trailer
@@ -645,6 +645,34 @@ mod tests {
             original.trailer().get(b"Root")
         );
         assert!(reopened.trailer().get(b"Prev").is_some());
+    }
+
+    #[test]
+    fn test_placeholder_xref_entries_are_20_bytes() {
+        let pdf = create_pdf(false);
+        let (signed, _, _) = build_pdf_with_placeholder(&pdf, &SigningOptions::default()).unwrap();
+        let start = signed.windows(6).rposition(|w| w == b"\nxref\n").unwrap() + 6;
+        let end = start
+            + signed[start..]
+                .windows(7)
+                .position(|w| w == b"trailer")
+                .unwrap();
+        let mut entries = 0;
+        for line in signed[start..end].split_inclusive(|&b| b == b'\n') {
+            if line.len() == 20 && line[17] == b'n' {
+                assert!(matches!(&line[18..], b" \r" | b" \n" | b"\r\n"), "{line:?}");
+                entries += 1;
+            } else {
+                assert!(
+                    line.iter()
+                        .take_while(|&&b| b != b'\n')
+                        .all(|&b| b.is_ascii_digit() || b == b' '),
+                    "not a 20-byte entry or a subsection header: {:?}",
+                    String::from_utf8_lossy(line)
+                );
+            }
+        }
+        assert!(entries > 0);
     }
 
     #[test]
