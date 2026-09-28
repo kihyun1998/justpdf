@@ -1874,3 +1874,262 @@ fn test_decode_stream_cow_flate_owned() {
     assert!(matches!(result, Cow::Owned(_)));
     assert_eq!(&*result, original.as_slice());
 }
+
+/// `source` authenticated with `password`, then rewritten by
+/// `DocumentModifier` with `/Info /Title (edited)` and
+/// `preserve_encryption`.
+fn rewrite_preserving_encryption(source: &[u8], password: &[u8]) -> Vec<u8> {
+    let mut doc = PdfDocument::from_bytes(source.to_vec()).unwrap();
+    doc.authenticate(password).unwrap();
+    let mut modifier = justpdf_core::writer::DocumentModifier::from_document(&doc).unwrap();
+    modifier.set_info(b"Title", "edited");
+    modifier.preserve_encryption();
+    modifier.build().unwrap()
+}
+
+fn info_title(doc: &PdfDocument) -> Option<PdfObject> {
+    let info = doc.trailer().get_ref(b"Info").cloned().unwrap();
+    match doc.resolve(&info).unwrap() {
+        PdfObject::Dict(d) => d.get(b"Title").cloned(),
+        other => panic!("unexpected /Info {other:?}"),
+    }
+}
+
+fn first_file_id(doc: &PdfDocument) -> Vec<u8> {
+    match doc.trailer().get(b"ID") {
+        Some(PdfObject::Array(arr)) => match arr.first() {
+            Some(PdfObject::String(s)) => s.clone(),
+            other => panic!("unexpected /ID element {other:?}"),
+        },
+        other => panic!("unexpected /ID {other:?}"),
+    }
+}
+
+#[test]
+fn test_preserve_encryption_keeps_the_source_encryption_in_third_party_files() {
+    for (name, user, owner) in [
+        (
+            "stream_dict_string_r3.pdf",
+            b"user".as_slice(),
+            b"owner".as_slice(),
+        ),
+        ("stream_dict_string_r4.pdf", b"user", b"owner"),
+        ("stream_dict_string_r6.pdf", b"user", b"owner"),
+        ("aes256_r5_user_owner.pdf", b"userpw", b"ownerpw"),
+    ] {
+        let source_bytes = std::fs::read(fixture(name)).unwrap();
+        let source = PdfDocument::from_bytes(source_bytes.clone()).unwrap();
+        let source_dict = source.security_state().unwrap().encrypt_dict.clone();
+        let out = rewrite_preserving_encryption(&source_bytes, user);
+
+        assert!(
+            !contains(&out, b"edited"),
+            "{name}: /Title written in plaintext"
+        );
+        assert!(
+            !contains(&out, b"hello-note"),
+            "{name}: /Note written in plaintext"
+        );
+        let reopened = PdfDocument::from_bytes(out.clone()).unwrap();
+        assert!(reopened.is_encrypted(), "{name}");
+        assert!(
+            !reopened.is_authenticated(),
+            "{name}: opens without a password"
+        );
+        let dict = &reopened.security_state().unwrap().encrypt_dict;
+        assert_eq!(
+            (dict.v, dict.r, &dict.o, &dict.u, dict.p),
+            (
+                source_dict.v,
+                source_dict.r,
+                &source_dict.o,
+                &source_dict.u,
+                source_dict.p
+            ),
+            "{name}"
+        );
+        assert_eq!(first_file_id(&reopened), first_file_id(&source), "{name}");
+
+        for password in [user, owner] {
+            let mut doc = PdfDocument::from_bytes(out.clone()).unwrap();
+            doc.authenticate(password).unwrap();
+            assert_eq!(
+                info_title(&doc),
+                Some(PdfObject::String(b"edited".to_vec())),
+                "{name}"
+            );
+            if name == "aes256_r5_user_owner.pdf" {
+                assert_eq!(first_page_text(&doc).trim(), "R5 secret text", "{name}");
+            } else {
+                let catalog = doc.catalog_ref().unwrap().clone();
+                let probe = match doc.resolve(&catalog).unwrap() {
+                    PdfObject::Dict(d) => d.get_ref(b"Probe").cloned().unwrap(),
+                    other => panic!("{name}: unexpected catalog {other:?}"),
+                };
+                match doc.resolve(&probe).unwrap() {
+                    PdfObject::Stream { dict, .. } => assert_eq!(
+                        dict.get(b"Note"),
+                        Some(&PdfObject::String(b"hello-note".to_vec())),
+                        "{name}"
+                    ),
+                    other => panic!("{name}: /Probe is not a stream: {other:?}"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_preserve_encryption_leaves_document_metadata_as_the_source_does() {
+    // (fixture, whether the XMP is plain in the file)
+    for (name, plain) in [
+        ("plain_r4", true),
+        ("plain_r6", true),
+        ("encrypted_r4", false),
+    ] {
+        let source = std::fs::read(fixture(&format!("metadata_{name}.pdf"))).unwrap();
+        assert_eq!(contains(&source, b"hello-xmp"), plain, "{name}: source");
+        let out = rewrite_preserving_encryption(&source, b"user");
+
+        assert_eq!(contains(&out, b"hello-xmp"), plain, "{name}");
+        assert!(!contains(&out, b"probe body"), "{name}");
+        let mut doc = PdfDocument::from_bytes(out).unwrap();
+        assert!(!doc.is_authenticated(), "{name}");
+        doc.authenticate(b"user").unwrap();
+        assert!(
+            contains(&catalog_stream_data(&doc, b"Metadata"), b"hello-xmp"),
+            "{name}"
+        );
+        assert_eq!(catalog_stream_data(&doc, b"Probe"), b"probe body", "{name}");
+    }
+}
+
+/// Checks every entry of every cross-reference table in `bytes` against
+/// ISO 32000-1 §7.5.4: `nnnnnnnnnn ggggg n` (or `f`) followed by a
+/// 2-byte end-of-line (SP CR, SP LF or CR LF), 20 bytes in all. Returns
+/// the number of entries and, of those, the free entries other than the
+/// head of the free list (object 0).
+fn check_xref_entries(bytes: &[u8]) -> (usize, usize) {
+    let mut count = 0;
+    let mut free = 0;
+    let mut sections = 0;
+    let mut from = 0;
+    while let Some(at) = bytes[from..].windows(5).position(|w| w == b"\nxref") {
+        let mut p = from + at + 5;
+        if bytes[p] == b'\r' {
+            p += 1;
+        }
+        assert_eq!(bytes[p], b'\n', "EOL after xref at {p}");
+        p += 1;
+        sections += 1;
+        loop {
+            let line_end = p + bytes[p..].iter().position(|&b| b == b'\n').unwrap();
+            let line = std::str::from_utf8(&bytes[p..line_end]).unwrap().trim_end();
+            if line.starts_with("trailer") {
+                break;
+            }
+            let mut fields = line.split(' ');
+            let first: u32 = fields.next().unwrap().parse().unwrap();
+            let n: u32 = fields.next().unwrap().parse().unwrap();
+            p = line_end + 1;
+            for num in first..first + n {
+                let entry = &bytes[p..p + 20];
+                let text = String::from_utf8_lossy(entry);
+                assert!(
+                    entry[..10].iter().all(u8::is_ascii_digit)
+                        && entry[10] == b' '
+                        && entry[11..16].iter().all(u8::is_ascii_digit)
+                        && entry[16] == b' '
+                        && matches!(entry[17], b'n' | b'f')
+                        && matches!(&entry[18..20], b" \r" | b" \n" | b"\r\n"),
+                    "entry {count} at {p}: {text:?}"
+                );
+                if entry[17] == b'f' && num != 0 {
+                    free += 1;
+                }
+                p += 20;
+                count += 1;
+            }
+        }
+        from = p;
+    }
+    assert!(sections > 0, "no cross-reference table");
+    (count, free)
+}
+
+#[test]
+fn test_written_xref_entries_are_20_bytes() {
+    use justpdf_core::writer::DocumentModifier;
+    let mut builder = DocumentBuilder::new();
+    let font = builder.add_standard_font("Helvetica");
+    for text in ["one", "two"] {
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.add_font(&font, "Helvetica");
+        page.begin_text();
+        page.set_font(&font, 12.0);
+        page.move_to(72.0, 720.0);
+        page.show_text(text);
+        page.end_text();
+        builder.add_page(page);
+    }
+    let built = builder.build().unwrap();
+    let (built_entries, _) = check_xref_entries(&built);
+    assert!(built_entries > 1);
+
+    let doc = PdfDocument::from_bytes(built.clone()).unwrap();
+    let rewritten = DocumentModifier::from_document(&doc)
+        .unwrap()
+        .build()
+        .unwrap();
+    assert!(
+        check_xref_entries(&rewritten).0 > 1,
+        "DocumentModifier::build"
+    );
+
+    // Dropping a page leaves unused numbers: free entries in a full rewrite,
+    // and removed objects in an incremental save.
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+    modifier.delete_page(0).unwrap();
+    modifier.garbage_collect();
+    let with_gaps = modifier.build().unwrap();
+    assert!(
+        check_xref_entries(&with_gaps).1 > 0,
+        "gaps in DocumentModifier::build"
+    );
+    let gapped_doc = PdfDocument::from_bytes(with_gaps).unwrap();
+    let linearized = justpdf_core::writer::linearize_pdf(&gapped_doc).unwrap();
+    assert!(check_xref_entries(&linearized).1 > 0, "gaps in linearize");
+
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+    modifier.delete_page(0).unwrap();
+    modifier.garbage_collect();
+    let removed = justpdf_core::writer::incremental_save(&doc, modifier).unwrap();
+    assert!(
+        check_xref_entries(&removed).1 > 0,
+        "removed objects in incremental_save"
+    );
+
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+    modifier.set_encryption(justpdf_core::crypto::EncryptionConfig {
+        user_password: b"user".to_vec(),
+        owner_password: b"owner".to_vec(),
+        permissions: justpdf_core::crypto::Permissions::allow_all(),
+        method: justpdf_core::crypto::EncryptionMethod::AES128,
+        encrypt_metadata: true,
+    });
+    assert!(
+        check_xref_entries(&modifier.build().unwrap()).0 > 1,
+        "encrypted build"
+    );
+
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+    modifier.set_info(b"Title", "incremental");
+    let appended = justpdf_core::writer::incremental_save(&doc, modifier).unwrap();
+    assert!(
+        check_xref_entries(&appended).0 > built_entries,
+        "incremental_save appends a second table"
+    );
+
+    let linearized = justpdf_core::writer::linearize_pdf(&doc).unwrap();
+    assert!(check_xref_entries(&linearized).0 > 1, "linearize");
+}

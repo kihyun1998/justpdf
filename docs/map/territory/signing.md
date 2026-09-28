@@ -25,6 +25,7 @@
 - [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — `string_syntax`, `real_syntax`, `serialize_dict`.
 - [텍스트 문자열 인코딩](../invariant/text-string-encoding.md) — `/Name`·`/Reason`·`/Location`.
 - [증분 trailer](../invariant/incremental-trailer.md) — 쓰기 쪽 사이트.
+- [xref 항목 형식](../invariant/xref-entry-format.md) — 덧붙인 구간의 xref 테이블.
 
 ## Blast radius
 - [증분 저장](incremental-save.md) — 같은 방식의 다른 구현. 한쪽에서 발견한 결함을 다른 쪽에서 찾는다.

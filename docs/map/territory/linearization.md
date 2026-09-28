@@ -21,7 +21,7 @@
 **None.** 코드가 "PDF spec section 7.4", "F.3", "Table F.1"을 인용하지만 비교 기록은 없다. 비교 대상: ISO 32000-2 Annex F.
 
 ## Cross-cutting invariants
-**None.**
+- [xref 항목 형식](../invariant/xref-entry-format.md) — main xref 테이블.
 
 ## Blast radius
 - [파일 직렬화](file-serialization.md) — 쓰기 쪽이 xref·trailer를 직접 쓴다.

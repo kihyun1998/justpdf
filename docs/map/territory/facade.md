@@ -11,11 +11,11 @@
 - `Metadata` 타입은 없다 — 메타데이터는 문자열 getter와 `metadata() -> Vec<(String,String)>`.
 - `Page::render_svg`·`render_raw`는 페이지를 인덱스로 다시 모으고, 다른 렌더 메서드는 캐시된 `PageInfo`를 넘긴다(불일치).
 - `open`·`from_bytes`·`open_mmap`은 생성 중에 페이지를 모으므로, 사용자 비밀번호가 있는 암호화 파일에서는 `Core(EncryptedDocument)`로 실패한다. 그런 파일은 `*_with_password` 생성자로 연다 — core `authenticate` 뒤 페이지를 모은다. 빈 사용자 비밀번호로 열리는 문서는 core `authenticate`가 "이미 인증됨"으로 돌아오므로 어떤 비밀번호로도 열린다. 파사드 `authenticate`는 빈 사용자 비밀번호 파일에서만 닿는다(#99, 메인테이너가 비밀번호 생성자 추가안을 택함 — 지연 페이지 수집안은 인증 전 `page_count()`가 0이 되는 의미 변경이라 택하지 않음).
-- `Document::modify`는 `&self.inner`를 `DocumentModifier::from_document`에 넘긴다 — 인증 상태가 그대로 쓰인다. `from_document`가 `encryption: None`으로 시작하므로, 암호화 문서를 `modify()`로 저장하면 `inner_mut().set_encryption`을 부르지 않는 한 `/Encrypt` 없는 파일이 나온다(2026-09-28 측정, `aes256_r5_empty_user.pdf`). 파사드 `Modifier` 자신에는 암호화 메서드가 없다.
+- `Document::modify`는 `&self.inner`를 `DocumentModifier::from_document`에 넘긴다 — 인증 상태가 그대로 쓰인다. 암호화 문서를 `modify()`로 저장하면 기본은 `/Encrypt` 없는 파일이다(2026-09-28 측정, `aes256_r5_empty_user.pdf`). `Modifier::preserve_encryption`은 원본과 같은 암호화로 쓰고([문서 수정기](document-modifier.md)의 원본 유지), 새 비밀번호는 `inner_mut().set_encryption`으로 건다(#102).
 - 기능 플래그: `mmap`(core), `parallel`(render), `async`(tokio — 읽기만 비동기, 파싱은 동기). `arena`는 core로 전달되지만 파사드 코드는 이것으로 아무것도 게이트하지 않는다.
 
 ## Code
-- `justpdf/src/lib.rs` — `Document`, `open`, `from_bytes`, `open_mmap`, `open_with_password`, `from_bytes_with_password`, `open_mmap_with_password`, `authenticated`, `authenticate`, `pages`, `PageIter`, `metadata`, `text`, `search`, `outlines`, `annotations`, `form_fields`, `embedded_files`, `signatures`, `modify`, `Page`, `render_png`, `render_svg`, `render_raw`, `Modifier`, `merge`, `merge_bytes`
+- `justpdf/src/lib.rs` — `Document`, `open`, `from_bytes`, `open_mmap`, `open_with_password`, `from_bytes_with_password`, `open_mmap_with_password`, `authenticated`, `authenticate`, `pages`, `PageIter`, `metadata`, `text`, `search`, `outlines`, `annotations`, `form_fields`, `embedded_files`, `signatures`, `modify`, `Page`, `render_png`, `render_svg`, `render_raw`, `Modifier`, `preserve_encryption`, `merge`, `merge_bytes`
 
 ## Reference behaviour
 **None.**
