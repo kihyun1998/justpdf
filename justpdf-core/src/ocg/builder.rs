@@ -24,7 +24,7 @@ pub fn add_ocg(
     let ocg_ref = modifier.add_object(PdfObject::Dict(ocg_dict));
 
     // Update catalog's /OCProperties
-    let catalog_ref = modifier.catalog_ref().clone();
+    let catalog_ref = modifier.catalog_ref();
     let catalog_obj = modifier
         .find_object_pub(catalog_ref.obj_num)
         .cloned()
@@ -115,7 +115,7 @@ pub fn set_ocg_visibility(
     ocg_ref: &IndirectRef,
     visible: bool,
 ) -> Result<()> {
-    let catalog_ref = modifier.catalog_ref().clone();
+    let catalog_ref = modifier.catalog_ref();
     let catalog_obj = modifier
         .find_object_pub(catalog_ref.obj_num)
         .cloned()
@@ -199,7 +199,7 @@ pub fn set_ocg_visibility(
 /// - /OCProperties /OCGs array
 /// - /D config /ON, /OFF, and /Order arrays
 pub fn remove_ocg(modifier: &mut DocumentModifier, ocg_ref: &IndirectRef) -> Result<()> {
-    let catalog_ref = modifier.catalog_ref().clone();
+    let catalog_ref = modifier.catalog_ref();
     let catalog_obj = modifier
         .find_object_pub(catalog_ref.obj_num)
         .cloned()
@@ -334,7 +334,7 @@ mod tests {
         );
 
         // Verify catalog has OCProperties
-        let catalog_ref = modifier.catalog_ref().clone();
+        let catalog_ref = modifier.catalog_ref();
         let catalog = modifier
             .find_object_pub(catalog_ref.obj_num)
             .unwrap()
@@ -358,7 +358,7 @@ mod tests {
         let ocg_ref = add_ocg(&mut modifier, "Hidden Layer", false).unwrap();
 
         // Verify catalog has OCProperties with the OCG in /OFF
-        let catalog_ref = modifier.catalog_ref().clone();
+        let catalog_ref = modifier.catalog_ref();
         let catalog = modifier
             .find_object_pub(catalog_ref.obj_num)
             .unwrap()
@@ -381,7 +381,7 @@ mod tests {
         let ref2 = add_ocg(&mut modifier, "Layer 2", false).unwrap();
         let _ = add_ocg(&mut modifier, "Layer 3", true).unwrap();
 
-        let catalog_ref = modifier.catalog_ref().clone();
+        let catalog_ref = modifier.catalog_ref();
         let catalog = modifier
             .find_object_pub(catalog_ref.obj_num)
             .unwrap()
@@ -414,7 +414,7 @@ mod tests {
         // Set to not visible
         set_ocg_visibility(&mut modifier, &ocg_ref, false).unwrap();
 
-        let catalog_ref = modifier.catalog_ref().clone();
+        let catalog_ref = modifier.catalog_ref();
         let catalog = modifier
             .find_object_pub(catalog_ref.obj_num)
             .unwrap()
@@ -437,7 +437,7 @@ mod tests {
         // Set to visible (was initially hidden)
         set_ocg_visibility(&mut modifier, &ocg_ref, true).unwrap();
 
-        let catalog_ref = modifier.catalog_ref().clone();
+        let catalog_ref = modifier.catalog_ref();
         let catalog = modifier
             .find_object_pub(catalog_ref.obj_num)
             .unwrap()
@@ -479,7 +479,7 @@ mod tests {
         // Remove Layer 1
         remove_ocg(&mut modifier, &ref1).unwrap();
 
-        let catalog_ref = modifier.catalog_ref().clone();
+        let catalog_ref = modifier.catalog_ref();
         let catalog = modifier
             .find_object_pub(catalog_ref.obj_num)
             .unwrap()

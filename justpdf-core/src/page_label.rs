@@ -400,7 +400,7 @@ pub fn set_page_labels(
     let tree_ref = modifier.add_object(PdfObject::Dict(tree_dict));
 
     // Update the catalog to reference this tree
-    let catalog_ref = modifier.catalog_ref().clone();
+    let catalog_ref = modifier.catalog_ref();
     let catalog_obj = modifier
         .find_object_pub(catalog_ref.obj_num)
         .cloned()

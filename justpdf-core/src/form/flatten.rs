@@ -147,7 +147,7 @@ pub fn flatten_form(
     }
 
     // Remove AcroForm from catalog
-    let catalog_ref = modifier.catalog_ref().clone();
+    let catalog_ref = modifier.catalog_ref();
     let catalog_obj = modifier
         .find_object_pub(catalog_ref.obj_num)
         .cloned()

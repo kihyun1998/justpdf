@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - `Document::from_bytes_with_password`, `open_with_password` and `open_mmap_with_password` (`mmap` feature) — open an encrypted document with its user or owner password (#99)
 
 ### Changed
+- **`DocumentModifier::catalog_ref` returns the reference by value** (`IndirectRef` instead of `&IndirectRef`), at the generation `build` writes the catalog at — the trailer's `/Root`. Before, it returned the reference read from the source, whose generation differed from the written one once the catalog was set again at a number the modifier no longer held (#112)
 - `justpdf-special`: `justpdf-render` is now optional and only pulled in by the `ocr` feature (#1)
 - `justpdf-formats`: `justpdf-render` is now optional and only pulled in by the `plaintext`, `mobi` and `fb2` features (#2)
 - **`incremental_save` appends only what changed** — it takes the source document instead of its bytes (`incremental_save(&doc, modifier)`, where `doc` is the document the modifier was created from). It appends only the objects whose value differs from the document's and the new ones, marks the objects the modifier removed as free (`65535 f`), and returns the original bytes unchanged when nothing changed; before, every object was appended again (#25)
