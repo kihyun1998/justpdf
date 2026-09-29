@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - `Document::from_bytes_with_password`, `open_with_password` and `open_mmap_with_password` (`mmap` feature) — open an encrypted document with its user or owner password (#99)
 
 ### Changed
+- **Subsetted fonts are much smaller** — `subset_font` (and so `compress_pdf` with `font_subsetting`) copied the font's `cmap` and `post` tables whole, which made up most of a subset: Noto Sans subsetted for "Hello" was 29,201 bytes Flate-compressed. `cmap` now keeps every subtable but only the entries that reach kept glyphs, and a format 2 `post` keeps only the kept glyphs' names; glyph IDs are unchanged. The same subset is now 1,822 bytes. `cmap` formats other than 0, 4, 6 and 12, other `post` formats, and `name` are still copied as they are (#69)
 - **`DocumentModifier::catalog_ref` returns the reference by value** (`IndirectRef` instead of `&IndirectRef`), at the generation `build` writes the catalog at — the trailer's `/Root`. Before, it returned the reference read from the source, whose generation differed from the written one once the catalog was set again at a number the modifier no longer held (#112)
 - `justpdf-special`: `justpdf-render` is now optional and only pulled in by the `ocr` feature (#1)
 - `justpdf-formats`: `justpdf-render` is now optional and only pulled in by the `plaintext`, `mobi` and `fb2` features (#2)
