@@ -1,4 +1,7 @@
-# justpdf
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="logo/readme/justpdf-readme-dark.png">
+  <img alt="justpdf" src="logo/readme/justpdf-readme-light.png" width="480">
+</picture>
 
 [![CI](https://github.com/kihyun1998/justpdf/actions/workflows/ci.yml/badge.svg)](https://github.com/kihyun1998/justpdf/actions/workflows/ci.yml)
 

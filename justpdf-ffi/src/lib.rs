@@ -8,6 +8,9 @@
 //! - Properly freeing allocated resources with the corresponding `_free` function
 //! - Not using freed pointers
 
+#![doc(html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png")]
+#![doc(html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png")]
+
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_double, c_int, c_uint};
 use std::path::Path;
