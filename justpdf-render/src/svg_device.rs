@@ -7,7 +7,7 @@ use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
 use justpdf_core::font::{FontInfo, ToUnicodeCMap, parse_font_info};
 use justpdf_core::image;
-use justpdf_core::object::{PdfDict, PdfObject};
+use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::page::PageInfo;
 use justpdf_core::PdfDocument;
 
@@ -46,6 +46,8 @@ pub struct SvgRenderer<'a> {
     clip_id_stack: Vec<Option<String>>,
     /// Form XObject recursion depth limit.
     xobject_depth: u32,
+    /// Form XObjects being executed, outermost first.
+    running_forms: Vec<IndirectRef>,
     /// Page dimensions in points.
     page_width: f64,
     page_height: f64,
@@ -71,6 +73,7 @@ impl<'a> SvgRenderer<'a> {
             active_clip_id: None,
             clip_id_stack: Vec::new(),
             xobject_depth: 0,
+            running_forms: Vec::new(),
             page_width,
             page_height,
         }
@@ -1051,12 +1054,18 @@ impl<'a> SvgRenderer<'a> {
             XObjectData::Image { dict, data } => {
                 let _ = self.render_image(&dict, &data);
             }
-            XObjectData::Form { dict, data } => {
-                if self.xobject_depth > 10 {
+            XObjectData::Form {
+                obj_ref,
+                dict,
+                data,
+            } => {
+                if self.xobject_depth > 10 || self.running_forms.contains(&obj_ref) {
                     return Ok(());
                 }
                 self.xobject_depth += 1;
+                self.running_forms.push(obj_ref);
                 let _ = self.render_form_xobject(&dict, &data, page);
+                self.running_forms.pop();
                 self.xobject_depth -= 1;
             }
         }
@@ -1117,6 +1126,7 @@ impl<'a> SvgRenderer<'a> {
                     }
                     b"Form" => match self.doc.decode_stream(&dict, &data) {
                         Ok(decoded) => Ok(Some(XObjectData::Form {
+                            obj_ref: xobj_ref,
                             dict,
                             data: decoded,
                         })),
@@ -1290,8 +1300,15 @@ impl<'a> SvgRenderer<'a> {
 // ---------------------------------------------------------------------------
 
 enum XObjectData {
-    Image { dict: PdfDict, data: Vec<u8> },
-    Form { dict: PdfDict, data: Vec<u8> },
+    Image {
+        dict: PdfDict,
+        data: Vec<u8>,
+    },
+    Form {
+        obj_ref: IndirectRef,
+        dict: PdfDict,
+        data: Vec<u8>,
+    },
 }
 
 /// Extract operand as f64 at the given index.

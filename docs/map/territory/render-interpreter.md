@@ -13,10 +13,12 @@
 - `d0`/`d1`은 no-op이다 — [Type3 폰트](type3-fonts.md) 미지원.
 - `v`(베지어)는 현재점 추적 없이 근사한다("lossy without current point tracking").
 - 색 연산자(`cs`/`CS`/`sc`/`scn`…)는 로컬 `cs_from_name`(Device Gray/RGB/CMYK만, 나머지는 RGB)을 쓴다 — 리소스의 색공간·ICC·Indexed·Separation은 해석하지 않는다.
+- 다른 콘텐츠 스트림(Form XObject, 타일, 소프트 마스크 `/G`)은 `with_running_stream`으로 들어간다: 실행 중인 스트림을 다시 만나면 건너뛴다 — [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md). Form XObject는 이와 별도로 깊이 10을 넘으면 건너뛴다.
+- 장치 색 연산자(`g`/`rg`/`k`, `G`/`RG`/`K`)는 그쪽 패턴 선택을 지운다.
 - 페이지 콘텐츠를 자체 함수로 조립한다 — [페이지 콘텐츠 조립](../invariant/page-content-assembly.md).
 
 ## Code
-- `justpdf-render/src/interpreter.rs` — `RenderInterpreter`, `render_page`, `get_page_content`, `concat_content_streams`, `resolve_object`, `execute_ops`, `execute_op`, `effective_transform`, `cs_from_name`
+- `justpdf-render/src/interpreter.rs` — `RenderInterpreter`, `render_page`, `get_page_content`, `concat_content_streams`, `resolve_object`, `execute_ops`, `execute_op`, `with_running_stream`, `effective_transform`, `cs_from_name`
 - `justpdf-render/src/graphics_state.rs` — `GraphicsState`, `TextState`, `Matrix`, `PdfBlendMode`, `fill_color_rgba`
 
 ## Reference behaviour
@@ -25,6 +27,7 @@
 ## Cross-cutting invariants
 - [페이지 콘텐츠 조립](../invariant/page-content-assembly.md)
 - [폰트 해석 경로](../invariant/font-resolution.md) — `resolve_page_fonts`가 텍스트 추출과 별도로 폰트를 푼다.
+- [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md)
 
 ## Blast radius
 - [래스터 장치](raster-device.md) — 유일한 출력 대상.
@@ -35,5 +38,6 @@
 - [렌더 API](render-api.md) — 호출자.
 
 ## Known holes / open
-- 콘텐츠 스트림 재귀에 조상 방어가 없다: SMask `/G`가 자기를 다시 적용하면 스택 오버플로, Form XObject는 깊이(>10)만 막아 자기 호출 k번이면 k^11번 실행(2026-09-29 프로브로 재현). Tracked: #119
-- `interpreter.rs`, `graphics_state.rs`에 테스트가 없다. 렌더 통합 테스트는 PNG 매직 바이트·길이만 확인하고 픽셀 내용을 보지 않는다.
+- `interpreter.rs`, `graphics_state.rs`에 단위 테스트가 없다. 픽셀 내용을 보는 렌더 테스트는 `tests/render_recursion.rs`(재귀 경로)뿐이고, 나머지 통합 테스트는 PNG 매직 바이트·길이만 확인한다.
+- 폼·패턴·소프트 마스크 `/G`의 이름을 자기 `/Resources`가 아니라 페이지 리소스에서 푼다(`resolve_xobject`, `resolve_pattern`, `apply_extgstate` 모두 `page.resources_ref`). Tracked: #127
+- 중첩 스트림 경계에 그래픽 상태 스택의 바닥이 없어 짝이 맞지 않는 `q`/`Q`가 경계를 넘고, 채우고 남긴 경로가 타일로 들어간다. Tracked: #128

@@ -8,6 +8,7 @@
 
 ## Design model
 - 경로 채우기·선 긋기만 패턴을 쓴다. 텍스트는 패턴으로 채우지 않는다(추론).
+- 타일은 실행 중인 스트림으로 기록된 채 그려지고, 타일 안에서 같은 패턴을 다시 칠하면 패턴 없이 채우기 색으로 칠한다. 타일은 페이지의 소프트 마스크 없이 그린다 — [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md).
 
 ## Code
 - `justpdf-render/src/interpreter.rs` — `resolve_pattern`, `render_tiling_pattern`, `try_fill_with_pattern`, `try_stroke_with_pattern`, `resolve_and_render_pattern`
@@ -17,7 +18,7 @@
 **None.** 비교 대상 조항: ISO 32000-2 §8.7.3.
 
 ## Cross-cutting invariants
-**None.**
+- [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md)
 
 ## Blast radius
 - [셰이딩](render-shading.md) — 셰이딩 패턴.
@@ -25,5 +26,4 @@
 - [글리프 렌더링](glyph-rendering.md) — 패턴 텍스트 미지원.
 
 ## Known holes / open
-- 타일을 그리는 동안 채우기 패턴이 선택된 채로 남아, 타일 안의 채우기가 같은 패턴을 다시 그린다 — 순환 없는 파일에서 스택 오버플로(2026-09-29 프로브로 재현). 타일링 패턴을 렌더하는 테스트가 없다.
-- Tracked: #119 (콘텐츠 스트림 재귀)
+- 페이지에서 패턴으로 채우거나 그을 때(`try_fill_with_pattern`, `try_stroke_with_pattern`) 소프트 마스크를 적용하지 않는다 — 단색 채우기만 `apply_soft_mask_to_device`를 거친다(2026-09-29 `tests/render_recursion.rs` 작성 중 관찰). Tracked: #129

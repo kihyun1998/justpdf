@@ -8,6 +8,7 @@
 
 ## Design model
 - 인라인 이미지(`BI`)는 건너뛰고, 셰이딩(`sh`)은 "skip for now", marked content는 전부 무시(OCG 없음), 패턴 이름은 기록만 하고 쓰지 않는다. 주석·소프트 마스크 없음. `defs` 주석은 "gradients"를 말하지만 그라디언트 코드가 없다.
+- Form XObject는 실행 중인 폼(`running_forms`)을 다시 만나면 건너뛰고, 깊이 10을 넘으면 건너뛴다 — [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md).
 - 텍스트는 ToUnicode로 `<text>`를 내고, 없으면 ASCII(<128)만, 윤곽이 없으면 "rectangle placeholder".
 - `image_to_rgba`·`cs_from_name`의 사본을 가진다 — [이미지 픽셀 레이아웃](../invariant/image-pixel-layout.md).
 
@@ -21,6 +22,7 @@
 - [이미지 픽셀 레이아웃](../invariant/image-pixel-layout.md)
 - [페이지 콘텐츠 조립](../invariant/page-content-assembly.md)
 - [폰트 해석 경로](../invariant/font-resolution.md)
+- [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md)
 
 ## Blast radius
 - [렌더 인터프리터](render-interpreter.md) — 원본. 래스터 쪽에서 고친 연산자 동작은 여기로 전파되지 않는다.
@@ -30,4 +32,3 @@
 
 ## Known holes / open
 - 테스트는 `<svg` 포함 여부만 확인한다.
-- Form XObject는 깊이(>10)만 막는다 — 자기를 호출하는 폼은 지수 시간(추론, 인터프리터 쪽은 재현). Tracked: #119
