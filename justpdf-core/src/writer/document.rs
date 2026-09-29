@@ -340,8 +340,8 @@ impl DocumentBuilder {
             let file_id = crate::crypto::random_file_id()?;
             crate::writer::serialize::serialize_writer_encrypted(
                 &mut self.writer,
-                &catalog_ref,
-                info_ref.as_ref(),
+                catalog_ref.obj_num,
+                info_ref.as_ref().map(|r| r.obj_num),
                 &config,
                 &file_id,
                 &file_id,

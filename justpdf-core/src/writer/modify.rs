@@ -281,8 +281,8 @@ impl DocumentModifier {
             Encryption::None | Encryption::Source => {
                 return crate::writer::serialize::serialize_writer(
                     &self.writer,
-                    &self.catalog_ref,
-                    self.info_ref.as_ref(),
+                    self.catalog_ref.obj_num,
+                    self.info_num(),
                 );
             }
         };
@@ -295,10 +295,11 @@ impl DocumentModifier {
                 crate::crypto::random_file_id()?,
             )
         };
+        let info_num = self.info_num();
         crate::writer::serialize::serialize_writer_encrypted(
             &mut self.writer,
-            &self.catalog_ref,
-            self.info_ref.as_ref(),
+            self.catalog_ref.obj_num,
+            info_num,
             &config,
             &permanent_id,
             &changing_id,
@@ -320,8 +321,8 @@ impl DocumentModifier {
         state.encrypt_obj_num = Some(encrypt_ref.obj_num);
         crate::writer::serialize::serialize_writer_with_state(
             &self.writer,
-            &self.catalog_ref,
-            self.info_ref.as_ref(),
+            self.catalog_ref.obj_num,
+            self.info_num(),
             &encrypt_ref,
             &state,
             &id_array,
@@ -349,9 +350,14 @@ impl DocumentModifier {
         crate::writer::serialize::serialize_writer_with_xref_stream(
             &self.writer,
             compressed,
-            &self.catalog_ref,
-            self.info_ref.as_ref(),
+            self.catalog_ref.obj_num,
+            self.info_num(),
         )
+    }
+
+    /// Object number of the document info dictionary, when there is one.
+    fn info_num(&self) -> Option<u32> {
+        self.info_ref.as_ref().map(|r| r.obj_num)
     }
 
     /// Save to file.
@@ -484,7 +490,14 @@ pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result
     for (num, source_obj) in source_objects(doc) {
         match current.get(&num) {
             None => removed.push(num),
-            Some(obj) if **obj == source_obj => {
+            Some(obj)
+                if **obj == source_obj
+                    && doc
+                        .xref
+                        .get(num)
+                        .and_then(crate::xref::XrefEntry::defined_generation)
+                        == Some(modifier.writer.generation(num)) =>
+            {
                 unchanged.insert(num);
             }
             Some(_) => {}
@@ -563,8 +576,11 @@ pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result
     let trailer = incremental_trailer(
         &previous_trailer,
         max_obj_num + 1,
-        &modifier.catalog_ref,
-        modifier.info_ref.as_ref(),
+        &modifier.writer.reference_to(modifier.catalog_ref.obj_num),
+        modifier
+            .info_num()
+            .map(|n| modifier.writer.reference_to(n))
+            .as_ref(),
         old_startxref,
     );
     write!(buf, "trailer\n")?;
@@ -2047,6 +2063,122 @@ mod tests {
             reopened.xref.get(info_num),
             Some(crate::xref::XrefEntry::InUse { gen_num: 0, .. })
         ));
+    }
+
+    /// `create_plain_pdf(None)` with an update section that redefines its
+    /// catalog, unchanged, at generation 1, the trailer's `/Root` reading
+    /// `N 1 R`.
+    fn with_catalog_at_generation_one() -> Vec<u8> {
+        use std::io::Write;
+        let source = create_plain_pdf(None);
+        let doc = PdfDocument::from_bytes(source.clone()).unwrap();
+        let catalog_num = doc.catalog_ref().unwrap().obj_num;
+        let catalog = doc.resolve(doc.catalog_ref().unwrap()).unwrap();
+
+        let mut buf = source.clone();
+        let offset = buf.len();
+        write!(buf, "{catalog_num} 1 obj\n").unwrap();
+        crate::writer::serialize::serialize_object(&mut buf, &catalog).unwrap();
+        write!(buf, "\nendobj\n").unwrap();
+        let xref_offset = buf.len();
+        write!(
+            buf,
+            "xref\n{catalog_num} 1\n{offset:010} 00001 n \ntrailer\n"
+        )
+        .unwrap();
+        let trailer = incremental_trailer(
+            doc.trailer(),
+            catalog_num + 1,
+            &IndirectRef {
+                obj_num: catalog_num,
+                gen_num: 1,
+            },
+            None,
+            crate::xref::find_startxref(&source).unwrap(),
+        );
+        crate::writer::serialize::serialize_dict(&mut buf, &trailer).unwrap();
+        write!(buf, "\nstartxref\n{xref_offset}\n%%EOF\n").unwrap();
+        buf
+    }
+
+    /// The trailer's `/Root` of `bytes` resolves to a catalog.
+    fn assert_root_is_a_catalog(bytes: Vec<u8>) {
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
+        let root = doc.catalog_ref().unwrap().clone();
+        match doc.resolve(&root).unwrap() {
+            PdfObject::Dict(d) => assert_eq!(d.get_name(b"Type"), Some(b"Catalog".as_slice())),
+            other => panic!("/Root {} {} R is {other:?}", root.obj_num, root.gen_num),
+        }
+    }
+
+    #[test]
+    fn test_catalog_at_generation_one_source_reads_its_root() {
+        let bytes = with_catalog_at_generation_one();
+        let doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
+        assert_eq!(doc.catalog_ref().unwrap().gen_num, 1);
+        assert_root_is_a_catalog(bytes);
+    }
+
+    #[test]
+    fn test_incremental_save_keeps_the_root_of_an_unchanged_catalog_at_generation_one() {
+        let doc = PdfDocument::from_bytes(with_catalog_at_generation_one()).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_info(b"Title", "Changed");
+        let bytes = incremental_save(&doc, modifier).unwrap();
+        let reopened = PdfDocument::from_bytes(bytes.clone()).unwrap();
+        assert_eq!(reopened.catalog_ref().unwrap().gen_num, 1);
+        assert_root_is_a_catalog(bytes);
+    }
+
+    #[test]
+    fn test_set_info_when_the_source_info_is_not_held_is_read_through_the_trailer() {
+        for (source, password) in generation_one_sources() {
+            let doc = open(source, password);
+            let info_num = doc.trailer().get_ref(b"Info").unwrap().obj_num;
+            let make = || {
+                let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+                modifier.writer().objects.retain(|(n, _)| *n != info_num);
+                modifier.set_info(b"Title", "Rebuilt");
+                modifier.preserve_encryption();
+                modifier
+            };
+            let rewritten = open(make().build().unwrap(), password);
+            assert_eq!(
+                info_title(&rewritten),
+                Some(PdfObject::String(b"Rebuilt".to_vec()))
+            );
+            let appended = open(incremental_save(&doc, make()).unwrap(), password);
+            assert_eq!(
+                info_title(&appended),
+                Some(PdfObject::String(b"Rebuilt".to_vec()))
+            );
+        }
+    }
+
+    #[test]
+    fn test_catalog_set_when_the_source_catalog_is_not_held_is_read_through_the_trailer() {
+        let source = with_catalog_at_generation_one();
+        let doc = PdfDocument::from_bytes(source).unwrap();
+        let catalog_num = doc.catalog_ref().unwrap().obj_num;
+        let catalog = doc.resolve(doc.catalog_ref().unwrap()).unwrap();
+        let make = || {
+            let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+            modifier.writer().objects.retain(|(n, _)| *n != catalog_num);
+            modifier.set_object(catalog_num, catalog.clone());
+            modifier
+        };
+        assert_root_is_a_catalog(make().build().unwrap());
+        assert_root_is_a_catalog(make().build_with_xref_stream(&[]).unwrap());
+
+        // The catalog set to its source value, and /Info changed.
+        let mut modifier = make();
+        modifier.set_info(b"Title", "Changed");
+        let bytes = incremental_save(&doc, modifier).unwrap();
+        assert_root_is_a_catalog(bytes.clone());
+        assert_eq!(
+            info_title(&PdfDocument::from_bytes(bytes).unwrap()),
+            Some(PdfObject::String(b"Changed".to_vec()))
+        );
     }
 
     #[test]

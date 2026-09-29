@@ -7,7 +7,7 @@
 **None.**
 
 ## Design model
-- 세대 번호: 공개 함수(`serialize_pdf`, `serialize_pdf_encrypted`, `serialize_pdf_with_xref_stream`, `write_xref_stream`)는 번호·객체 슬라이스만 받으므로 모든 객체를 세대 0으로 쓴다. `PdfWriter`를 받는 crate 내부 함수(`serialize_writer`, `serialize_writer_with_state`, `serialize_writer_with_xref_stream`, `write_xref_stream_with_generations`)는 writer의 `generations` 세대로 헤더·xref 항목·암호화 키를 쓴다 — 공개 시그니처를 바꾸지 않으려고 두 벌이다(#72, [원본 세대](../invariant/source-generation.md)). `PdfWriter::write_to_bytes`도 writer 쪽이다.
+- 세대 번호: 공개 함수(`serialize_pdf`, `serialize_pdf_encrypted`, `serialize_pdf_with_xref_stream`, `write_xref_stream`)는 번호·객체 슬라이스만 받으므로 모든 객체를 세대 0으로 쓴다. `PdfWriter`를 받는 crate 내부 함수(`serialize_writer`, `serialize_writer_with_state`, `serialize_writer_with_xref_stream`, `write_xref_stream_with_generations`)는 writer의 `generations` 세대로 헤더·xref 항목·암호화 키를 쓴다 — 공개 시그니처를 바꾸지 않으려고 두 벌이다(#72, [원본 세대](../invariant/source-generation.md)). `PdfWriter::write_to_bytes`도 writer 쪽이다. writer 쪽 함수는 catalog·info를 참조가 아니라 **번호**로 받고, trailer `/Root`·`/Info`를 writer가 그 객체를 쓰는 세대로 쓴다(`reference_to`, #110) — 공개 `write_to_bytes(catalog_ref)`는 `catalog_ref`의 세대를 쓰지 않는다.
 - xref 스트림의 세 번째 필드 폭(`w3`)은 인덱스·255·최대 세대 중 큰 값에 맞춘다. 세대만 빼고 맞추면 세대 300이 1바이트에 44로 잘린다(`test_build_with_xref_stream_keeps_a_generation_wider_than_a_byte`).
 - 암호화 사전 자체는 암호화하지 않는다 — 암호화 제외는 **객체 번호**로만 판정하므로(`encrypt_obj_num`), `/Encrypt` 사전의 번호가 다른 객체와 겹치면 그 객체가 평문으로 나간다.
 - `PdfWriter::set_object`가 새 번호를 넣으면 `next_obj_num`을 그 위로 올린다. 번호가 다시 할당되면 위의 번호 판정 때문에, 암호화 저장에서 `/Encrypt` 사전과 번호가 겹친 객체가 평문으로 나간다.
@@ -18,7 +18,7 @@
 ## Code
 - `justpdf-core/src/writer/serialize.rs` — `serialize_pdf`, `serialize_pdf_encrypted`, `serialize_writer_encrypted`, `serialize_pdf_impl`, `serialize_pdf_with_xref_stream`, `serialize_writer`, `serialize_writer_with_state`, `serialize_writer_with_xref_stream`, `serialize_with_xref_stream_impl`
 - `justpdf-core/src/writer/object_stream.rs` — `write_xref_stream`, `write_xref_stream_with_generations`, `bytes_needed`, `write_field`
-- `justpdf-core/src/writer/mod.rs` — `PdfWriter`, `add_object`, `alloc_object_num`, `set_object`, `write_to_bytes`, `test_set_object_at_a_new_number_is_not_reused`, `generation`, `generation_of`
+- `justpdf-core/src/writer/mod.rs` — `PdfWriter`, `add_object`, `alloc_object_num`, `set_object`, `write_to_bytes`, `test_set_object_at_a_new_number_is_not_reused`, `generation`, `generation_of`, `reference_to`
 
 ## Reference behaviour
 **None.** 비교 대상 조항: ISO 32000-2 §7.5(파일 구조).

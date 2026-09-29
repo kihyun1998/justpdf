@@ -87,9 +87,19 @@ impl PdfWriter {
         generation_of(&self.generations, obj_num)
     }
 
-    /// Serialize all objects into a complete PDF byte stream.
+    /// Reference to object `obj_num` at the generation it is written at.
+    pub(crate) fn reference_to(&self, obj_num: u32) -> IndirectRef {
+        IndirectRef {
+            obj_num,
+            gen_num: self.generation(obj_num),
+        }
+    }
+
+    /// Serialize all objects into a complete PDF byte stream. The trailer's
+    /// `/Root` refers to `catalog_ref`'s object at the generation the writer
+    /// writes it at, whatever `catalog_ref`'s generation.
     pub fn write_to_bytes(&self, catalog_ref: &IndirectRef) -> Result<Vec<u8>> {
-        serialize::serialize_writer(self, catalog_ref, None)
+        serialize::serialize_writer(self, catalog_ref.obj_num, None)
     }
 
     /// Serialize and write to a file.
