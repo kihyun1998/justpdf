@@ -11,15 +11,20 @@
 - 쓰기 쪽 적격 규칙: 스트림, catalog, pages 루트, 암호화 사전, `/Type /XRef`, Null은 묶지 않는다.
 - 읽기 쪽은 쌍의 객체 번호를 무시하고 인덱스만 쓴다. 스트림은 항상 세대 0으로 조회한다.
 - **암호화**: 읽기 쪽은 ObjStm 전체를 스트림 번호로 복호화하고, 꺼낸 객체는 [객체 복호화](object-decryption.md)를 다시 받지 않는다(ISO 32000-1 §7.5.7). 쓰기 쪽 패킹은 암호화를 받지 않는다.
-- 쓰기 쪽 패킹은 [압축 파이프라인](compress-pipeline.md)에서 꺼져 있다(`pack_into_object_streams`는 dead code).
+- **세대**: object stream과 그 안 객체는 세대 0이고, 세대 ≠ 0 객체는 넣지 않으며, 새 object stream은 해제된 번호가 아닌 새 번호를 받는다(ISO 32000-1 §7.5.7). 쓰기 쪽은 두 벌이다. `DocumentModifier::pack_object_streams`는 writer의 세대가 0인 객체만 넣고, 컨테이너 번호를 writer의 `next_obj_num`(원본의 모든 번호 위)에서 받는다. 공개 `pack_object_streams`는 번호·객체 슬라이스만 받으므로 모든 객체를 세대 0으로 보고, 컨테이너를 가장 큰 번호 위에 매긴다. 둘은 `pack_objects`(적격 판정·번호 할당을 주입받음)를 공유한다. writer 쪽 xref 스트림 직렬화(`serialize_writer_with_xref_stream`)는 세대 ≠ 0인 압축 객체·컨테이너를 `InvalidObject`로 거부한다 — 공개 함수로 writer의 객체를 패킹해도 조용히 null 참조를 쓰지 않는다.
+  - **메인테이너 판단(2026-09-29, #106)**: writer를 쥔 새 진입점 + 직렬화 가드(B+F). 보여 준 것: lens의 선택지 표 — 공개 시그니처에 세대 맵 추가(A: 깨지는 변경, 외부 호출자는 진짜 맵을 얻을 수 없음), 새 진입점(B), 비활성 내부 패커만 고침(C: 공개 경로가 열린 채), 문서화만(D), 그리고 가드(F). 컨테이너 번호가 GC로 지운 원본 번호의 세대를 물려받을 수 있다는 판정 보류 항목(F2)도 함께 보였다. 공개 슬라이스 함수의 시그니처는 바꾸지 않았다. 이 판단은 적격 규칙의 나머지(`/Info` 제외 여부, `/Length` 값 객체)를 다루지 않았다.
+- `max_objects_per_stream`이 0이면 `pack_objects`가 `InvalidObject`로 거부한다 — 전에는 `chunks(0)`이 panic했다(#106).
+- 쓰기 쪽 패킹은 [압축 파이프라인](compress-pipeline.md)에서 꺼져 있다(`pack_into_object_streams`는 dead code이고 `DocumentModifier::pack_object_streams`를 부른다).
 
 ## Code
 - `justpdf-core/src/parser.rs` — `load_object`, `load_compressed_object`, `decoded_obj_streams`, `test_objstm_first_padding_regression`
-- `justpdf-core/src/writer/object_stream.rs` — `pack_object_streams`, `is_eligible`, `build_object_stream`, `PackResult`, `CompressedObjInfo`
+- `justpdf-core/src/writer/object_stream.rs` — `pack_object_streams`, `pack_objects`, `is_eligible`, `build_object_stream`, `PackResult`, `CompressedObjInfo`, `test_pack_object_streams_refuses_zero_objects_per_stream`
+- `justpdf-core/src/writer/modify.rs` — `pack_object_streams`, `test_pack_object_streams_leaves_a_source_generation_unpacked`, `test_pack_object_streams_numbers_containers_above_every_source_number`, `test_build_with_xref_stream_refuses_a_compressed_object_at_a_source_generation`, `test_build_with_xref_stream_refuses_an_object_stream_at_a_source_generation`, `test_pack_object_streams_refuses_zero_objects_per_stream_and_keeps_the_writer`
+- `justpdf-core/src/writer/serialize.rs` — `serialize_writer_with_xref_stream`
 - `justpdf-core/src/writer/compress.rs` — `pack_into_object_streams`
 
 ## Reference behaviour
-ISO 32000-1:2008 §7.5.7 원문(Adobe 무료 사본, 2026-09-27)과 대조한 것은 암호화 문장 "strings occurring anywhere in an object stream shall not be separately encrypted"뿐이다 — 읽기 쪽 복호화가 이를 따른다([객체 복호화](object-decryption.md)). 나머지(`/First`, 인덱스 쌍, 적격 규칙)와 ISO 32000-2 §7.5.7은 대조하지 않았다.
+ISO 32000-1:2008 §7.5.7 원문(Adobe 무료 사본, 2026-09-27)과 대조한 것은 암호화 문장 "strings occurring anywhere in an object stream shall not be separately encrypted"뿐이다 — 읽기 쪽 복호화가 이를 따른다([객체 복호화](object-decryption.md)). 2026-09-29(#106)에 같은 사본(pdftotext)으로 세대 문장을 대조했다: 넣지 않는 객체 목록의 "Objects with a generation number other than zero", "The generation number of an object stream and of any compressed object shall be zero", 새 object stream과 압축 객체는 "new object numbers, not old ones taken from the free list". MuPDF `pdf-write.c`의 `objstm_gather`도 세대 ≠ 0 객체를 뺀다. 나머지(`/First`, 인덱스 쌍, 적격 규칙)와 ISO 32000-2 §7.5.7은 대조하지 않았다.
 
 ## Cross-cutting invariants
 - [원본 세대](../invariant/source-generation.md) — object stream 안 객체는 세대 0이어야 한다(ISO 32000-1 §7.5.7). `/First` 규칙은 두 사이트가 공유하지만 한 포맷에 속한 설계 규칙이므로 여기 Design model에 둔다.
@@ -32,5 +37,4 @@ ISO 32000-1:2008 §7.5.7 원문(Adobe 무료 사본, 2026-09-27)과 대조한 �
 - [문서 접근](document-access.md) — 디코드된 스트림 캐시를 소유한다.
 
 ## Known holes / open
-- 공개 `pack_object_streams`는 세대 정보 없이 번호·객체만 받아, 원본 세대 ≠ 0 객체도 object stream에 넣는다 — 그 객체를 가리키는 `N g R`이 어긋난다([원본 세대](../invariant/source-generation.md)). Tracked: #106
 - 패킹은 구현돼 있지만 압축 파이프라인에서 꺼져 있다(CHANGELOG 0.1.3 항목과 설계 문서가 이 상태를 적고 있다).

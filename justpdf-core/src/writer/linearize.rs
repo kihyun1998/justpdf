@@ -16,13 +16,14 @@
 //! The linearization dict contains placeholder values that are patched at the end
 //! once all offsets are known.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::page::{collect_pages, PageInfo};
 use crate::parser::PdfDocument;
+use crate::writer::generation_of;
 use crate::writer::serialize::{serialize_dict, serialize_object};
 
 /// Generate a linearized PDF from an existing document.
@@ -53,10 +54,15 @@ pub fn linearize(doc: &PdfDocument) -> Result<Vec<u8>> {
     let info_ref = doc.trailer().get_ref(b"Info").cloned();
 
     let mut all_objects: Vec<(u32, PdfObject)> = Vec::new();
+    // Generation of each copied object whose xref generation is not 0.
+    let mut generations: HashMap<u32, u16> = HashMap::new();
     let refs: Vec<IndirectRef> = doc.object_refs().collect();
     for iref in &refs {
         if let Ok(obj) = doc.resolve(iref) {
             all_objects.push((iref.obj_num, obj));
+            if iref.gen_num != 0 {
+                generations.insert(iref.obj_num, iref.gen_num);
+            }
         }
     }
 
@@ -124,6 +130,7 @@ pub fn linearize(doc: &PdfDocument) -> Result<Vec<u8>> {
         pages.len() as i64,
         &first_page_objects,
         &rest_objects,
+        &generations,
         &page_object_info,
     )?;
 
@@ -344,6 +351,7 @@ fn write_linearized_pdf(
     page_count: i64,
     first_page_objects: &[(u32, PdfObject)],
     rest_objects: &[(u32, PdfObject)],
+    generations: &HashMap<u32, u16>,
     page_info: &[PageObjectSlice],
 ) -> Result<Vec<u8>> {
     // Strategy: use fixed-width (zero-padded) integers in the linearization dict
@@ -379,6 +387,7 @@ fn write_linearized_pdf(
         &placeholder_hint,
         first_page_objects,
         rest_objects,
+        generations,
     )?;
 
     // Compute real hint data from pass 1 layout.
@@ -402,6 +411,7 @@ fn write_linearized_pdf(
         &hint_data,
         first_page_objects,
         rest_objects,
+        generations,
     )?;
 
     // --- Pass 3: write with real params (now stable since sizes are fixed) ---
@@ -426,6 +436,7 @@ fn write_linearized_pdf(
         &hint_data,
         first_page_objects,
         rest_objects,
+        generations,
     )?;
 
     // Sanity check: the file length in the dict should match the actual output.
@@ -478,6 +489,7 @@ fn write_linearized_inner(
     hint_data: &[u8],
     first_page_objects: &[(u32, PdfObject)],
     rest_objects: &[(u32, PdfObject)],
+    generations: &HashMap<u32, u16>,
 ) -> Result<(Vec<u8>, WriteLayout)> {
     let mut buf: Vec<u8> = Vec::new();
     let mut object_offsets: Vec<(u32, usize, usize)> = Vec::new();
@@ -553,7 +565,12 @@ fn write_linearized_inner(
     let _first_page_start = buf.len();
     for (obj_num, obj) in first_page_objects {
         let offset = buf.len();
-        write!(buf, "{} 0 obj\n", obj_num)?;
+        write!(
+            buf,
+            "{} {} obj\n",
+            obj_num,
+            generation_of(generations, *obj_num)
+        )?;
         serialize_object(&mut buf, obj)?;
         write!(buf, "\nendobj\n")?;
         let end = buf.len();
@@ -564,7 +581,12 @@ fn write_linearized_inner(
     // --- 6. Remaining pages' objects ---
     for (obj_num, obj) in rest_objects {
         let offset = buf.len();
-        write!(buf, "{} 0 obj\n", obj_num)?;
+        write!(
+            buf,
+            "{} {} obj\n",
+            obj_num,
+            generation_of(generations, *obj_num)
+        )?;
         serialize_object(&mut buf, obj)?;
         write!(buf, "\nendobj\n")?;
         let end = buf.len();
@@ -588,7 +610,12 @@ fn write_linearized_inner(
 
         for obj_num in 1..xref_size {
             if let Some(&off) = offset_map.get(&obj_num) {
-                writeln!(buf, "{:010} {:05} n ", off, 0)?;
+                writeln!(
+                    buf,
+                    "{:010} {:05} n ",
+                    off,
+                    generation_of(generations, obj_num)
+                )?;
             } else {
                 buf.extend_from_slice(b"0000000000 00000 f \n");
             }
@@ -906,5 +933,84 @@ mod tests {
         // first_page_offset from header = page_data[0].0 = 100
         assert_eq!(hints[0].offset, 100);
         assert_eq!(hints[1].offset, 600); // 100 + 500
+    }
+
+    /// A two-page PDF whose catalog (`1 1`), second page (`5 1`), first-page
+    /// content stream (`4 2`) and `/Info` (`7 1`) are at generations other
+    /// than 0, each referred to at that generation, and an unreferenced
+    /// object at `8 1`.
+    fn create_pdf_at_generations() -> Vec<u8> {
+        use std::io::Write;
+        let objects: [(u32, u16, &str); 8] = [
+            (1, 1, "<< /Type /Catalog /Pages 2 0 R >>"),
+            (2, 0, "<< /Type /Pages /Kids [3 0 R 5 1 R] /Count 2 >>"),
+            (
+                3,
+                0,
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 2 R >>",
+            ),
+            (4, 2, "<< /Length 8 >>\nstream\n0 0 m S\n\nendstream"),
+            (
+                5,
+                1,
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R >>",
+            ),
+            (6, 0, "<< /Length 8 >>\nstream\n1 1 m S\n\nendstream"),
+            (7, 1, "<< /Title (Generations) >>"),
+            (8, 1, "<< /Unreferenced true >>"),
+        ];
+        let mut buf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (num, gen_num, body) in objects {
+            offsets.push((buf.len(), gen_num));
+            write!(buf, "{num} {gen_num} obj\n{body}\nendobj\n").unwrap();
+        }
+        let xref_offset = buf.len();
+        write!(buf, "xref\n0 9\n0000000000 65535 f \r\n").unwrap();
+        for (offset, gen_num) in offsets {
+            write!(buf, "{offset:010} {gen_num:05} n \r\n").unwrap();
+        }
+        write!(
+            buf,
+            "trailer\n<< /Size 9 /Root 1 1 R /Info 7 1 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+        )
+        .unwrap();
+        buf
+    }
+
+    #[test]
+    fn linearize_keeps_source_generations() {
+        let source = PdfDocument::from_bytes(create_pdf_at_generations()).unwrap();
+        let result = linearize(&source).unwrap();
+        let text = String::from_utf8_lossy(&result);
+        for header in ["1 1 obj", "4 2 obj", "5 1 obj", "7 1 obj", "8 1 obj"] {
+            assert!(text.contains(header), "missing header {header}");
+        }
+
+        let doc = PdfDocument::from_bytes(result).unwrap();
+        let written: HashSet<(u32, u16)> =
+            doc.object_refs().map(|r| (r.obj_num, r.gen_num)).collect();
+        for entry in [(1, 1), (2, 0), (4, 2), (5, 1), (7, 1), (8, 1)] {
+            assert!(written.contains(&entry), "missing xref entry {entry:?}");
+        }
+
+        // Each reference below is read from the document, not from the xref.
+        let info = doc.trailer().get_ref(b"Info").unwrap().clone();
+        assert_eq!(
+            doc.resolve(&info).unwrap().as_dict().unwrap().get(b"Title"),
+            Some(&PdfObject::String(b"Generations".to_vec()))
+        );
+        let pages = collect_pages(&doc).unwrap();
+        assert_eq!(pages.len(), 2);
+        for page in &pages {
+            let Some(PdfObject::Reference(contents)) = &page.contents_ref else {
+                panic!("page {} has no /Contents reference", page.index);
+            };
+            assert!(
+                doc.resolve(contents).unwrap().is_stream(),
+                "page {} /Contents {contents:?} does not resolve to a stream",
+                page.index
+            );
+        }
     }
 }

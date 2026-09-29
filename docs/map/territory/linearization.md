@@ -15,14 +15,14 @@
 
 ## Code
 - `justpdf-core/src/linearized.rs` — `detect_linearization`, `is_linearized`, `read_linearization`, `parse_hint_tables`, `PageOffsetHint`, `BitReader`
-- `justpdf-core/src/writer/linearize.rs` — `linearize`, `write_linearized_pdf`, `write_linearized_inner`, `build_hint_stream`, `compute_page_offsets`
+- `justpdf-core/src/writer/linearize.rs` — `linearize`, `write_linearized_pdf`, `write_linearized_inner`, `build_hint_stream`, `compute_page_offsets`, `create_pdf_at_generations`, `linearize_keeps_source_generations`
 
 ## Reference behaviour
 **None.** 코드가 "PDF spec section 7.4", "F.3", "Table F.1"을 인용하지만 비교 기록은 없다. 비교 대상: ISO 32000-2 Annex F.
 
 ## Cross-cutting invariants
 - [xref 항목 형식](../invariant/xref-entry-format.md) — main xref 테이블.
-- [원본 세대](../invariant/source-generation.md) — 원본 객체를 `(번호, 객체)`로 모아 모두 `N 0 obj`·세대 0 xref 항목으로 쓴다.
+- [원본 세대](../invariant/source-generation.md) — 원본 객체를 `object_refs()`의 xref 세대로 헤더·main xref 항목에 쓴다. 새로 만드는 선형화 사전·힌트 스트림은 세대 0이다. trailer `/Root`·`/Info`는 원본 그대로 복사한다 — 원본에서 resolve되지 않던 참조를 되살리지 않는다.
 
 ## Blast radius
 - [파일 직렬화](file-serialization.md) — 쓰기 쪽이 xref·trailer를 직접 쓴다.
@@ -33,4 +33,4 @@
 - 쓰기 쪽(`linearize_pdf`)은 재수출만 되고 제품 코드에서 호출되지 않는다. CLI에도 선형화 명령이 없다.
 - 읽기 쪽 힌트 헤더 길이·인용 표 번호가 스펙과 다를 수 있다(원문 대조 전까지 판정 보류).
 - Tracked: #56 (힌트 테이블 레이아웃)
-- 원본 세대를 버린다 — 세대 ≠ 0 객체를 참조하는 `N g R`이 파일에 없는 객체를 가리킨다(코드 근거, [원본 세대](../invariant/source-generation.md)). Tracked: #106
+- 첫 페이지 구간이 모든 페이지를 담는다: 첫 구간에 catalog의 의존 객체를 모으는데 catalog → `/Pages` → `/Kids`로 모든 페이지에 닿는다. 나머지 구간에는 어디서도 참조되지 않는 객체만 남는다(2026-09-29 측정: `linearize_keeps_source_generations`에서 둘째 페이지 객체의 헤더를 세대 0으로 바꾸는 mutation은 나머지 구간 루프에 걸리지 않았고, 참조되지 않는 객체를 넣어야 걸렸다). Tracked: #124

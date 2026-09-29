@@ -1,20 +1,10 @@
 use std::io::Write;
 
-use crate::error::Result;
+use crate::error::{JustPdfError, Result};
 use crate::object::{PdfDict, PdfObject};
 use crate::writer::encode::encode_flate;
 use crate::writer::serialize::serialize_object;
 
-/// Pack eligible objects into object streams for compact PDF 1.5+ output.
-///
-/// Returns a new list of objects where small non-stream objects have been
-/// packed into object stream containers, plus the remaining unpacked objects.
-///
-/// `catalog_obj_num` and `pages_root_obj_num` identify objects that must NOT
-/// be packed (the catalog and pages tree root).
-///
-/// `encrypt_obj_num` optionally identifies the encryption dictionary, which
-/// must also remain unpacked.
 /// Information about compressed objects for xref stream generation.
 #[derive(Debug, Clone)]
 pub struct CompressedObjInfo {
@@ -34,6 +24,20 @@ pub struct PackResult {
     pub compressed: Vec<CompressedObjInfo>,
 }
 
+/// Pack eligible objects into object streams for compact PDF 1.5+ output.
+///
+/// Returns a new list of objects where small non-stream objects have been
+/// packed into object stream containers, plus the remaining unpacked objects.
+/// Every object in `objects` is taken to be at generation 0, and the
+/// containers are numbered above the highest number in `objects`.
+///
+/// `catalog_obj_num` and `pages_root_obj_num` identify objects that must NOT
+/// be packed (the catalog and pages tree root).
+///
+/// `encrypt_obj_num` optionally identifies the encryption dictionary, which
+/// must also remain unpacked.
+///
+/// Returns an error when `max_objects_per_stream` is 0.
 pub fn pack_object_streams(
     objects: &[(u32, PdfObject)],
     max_objects_per_stream: usize,
@@ -41,33 +45,56 @@ pub fn pack_object_streams(
     pages_root_obj_num: Option<u32>,
     encrypt_obj_num: Option<u32>,
 ) -> Result<PackResult> {
-    let mut eligible: Vec<(u32, &PdfObject)> = Vec::new();
+    pack_objects(
+        objects,
+        max_objects_per_stream,
+        |obj_num, obj| {
+            is_eligible(obj_num, obj, catalog_obj_num, pages_root_obj_num, encrypt_obj_num)
+        },
+        objects.iter().map(|(n, _)| *n).max().unwrap_or(0) + 1,
+    )
+}
+
+/// Pack the objects `eligible` accepts into object streams of at most
+/// `max_objects_per_stream` objects, the containers numbered consecutively
+/// from `first_container_num`.
+pub(crate) fn pack_objects(
+    objects: &[(u32, PdfObject)],
+    max_objects_per_stream: usize,
+    eligible: impl Fn(u32, &PdfObject) -> bool,
+    first_container_num: u32,
+) -> Result<PackResult> {
+    if max_objects_per_stream == 0 {
+        return Err(JustPdfError::InvalidObject {
+            offset: 0,
+            detail: "an object stream must hold at least one object".into(),
+        });
+    }
+
+    let mut packable: Vec<(u32, &PdfObject)> = Vec::new();
     let mut ineligible: Vec<(u32, PdfObject)> = Vec::new();
 
     for (obj_num, obj) in objects {
-        if is_eligible(*obj_num, obj, catalog_obj_num, pages_root_obj_num, encrypt_obj_num) {
-            eligible.push((*obj_num, obj));
+        if eligible(*obj_num, obj) {
+            packable.push((*obj_num, obj));
         } else {
             ineligible.push((*obj_num, obj.clone()));
         }
     }
 
-    if eligible.is_empty() {
+    if packable.is_empty() {
         return Ok(PackResult {
             objects: objects.to_vec(),
             compressed: Vec::new(),
         });
     }
 
-    // Determine next available object number for the new object stream containers.
-    let mut next_obj_num = objects.iter().map(|(n, _)| *n).max().unwrap_or(0) + 1;
-
     // Pack eligible objects in batches
     let mut result = ineligible;
     let mut compressed = Vec::new();
 
-    for chunk in eligible.chunks(max_objects_per_stream) {
-        let objstm_num = next_obj_num;
+    let containers = (first_container_num..).zip(packable.chunks(max_objects_per_stream));
+    for (objstm_num, chunk) in containers {
         let objstm = build_object_stream(chunk)?;
         result.push((objstm_num, objstm));
 
@@ -78,15 +105,13 @@ pub fn pack_object_streams(
                 index: index as u32,
             });
         }
-
-        next_obj_num += 1;
     }
 
     Ok(PackResult { objects: result, compressed })
 }
 
 /// Check whether an object is eligible for packing into an object stream.
-fn is_eligible(
+pub(crate) fn is_eligible(
     obj_num: u32,
     obj: &PdfObject,
     catalog_obj_num: u32,
@@ -591,5 +616,14 @@ mod tests {
         assert!(text.contains("/Root 1 0 R"));
         assert!(text.contains("startxref"));
         assert!(text.contains("%%EOF"));
+    }
+
+    #[test]
+    fn test_pack_object_streams_refuses_zero_objects_per_stream() {
+        let objects = vec![(1, PdfObject::Integer(7)), (2, PdfObject::Integer(8))];
+        assert!(matches!(
+            pack_object_streams(&objects, 0, 99, None, None),
+            Err(crate::error::JustPdfError::InvalidObject { .. })
+        ));
     }
 }

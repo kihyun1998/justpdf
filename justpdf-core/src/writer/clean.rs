@@ -19,7 +19,8 @@ pub struct CleanStats {
 /// 1. Removes duplicate objects (equal values, streams without `/Length`), rewriting references
 ///    to the kept object at generation 0
 /// 2. Removes null/empty objects
-/// 3. Compacts object numbers sequentially to eliminate gaps
+/// 3. Compacts object numbers sequentially to eliminate gaps, rewriting every reference to
+///    an object in `objects` at generation 0
 ///
 /// Returns statistics about what was cleaned.
 pub fn clean_objects(objects: &mut Vec<(u32, PdfObject)>) -> CleanStats {
@@ -237,29 +238,25 @@ fn collect_references(obj: &PdfObject, refs: &mut std::collections::HashSet<u32>
     }
 }
 
-/// Compact object numbers sequentially starting from 1, rewriting all references.
+/// Compact object numbers sequentially starting from 1, rewriting every
+/// reference to a held object at generation 0.
 fn compact_object_numbers(objects: &mut Vec<(u32, PdfObject)>) {
-    // Build a mapping from old obj_num -> new obj_num
-    let mut remap: HashMap<u32, u32> = HashMap::new();
-    for (i, (obj_num, _)) in objects.iter().enumerate() {
-        let new_num = (i + 1) as u32;
-        if *obj_num != new_num {
-            remap.insert(*obj_num, new_num);
-        }
-    }
-
-    if remap.is_empty() {
-        return;
-    }
+    // Build a mapping from every held obj_num -> new obj_num
+    let remap: HashMap<u32, u32> = objects
+        .iter()
+        .enumerate()
+        .map(|(i, (obj_num, _))| (*obj_num, (i + 1) as u32))
+        .collect();
 
     // Renumber objects
     for (i, (obj_num, _)) in objects.iter_mut().enumerate() {
         *obj_num = (i + 1) as u32;
     }
 
-    // Rewrite references
+    // Rewrite references to held objects at generation 0
+    let generations: HashMap<u32, u16> = HashMap::new();
     for (_, obj) in objects.iter_mut() {
-        rewrite_references(obj, &remap, None);
+        rewrite_references(obj, &remap, Some(&generations));
     }
 }
 
@@ -566,6 +563,33 @@ mod tests {
             vec![
                 (1, PdfObject::String(b"hello(world)".to_vec())),
                 (3, PdfObject::String(b"hello(world))".to_vec())),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compaction_writes_references_to_held_objects_at_generation_0() {
+        let reference = |obj_num, gen_num| PdfObject::Reference(IndirectRef { obj_num, gen_num });
+        let mut objects = vec![
+            (
+                1,
+                PdfObject::Array(vec![reference(2, 1), reference(5, 1), reference(9, 1)]),
+            ),
+            (2, PdfObject::Integer(3)),
+            (5, PdfObject::Integer(7)),
+        ];
+
+        clean_objects(&mut objects);
+
+        assert_eq!(
+            objects,
+            vec![
+                (
+                    1,
+                    PdfObject::Array(vec![reference(2, 0), reference(3, 0), reference(9, 1)])
+                ),
+                (2, PdfObject::Integer(3)),
+                (3, PdfObject::Integer(7)),
             ]
         );
     }
