@@ -398,8 +398,9 @@ impl PdfDocument {
     /// Resolve an indirect reference to the actual object.
     /// Uses internal LRU cache. Detects circular references.
     /// Automatically decrypts if the document is encrypted and authenticated.
-    /// A reference whose generation is not the one its xref entry defines
-    /// resolves to `Null`.
+    /// A reference to an object the xref does not define — a free entry, a
+    /// number missing from the xref, or a generation other than the one its
+    /// entry defines — resolves to `Null`.
     ///
     /// Returns a cloned `PdfObject` (owned). The interior LRU cache is
     /// protected by a `RwLock`, so this method only requires `&self` and
@@ -421,7 +422,7 @@ impl PdfDocument {
             }
         }
 
-        if !self.generation_matches(iref) {
+        if !self.defines(iref) {
             return Ok(PdfObject::Null);
         }
 
@@ -432,17 +433,14 @@ impl PdfDocument {
         Ok(result)
     }
 
-    /// Whether `iref`'s generation is the one its xref entry defines
-    /// ([`XrefEntry::defined_generation`]). A free or missing entry matches.
-    fn generation_matches(&self, iref: &IndirectRef) -> bool {
-        match self
-            .xref
+    /// Whether the xref defines `iref`: its entry is in use and its
+    /// generation is the one that entry defines
+    /// ([`XrefEntry::defined_generation`]).
+    fn defines(&self, iref: &IndirectRef) -> bool {
+        self.xref
             .get(iref.obj_num)
             .and_then(XrefEntry::defined_generation)
-        {
-            Some(gen_num) => gen_num == iref.gen_num,
-            None => true,
-        }
+            == Some(iref.gen_num)
     }
 
     /// Load an object, tracking visited refs to detect cycles.
@@ -918,17 +916,6 @@ mod tests {
     #[test]
     fn test_truncated_pdf() {
         let result = PdfDocument::from_bytes(b"%PDF-1.4\n".to_vec());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_object_not_found() {
-        let data = build_minimal_pdf();
-        let doc = PdfDocument::from_bytes(data).unwrap();
-        let result = doc.resolve(&IndirectRef {
-            obj_num: 999,
-            gen_num: 0,
-        });
         assert!(result.is_err());
     }
 

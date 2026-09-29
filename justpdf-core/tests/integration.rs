@@ -337,20 +337,6 @@ fn test_truncated_pdf() {
 }
 
 #[test]
-fn test_object_not_found() {
-    let mut doc = PdfDocument::open(&fixture("minimal.pdf")).unwrap();
-    let result = doc.resolve(&IndirectRef {
-        obj_num: 999,
-        gen_num: 0,
-    });
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        JustPdfError::ObjectNotFound { .. }
-    ));
-}
-
-#[test]
 fn test_corrupted_xref_bad_offset() {
     let mut doc = PdfDocument::open(&fixture("corrupted_xref.pdf")).unwrap();
     // obj 1 has a wrong offset (99999), resolving it should fail
@@ -2155,6 +2141,19 @@ fn generation_fixtures() -> Vec<(&'static str, Option<&'static [u8]>)> {
         ("objstm_string_r4.pdf", Some(b"user".as_slice())),
         ("objstm_string_r6.pdf", Some(b"user".as_slice())),
     ]
+}
+
+#[test]
+fn test_a_reference_to_a_number_missing_from_the_xref_resolves_to_null() {
+    for (name, user) in generation_fixtures() {
+        let doc = open_fixture(name, user);
+        for obj_num in [999, 999_999] {
+            for gen_num in [0, 1] {
+                let obj = doc.resolve(&IndirectRef { obj_num, gen_num }).unwrap();
+                assert_eq!(obj, PdfObject::Null, "{name}: {obj_num} {gen_num} R");
+            }
+        }
+    }
 }
 
 #[test]
