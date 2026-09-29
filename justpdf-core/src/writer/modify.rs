@@ -317,6 +317,43 @@ impl DocumentModifier {
         )
     }
 
+    /// Pack eligible objects at generation 0 into object streams (PDF 1.5+),
+    /// at most `max_objects_per_stream` per stream, each container at a newly
+    /// allocated object number. Returns the compressed-object entries for
+    /// [`Self::build_with_xref_stream`], or an error, with the writer
+    /// unchanged, when `max_objects_per_stream` is 0.
+    pub fn pack_object_streams(
+        &mut self,
+        max_objects_per_stream: usize,
+    ) -> Result<Vec<crate::writer::object_stream::CompressedObjInfo>> {
+        let catalog_num = self.catalog_num;
+        let pages_num = match self.find_object(catalog_num) {
+            Some(PdfObject::Dict(catalog)) => catalog.get_ref(b"Pages").map(|r| r.obj_num),
+            _ => None,
+        };
+        let writer = &self.writer;
+        let packed = crate::writer::object_stream::pack_objects(
+            &writer.objects,
+            max_objects_per_stream,
+            |obj_num, obj| {
+                writer.generation(obj_num) == 0
+                    && crate::writer::object_stream::is_eligible(
+                        obj_num,
+                        obj,
+                        catalog_num,
+                        pages_num,
+                        None,
+                    )
+            },
+            writer.next_obj_num,
+        )?;
+        self.writer.objects = packed.objects;
+        if let Some(last) = packed.compressed.iter().map(|c| c.objstm_num).max() {
+            self.writer.next_obj_num = last + 1;
+        }
+        Ok(packed.compressed)
+    }
+
     /// Serialize to PDF bytes using xref streams (PDF 1.5+).
     /// `compressed` contains info about objects packed into object streams.
     /// Returns an error when `set_encryption` was called, or
@@ -1994,6 +2031,109 @@ mod tests {
             1,
             b"Generation one",
         );
+    }
+
+    #[test]
+    fn test_pack_object_streams_leaves_a_source_generation_unpacked() {
+        let (source, _) = generation_one_sources().remove(0);
+        let doc = open(source, None);
+        let info_num = doc.trailer().get_ref(b"Info").unwrap().obj_num;
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let compressed = modifier.pack_object_streams(100).unwrap();
+        assert!(!compressed.is_empty());
+        assert!(compressed.iter().all(|c| c.obj_num != info_num));
+        assert_info_at_generation(
+            modifier.build_with_xref_stream(&compressed).unwrap(),
+            None,
+            1,
+            b"Generation one",
+        );
+    }
+
+    #[test]
+    fn test_pack_object_streams_numbers_containers_above_every_source_number() {
+        let (source, _) = generation_one_sources().remove(0);
+        let doc = open(source, None);
+        let max_source_num = doc.object_refs().map(|r| r.obj_num).max().unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier
+            .writer
+            .objects
+            .retain(|(n, _)| *n != max_source_num);
+        let compressed = modifier.pack_object_streams(100).unwrap();
+        assert!(!compressed.is_empty());
+        for c in &compressed {
+            assert!(c.objstm_num > max_source_num, "{c:?}");
+        }
+        let next = modifier.writer.add_object(PdfObject::Null).obj_num;
+        assert!(compressed.iter().all(|c| c.objstm_num < next), "{next}");
+    }
+
+    #[test]
+    fn test_pack_object_streams_refuses_zero_objects_per_stream_and_keeps_the_writer() {
+        let doc = PdfDocument::from_bytes(create_test_pdf("Zero", 2)).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let objects = modifier.writer.objects.clone();
+        let next_obj_num = modifier.writer.next_obj_num;
+        assert!(matches!(
+            modifier.pack_object_streams(0),
+            Err(crate::error::JustPdfError::InvalidObject { .. })
+        ));
+        assert_eq!(modifier.writer.objects, objects);
+        assert_eq!(modifier.writer.next_obj_num, next_obj_num);
+    }
+
+    #[test]
+    fn test_build_with_xref_stream_refuses_a_compressed_object_at_a_source_generation() {
+        let (source, _) = generation_one_sources().remove(0);
+        let doc = open(source, None);
+        let info_num = doc.trailer().get_ref(b"Info").unwrap().obj_num;
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let packed = crate::writer::object_stream::pack_object_streams(
+            &modifier.writer.objects,
+            100,
+            modifier.catalog_num,
+            Some(modifier.find_pages_ref().unwrap().obj_num),
+            None,
+        )
+        .unwrap();
+        assert!(packed.compressed.iter().any(|c| c.obj_num == info_num));
+        modifier.writer.objects = packed.objects;
+        assert!(matches!(
+            modifier.build_with_xref_stream(&packed.compressed),
+            Err(crate::error::JustPdfError::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn test_build_with_xref_stream_refuses_an_object_stream_at_a_source_generation() {
+        let (source, _) = generation_one_sources().remove(0);
+        let doc = open(source, None);
+        let info_num = doc.trailer().get_ref(b"Info").unwrap().obj_num;
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let packed = crate::writer::object_stream::pack_object_streams(
+            &[(1, PdfObject::Integer(7))],
+            100,
+            0,
+            None,
+            None,
+        )
+        .unwrap();
+        let container = packed.objects.into_iter().next().unwrap().1;
+        for (num, obj) in modifier.writer.objects.iter_mut() {
+            if *num == info_num {
+                *obj = container.clone();
+            }
+        }
+        let compressed = [crate::writer::object_stream::CompressedObjInfo {
+            obj_num: modifier.writer.next_obj_num,
+            objstm_num: info_num,
+            index: 0,
+        }];
+        assert!(matches!(
+            modifier.build_with_xref_stream(&compressed),
+            Err(crate::error::JustPdfError::InvalidObject { .. })
+        ));
     }
 
     #[test]

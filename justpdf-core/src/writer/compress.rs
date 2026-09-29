@@ -824,44 +824,9 @@ fn recompress_flate_streams(modifier: &mut DocumentModifier, stats: &mut Compres
 fn pack_into_object_streams(
     modifier: &mut DocumentModifier,
 ) -> Vec<crate::writer::object_stream::CompressedObjInfo> {
-    let catalog_obj_num = modifier.catalog_ref().obj_num;
-
-    // Find pages root obj_num from catalog
-    let pages_root_obj_num = find_object_dict(catalog_obj_num, modifier)
-        .and_then(|cat| match cat.get(b"Pages") {
-            Some(PdfObject::Reference(r)) => Some(r.obj_num),
-            _ => None,
-        });
-
-    // Pack objects
-    let objects = std::mem::take(&mut modifier.writer().objects);
-    match crate::writer::object_stream::pack_object_streams(
-        &objects,
-        100, // max objects per stream
-        catalog_obj_num,
-        pages_root_obj_num,
-        None, // no encryption
-    ) {
-        Ok(result) => {
-            let compressed = result.compressed;
-            modifier.writer().objects = result.objects;
-            // Update next_obj_num
-            let max = modifier
-                .writer()
-                .objects
-                .iter()
-                .map(|(n, _)| *n)
-                .max()
-                .unwrap_or(0);
-            modifier.writer().next_obj_num = max + 1;
-            compressed
-        }
-        Err(_) => {
-            // Restore original on failure
-            modifier.writer().objects = objects;
-            Vec::new()
-        }
-    }
+    modifier
+        .pack_object_streams(100) // max objects per stream
+        .unwrap_or_default()
 }
 
 /// Convert RGB/CMYK images to grayscale for additional size reduction.

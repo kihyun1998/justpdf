@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use crate::error::Result;
+use crate::error::{JustPdfError, Result};
 use crate::object::{ByteSink, IndirectRef, PdfDict, PdfObject, write_name};
 use crate::writer::generation_of;
 
@@ -315,6 +315,20 @@ pub(crate) fn serialize_writer_with_xref_stream(
     catalog_num: u32,
     info_num: Option<u32>,
 ) -> Result<Vec<u8>> {
+    for entry in compressed {
+        for obj_num in [entry.obj_num, entry.objstm_num] {
+            let gen_num = writer.generation(obj_num);
+            if gen_num != 0 {
+                return Err(JustPdfError::InvalidObject {
+                    offset: 0,
+                    detail: format!(
+                        "object {obj_num} is at generation {gen_num}; an object stream \
+                         and the objects in it must be at generation 0"
+                    ),
+                });
+            }
+        }
+    }
     serialize_with_xref_stream_impl(
         &writer.objects,
         &writer.generations,
