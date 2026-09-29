@@ -32,3 +32,4 @@
 ## Known holes / open
 - `compute_target_dimensions`는 `#[allow(dead_code)]`이고 테스트만 부른다.
 - 16비트·1/2/4비트·Indexed 이미지 처리가 가정 밖이다(위 불변식).
+- `collect_image_display_sizes` reads page content only, so the size an image is drawn at inside a form XObject does not count toward its target size (inferred). Tracked: #139.

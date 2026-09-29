@@ -4,7 +4,7 @@
 //! downscaling oversized images, and performing structural optimization
 //! (garbage collection, deduplication, object stream packing).
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 
 use crate::content::parse_content_stream;
@@ -1131,12 +1131,13 @@ fn write_gray(buf: &mut Vec<u8>, val: f64) {
 /// Subset embedded TrueType fonts to contain only used glyphs.
 ///
 /// Walks all pages to collect used character codes per font, then subsets
-/// each TrueType font's FontFile2 stream using only those glyphs. Glyph IDs
-/// are kept, so the font dictionaries are left as they are. A font is left
-/// whole when its used codes cannot be collected or resolved with confidence:
-/// it is reachable from anything other than a page's own `/Resources`, it is
-/// shown with the `"` operator, or [`simple_font_glyph_ids`] /
-/// [`cid_font_glyph_ids`] return `None`.
+/// each TrueType FontFile2 stream once, keeping the glyphs of every font that
+/// reaches it. Glyph IDs are kept, so the font dictionaries are left as they
+/// are. A stream is left whole when a font reaching it is reachable from
+/// anything other than a page's own `/Resources`, is shown with the `"`
+/// operator, or gets `None` from [`simple_font_glyph_ids`] /
+/// [`cid_font_glyph_ids`], or when the stream or an object between it and the
+/// fonts is referenced by something outside that chain.
 fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressStats) {
     // Step 1: Find all Page objects and collect content refs + resource refs.
     // We collect raw data first to avoid borrow conflicts.
@@ -1253,28 +1254,45 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
         }
     }
 
-    // Step 3: For each font with collected char codes, find FontFile2 and subset
-    let font_obj_nums: Vec<u32> = font_char_codes.keys().copied().collect();
-    let candidates: HashSet<u32> = font_obj_nums.iter().copied().collect();
+    // Step 3: Group the fonts by the FontFile2 stream they reach, and subset
+    // each stream once with the glyphs of all of them.
+    let candidates: HashSet<u32> = font_char_codes.keys().copied().collect();
+    let referrers = object_referrers(modifier);
     unsafe_fonts.extend(fonts_reachable_outside_page_resources(
         &candidates,
+        &referrers,
         modifier,
     ));
 
-    for font_obj_num in font_obj_nums {
-        if unsafe_fonts.contains(&font_obj_num) {
+    let mut programs: BTreeMap<u32, ProgramUsers> = BTreeMap::new();
+    for &font_obj_num in &candidates {
+        if let Some((fontfile2_obj_num, walked)) = find_fontfile2(font_obj_num, modifier) {
+            let users = programs.entry(fontfile2_obj_num).or_default();
+            users.fonts.insert(font_obj_num);
+            users.chain.insert(font_obj_num);
+            users.chain.extend(walked);
+        }
+    }
+
+    for (fontfile2_obj_num, ProgramUsers { fonts, chain }) in programs {
+        if fonts.iter().any(|font| unsafe_fonts.contains(font)) {
             continue;
         }
-        let char_codes = match font_char_codes.get(&font_obj_num) {
-            Some(codes) if !codes.is_empty() => codes,
-            _ => continue,
-        };
-
-        // Resolve font → FontDescriptor → FontFile2
-        let fontfile2_obj_num = match find_fontfile2(font_obj_num, modifier) {
-            Some(num) => num,
-            None => continue,
-        };
+        // The stream, and each object between it and the fonts, is referenced
+        // only from inside the chain.
+        let chain_is_closed = std::iter::once(fontfile2_obj_num)
+            .chain(chain.iter().copied().filter(|obj| !fonts.contains(obj)))
+            .all(|obj| {
+                referrers
+                    .get(&obj)
+                    .is_some_and(|refs| refs.iter().all(|r| chain.contains(r)))
+            });
+        if !chain_is_closed {
+            continue;
+        }
+        if fonts.iter().all(|font| font_char_codes[font].is_empty()) {
+            continue;
+        }
 
         // Get the FontFile2 stream data
         let font_data = match get_stream_raw_data(fontfile2_obj_num, modifier) {
@@ -1292,13 +1310,19 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
             Err(_) => continue,
         };
 
-        let glyph_ids = if is_cid_font(font_obj_num, modifier) {
-            cid_font_glyph_ids(font_obj_num, char_codes, modifier)
-        } else {
-            simple_font_glyph_ids(font_obj_num, char_codes, &decoded_font, modifier)
-        };
-        let glyph_ids = match glyph_ids {
-            Some(ids) => ids,
+        let glyph_ids = fonts
+            .iter()
+            .try_fold(BTreeSet::new(), |mut ids, &font_obj_num| {
+                let char_codes = &font_char_codes[&font_obj_num];
+                ids.extend(if is_cid_font(font_obj_num, modifier) {
+                    cid_font_glyph_ids(font_obj_num, char_codes, modifier)?
+                } else {
+                    simple_font_glyph_ids(font_obj_num, char_codes, &decoded_font, modifier)?
+                });
+                Some(ids)
+            });
+        let glyph_ids: Vec<u16> = match glyph_ids {
+            Some(ids) => ids.into_iter().collect(),
             None => continue,
         };
 
@@ -1344,6 +1368,14 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
 
         stats.fonts_subsetted += 1;
     }
+}
+
+/// The fonts that reach one FontFile2 stream.
+#[derive(Default)]
+struct ProgramUsers {
+    fonts: BTreeSet<u32>,
+    /// `fonts` plus every object walked through between them and the stream.
+    chain: HashSet<u32>,
 }
 
 /// Extract font resource name → font obj_num mapping from a Page dict.
@@ -1575,20 +1607,15 @@ fn cid_font_glyph_ids(
 /// `/Font` dictionary, by such `/Resources`).
 fn fonts_reachable_outside_page_resources(
     candidates: &HashSet<u32>,
+    referrers: &HashMap<u32, Vec<u32>>,
     modifier: &mut DocumentModifier,
 ) -> HashSet<u32> {
-    let mut referrers: HashMap<u32, Vec<u32>> = HashMap::new();
     let mut page_dicts: Vec<(u32, PdfDict)> = Vec::new();
     for (obj_num, obj) in modifier.writer().objects.iter() {
         if let PdfObject::Dict(d) = obj
             && d.get_name(b"Type") == Some(b"Page")
         {
             page_dicts.push((*obj_num, d.clone()));
-        }
-        let mut refs = Vec::new();
-        collect_reference_targets(obj, &mut refs);
-        for target in refs {
-            referrers.entry(target).or_default().push(*obj_num);
         }
     }
     let pages: HashSet<u32> = page_dicts.iter().map(|(n, _)| *n).collect();
@@ -1642,6 +1669,19 @@ fn fonts_reachable_outside_page_resources(
         .collect()
 }
 
+/// Object number → object numbers of the objects that reference it.
+fn object_referrers(modifier: &mut DocumentModifier) -> HashMap<u32, Vec<u32>> {
+    let mut referrers: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (obj_num, obj) in modifier.writer().objects.iter() {
+        let mut refs = Vec::new();
+        collect_reference_targets(obj, &mut refs);
+        for target in refs {
+            referrers.entry(target).or_default().push(*obj_num);
+        }
+    }
+    referrers
+}
+
 /// Object numbers of every indirect reference inside `obj`.
 fn collect_reference_targets(obj: &PdfObject, out: &mut Vec<u32>) {
     match obj {
@@ -1666,8 +1706,10 @@ fn is_cid_font(font_obj_num: u32, modifier: &DocumentModifier) -> bool {
     }
 }
 
-/// Find FontFile2 obj_num by walking Font → FontDescriptor → FontFile2.
-fn find_fontfile2(font_obj_num: u32, modifier: &DocumentModifier) -> Option<u32> {
+/// Find FontFile2 obj_num by walking Font → FontDescriptor → FontFile2, with
+/// the objects walked through between the font and the stream (the descendant
+/// CIDFont, the FontDescriptor).
+fn find_fontfile2(font_obj_num: u32, modifier: &DocumentModifier) -> Option<(u32, Vec<u32>)> {
     let font_dict = find_object_dict(font_obj_num, modifier)?;
 
     let subtype = font_dict.get_name(b"Subtype")?;
@@ -1681,7 +1723,7 @@ fn find_fontfile2(font_obj_num: u32, modifier: &DocumentModifier) -> Option<u32>
             };
             let fd_dict = find_object_dict(fd_obj_num, modifier)?;
             match fd_dict.get(b"FontFile2") {
-                Some(PdfObject::Reference(r)) => Some(r.obj_num),
+                Some(PdfObject::Reference(r)) => Some((r.obj_num, vec![fd_obj_num])),
                 _ => None,
             }
         }
@@ -1708,7 +1750,7 @@ fn find_fontfile2(font_obj_num: u32, modifier: &DocumentModifier) -> Option<u32>
             };
             let fd_dict = find_object_dict(fd_obj_num, modifier)?;
             match fd_dict.get(b"FontFile2") {
-                Some(PdfObject::Reference(r)) => Some(r.obj_num),
+                Some(PdfObject::Reference(r)) => Some((r.obj_num, vec![cid_font_ref, fd_obj_num])),
                 _ => None,
             }
         }
@@ -3199,14 +3241,14 @@ mod tests {
         assert_eq!(subset, original);
     }
 
-    #[test]
-    fn test_subset_skips_font_used_by_form_xobject() {
-        let mut pdf = TrueTypePdf::new();
+    /// Adds form XObject `/X1` to the page, drawing `content` with `font`
+    /// as its `/F1`.
+    fn add_form_xobject(pdf: &mut TrueTypePdf, font: PdfObject, content: &[u8]) {
         let mut xobject_fonts = PdfDict::new();
-        xobject_fonts.insert(b"F1".to_vec(), pdf.font_ref());
+        xobject_fonts.insert(b"F1".to_vec(), font);
         let mut xobject_resources = PdfDict::new();
         xobject_resources.insert(b"Font".to_vec(), PdfObject::Dict(xobject_fonts));
-        let (mut form, data) = crate::writer::encode::make_stream(b"BT /F1 24 Tf (o) Tj ET", false);
+        let (mut form, data) = crate::writer::encode::make_stream(content, false);
         form.insert(b"Type".to_vec(), PdfObject::Name(b"XObject".to_vec()));
         form.insert(b"Subtype".to_vec(), PdfObject::Name(b"Form".to_vec()));
         form.insert(
@@ -3233,6 +3275,13 @@ mod tests {
         resources.insert(b"XObject".to_vec(), PdfObject::Dict(xobjects));
         page.insert(b"Resources".to_vec(), PdfObject::Dict(resources));
         pdf.set_dict(pdf.page, page);
+    }
+
+    #[test]
+    fn test_subset_skips_font_used_by_form_xobject() {
+        let mut pdf = TrueTypePdf::new();
+        let font = pdf.font_ref();
+        add_form_xobject(&mut pdf, font, b"BT /F1 24 Tf (o) Tj ET");
         pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj ET /X1 Do");
 
         let (stats, original, subset) = compress_and_fonts(&pdf.build());
@@ -3303,6 +3352,135 @@ mod tests {
     fn test_subset_skips_font_shown_by_quote_operator() {
         let mut pdf = TrueTypePdf::new();
         pdf.set_content(b"BT /F1 24 Tf 72 720 Td 30 TL (H) Tj 0 0 (o) \" ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
+    }
+
+    /// Adds `/F2` to the page: a copy of `/F1`'s font dictionary, so both
+    /// reach the same FontDescriptor and FontFile2. Returns the copy.
+    fn add_font_sharing_program(pdf: &mut TrueTypePdf) -> IndirectRef {
+        let font2 = pdf.modifier.add_object(PdfObject::Dict(pdf.dict(pdf.font)));
+        let mut page = pdf.dict(pdf.page);
+        let mut resources = match page.get(b"Resources") {
+            Some(PdfObject::Dict(d)) => d.clone(),
+            other => panic!("unexpected /Resources {other:?}"),
+        };
+        let mut fonts = match resources.get(b"Font") {
+            Some(PdfObject::Dict(d)) => d.clone(),
+            other => panic!("unexpected /Font {other:?}"),
+        };
+        fonts.insert(b"F2".to_vec(), PdfObject::Reference(font2.clone()));
+        resources.insert(b"Font".to_vec(), PdfObject::Dict(fonts));
+        page.insert(b"Resources".to_vec(), PdfObject::Dict(resources));
+        pdf.set_dict(pdf.page, page);
+        font2
+    }
+
+    #[test]
+    fn test_subset_shared_program_keeps_glyphs_of_every_font() {
+        let mut pdf = TrueTypePdf::new();
+        add_font_sharing_program(&mut pdf);
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj /F2 24 Tf (o) Tj ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert!(
+            subset.len() < original.len(),
+            "shared program was not subsetted"
+        );
+        assert_char_outline_kept(&original, &subset, 'H');
+        assert_char_outline_kept(&original, &subset, 'o');
+        assert_eq!(stats.fonts_subsetted, 1);
+    }
+
+    #[test]
+    fn test_subset_skips_font_that_shows_only_empty_strings() {
+        let mut pdf = TrueTypePdf::new();
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td () Tj [()] TJ ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
+    }
+
+    #[test]
+    fn test_subset_shared_program_is_subsetted_when_one_font_shows_only_empty_strings() {
+        let mut pdf = TrueTypePdf::new();
+        add_font_sharing_program(&mut pdf);
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj /F2 24 Tf () Tj ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 1);
+        assert!(subset.len() < original.len());
+        assert_char_outline_kept(&original, &subset, 'H');
+    }
+
+    #[test]
+    fn test_subset_skips_shared_program_when_one_font_is_shown_by_quote_operator() {
+        let mut pdf = TrueTypePdf::new();
+        add_font_sharing_program(&mut pdf);
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td 30 TL (H) Tj /F2 24 Tf (o) Tj 0 0 (e) \" ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
+    }
+
+    #[test]
+    fn test_subset_skips_shared_program_when_one_font_has_unresolvable_glyph_name() {
+        let mut pdf = TrueTypePdf::new();
+        let font2 = add_font_sharing_program(&mut pdf);
+        let mut font = pdf.dict(font2.obj_num);
+        let mut encoding = PdfDict::new();
+        encoding.insert(
+            b"Differences".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Integer(111),
+                PdfObject::Name(b"notAGlyphInThisFont".to_vec()),
+            ]),
+        );
+        font.insert(b"Encoding".to_vec(), PdfObject::Dict(encoding));
+        pdf.set_dict(font2.obj_num, font);
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj /F2 24 Tf (o) Tj ET");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
+    }
+
+    /// `/F1` draws "H" on the page; a copy of it, sharing its program, draws
+    /// "o" only inside a form XObject, so the copy never becomes a candidate.
+    #[test]
+    fn test_subset_skips_shared_program_also_reached_by_a_non_candidate_font() {
+        let mut pdf = TrueTypePdf::new();
+        let font2 = pdf.modifier.add_object(PdfObject::Dict(pdf.dict(pdf.font)));
+        add_form_xobject(
+            &mut pdf,
+            PdfObject::Reference(font2),
+            b"BT /F1 24 Tf (o) Tj ET",
+        );
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj ET /X1 Do");
+
+        let (stats, original, subset) = compress_and_fonts(&pdf.build());
+        assert_eq!(stats.fonts_subsetted, 0);
+        assert_eq!(subset, original);
+    }
+
+    /// `/F2` holds its FontDescriptor inline, and that dictionary points at
+    /// `/F1`'s FontFile2.
+    #[test]
+    fn test_subset_skips_shared_program_reached_through_an_inline_font_descriptor() {
+        let mut pdf = TrueTypePdf::new();
+        let font2 = add_font_sharing_program(&mut pdf);
+        let mut font = pdf.dict(font2.obj_num);
+        let descriptor = match font.get(b"FontDescriptor") {
+            Some(PdfObject::Reference(r)) => pdf.dict(r.obj_num),
+            other => panic!("unexpected /FontDescriptor {other:?}"),
+        };
+        font.insert(b"FontDescriptor".to_vec(), PdfObject::Dict(descriptor));
+        pdf.set_dict(font2.obj_num, font);
+        pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj /F2 24 Tf (o) Tj ET");
 
         let (stats, original, subset) = compress_and_fonts(&pdf.build());
         assert_eq!(stats.fonts_subsetted, 0);
