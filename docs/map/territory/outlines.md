@@ -8,7 +8,7 @@
 
 ## Design model
 - `/Title`은 손실 디코드(UTF-16BE 미처리)되고 UTF-8 바이트로 쓰인다 — [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
-- 항목이 자기 조상으로 돌아가면(`/First`든 `/Next`든) `CircularReference`다. 같은 층의 `/Next` 고리는 조용히 멈춘다. 이름 있는 목적지 트리는 순환 kid를 건너뛴다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md).
+- 항목이 자기 조상으로 돌아가면(`/First`든 `/Next`든) `CircularReference`다. 같은 층의 `/Next` 고리는 조용히 멈춘다. 서로 다른 항목이 같은 `/First`를 공유하면 그 자식은 두 번 읽히고, 방문 예산을 넘기면 `LimitExceeded`다. 이름 있는 목적지 트리는 순환 kid와 예산을 넘긴 kid를 건너뛴다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md).
 - `/A`는 `/D`만 읽는다.
 
 ## Code

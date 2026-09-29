@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::parser::PdfDocument;
+use crate::tree_walk::VisitBudget;
 use crate::annot::types::AnnotColor;
 
 use super::types::*;
@@ -10,8 +11,9 @@ use super::types::*;
 /// Read all outline (bookmark) items from the document.
 ///
 /// Fails with `CircularReference` when an item's `/First` or `/Next` leads
-/// back to one of its ancestors. A `/Next` chain that loops within one level
-/// ends at the first repeated item.
+/// back to one of its ancestors, and with `LimitExceeded` when shared items
+/// make the walk read more than a few times the size of the tree. A `/Next`
+/// chain that loops within one level ends at the first repeated item.
 pub fn read_outlines(doc: &PdfDocument) -> Result<Vec<OutlineItem>> {
     let catalog_ref = match doc.catalog_ref() {
         Some(r) => r.clone(),
@@ -40,16 +42,23 @@ pub fn read_outlines(doc: &PdfDocument) -> Result<Vec<OutlineItem>> {
         None => return Ok(Vec::new()),
     };
 
-    read_outline_siblings(doc, &first_ref, &mut HashSet::new())
+    read_outline_siblings(
+        doc,
+        &first_ref,
+        &mut HashSet::new(),
+        &mut VisitBudget::default(),
+    )
 }
 
 /// Read a chain of sibling outline items starting from `first_ref`.
 /// `ancestors` holds the items whose children this chain is; meeting one
-/// again is `CircularReference`.
+/// again is `CircularReference`. Every item visit is charged to `budget`;
+/// past it is `LimitExceeded`.
 fn read_outline_siblings(
     doc: &PdfDocument,
     first_ref: &IndirectRef,
     ancestors: &mut HashSet<IndirectRef>,
+    budget: &mut VisitBudget,
 ) -> Result<Vec<OutlineItem>> {
     let mut items = Vec::new();
     let mut current_ref = Some(first_ref.clone());
@@ -65,8 +74,7 @@ fn read_outline_siblings(
         if !visited.insert(iref.clone()) {
             break; // prevent infinite loop
         }
-
-        let obj = doc.resolve(iref)?;
+        let obj = budget.enter(iref, || doc.resolve(iref))?;
         let dict = match obj.as_dict() {
             Some(d) => d.clone(),
             None => break,
@@ -99,7 +107,7 @@ fn read_outline_siblings(
         // Recursively read children
         let children = if let Some(child_ref) = dict.get_ref(b"First") {
             ancestors.insert(iref.clone());
-            let children = read_outline_siblings(doc, &child_ref.clone(), ancestors)?;
+            let children = read_outline_siblings(doc, &child_ref.clone(), ancestors, budget)?;
             ancestors.remove(iref);
             children
         } else {
@@ -125,7 +133,9 @@ fn read_outline_siblings(
 /// Read named destinations from the document.
 /// Looks in both Catalog -> /Names -> /Dests (name tree)
 /// and legacy Catalog -> /Dests (dictionary).
-/// A name tree kid that points back at one of its ancestors is skipped.
+/// A name tree kid that points back at one of its ancestors is skipped, and so
+/// is a kid whose reading would, through shared nodes, take the walk past a
+/// few times the size of the tree.
 pub fn read_named_destinations(
     doc: &PdfDocument,
 ) -> Result<Vec<(String, Destination)>> {
@@ -151,10 +161,22 @@ pub fn read_named_destinations(
                 let dests_obj = doc.resolve(&dests_ref)?;
                 if let Some(dests_dict) = dests_obj.as_dict() {
                     let mut ancestors = HashSet::from([dests_ref]);
-                    parse_name_tree(doc, &dests_dict.clone(), &mut ancestors, &mut result)?;
+                    parse_name_tree(
+                        doc,
+                        &dests_dict.clone(),
+                        &mut ancestors,
+                        &mut VisitBudget::default(),
+                        &mut result,
+                    )?;
                 }
             } else if let Some(PdfObject::Dict(dests_dict)) = names_dict.get(b"Dests") {
-                parse_name_tree(doc, dests_dict, &mut HashSet::new(), &mut result)?;
+                parse_name_tree(
+                    doc,
+                    dests_dict,
+                    &mut HashSet::new(),
+                    &mut VisitBudget::default(),
+                    &mut result,
+                )?;
             }
         }
     } else if let Some(PdfObject::Dict(names_dict)) = catalog_dict.get(b"Names") {
@@ -163,10 +185,22 @@ pub fn read_named_destinations(
             let dests_obj = doc.resolve(&dests_ref)?;
             if let Some(dests_dict) = dests_obj.as_dict() {
                 let mut ancestors = HashSet::from([dests_ref]);
-                parse_name_tree(doc, &dests_dict.clone(), &mut ancestors, &mut result)?;
+                parse_name_tree(
+                    doc,
+                    &dests_dict.clone(),
+                    &mut ancestors,
+                    &mut VisitBudget::default(),
+                    &mut result,
+                )?;
             }
         } else if let Some(PdfObject::Dict(dests_dict)) = names_dict.get(b"Dests") {
-            parse_name_tree(doc, dests_dict, &mut HashSet::new(), &mut result)?;
+            parse_name_tree(
+                doc,
+                dests_dict,
+                &mut HashSet::new(),
+                &mut VisitBudget::default(),
+                &mut result,
+            )?;
         }
     }
 
@@ -206,10 +240,12 @@ pub fn read_named_destinations(
 
 /// Parse a PDF name tree node recursively, collecting (name, destination) pairs.
 /// `ancestors` holds the nodes above `node`; a kid naming one is skipped.
+/// Every kid is read through `budget`; a kid it refuses is skipped.
 fn parse_name_tree(
     doc: &PdfDocument,
     node: &PdfDict,
     ancestors: &mut HashSet<IndirectRef>,
+    budget: &mut VisitBudget,
     result: &mut Vec<(String, Destination)>,
 ) -> Result<()> {
     // Leaf node: /Names array [key1 value1 key2 value2 ...]
@@ -246,12 +282,15 @@ fn parse_name_tree(
         let kids = kids.to_vec();
         for kid in &kids {
             if let PdfObject::Reference(r) = kid {
-                if !ancestors.insert(r.clone()) {
+                if ancestors.contains(r) {
                     continue;
                 }
-                let kid_obj = doc.resolve(r)?;
+                let Some(kid_obj) = budget.visit(r, || doc.resolve(r))? else {
+                    continue;
+                };
+                ancestors.insert(r.clone());
                 if let Some(kid_dict) = kid_obj.as_dict() {
-                    parse_name_tree(doc, &kid_dict.clone(), ancestors, result)?;
+                    parse_name_tree(doc, &kid_dict.clone(), ancestors, budget, result)?;
                 }
                 ancestors.remove(r);
             }

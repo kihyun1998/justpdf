@@ -25,6 +25,7 @@ pub mod sign;
 pub mod stream;
 pub mod text;
 pub mod tokenizer;
+mod tree_walk;
 pub mod writer;
 pub mod xref;
 
