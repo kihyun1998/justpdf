@@ -21,3 +21,7 @@ The repo's dependency map lives in `docs/map/` — start at `docs/map/README.md`
 ### Comments
 
 A comment says what the code is. Why it is this way, what it deliberately leaves out, the trap and the measured value go to the territory note under `docs/map/territory/`; history goes to the commit message. Comments written before this rule still carry the rest: never delete one whose content the map does not yet hold — move it first (`decant`).
+
+### Language
+
+Write everything that lands in the repo or the tracker in English: code comments, `docs/map/`, ADRs, issues, PR bodies, commit messages. Talk with the maintainer in the language they write in. In the map, label each fact *measured* (seen by running something) or *inferred* (read from code).
