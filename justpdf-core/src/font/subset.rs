@@ -44,8 +44,8 @@ const WE_HAVE_A_TWO_BY_TWO: u16 = 0x0080;
 /// `font_data` is the raw TTF binary.
 /// `glyph_ids` is the set of glyph IDs to keep.
 /// Every glyph keeps its glyph ID: `numGlyphs` is unchanged, glyphs that are
-/// not kept become empty, and `cmap`, `post` and composite references still
-/// point at the same glyphs.
+/// not kept become empty, and composite references still point at the same
+/// glyphs. `cmap` and `post` keep only the entries of kept glyphs.
 ///
 /// Returns `None` if the font data is invalid, too short, or uses CFF outlines.
 pub fn subset_font(font_data: &[u8], glyph_ids: &[u16]) -> Option<SubsetResult> {
@@ -214,6 +214,18 @@ pub fn subset_font(font_data: &[u8], glyph_ids: &[u16]) -> Option<SubsetResult> 
             b"loca" => new_loca.clone(),
             b"glyf" => new_glyf.clone(),
             b"hmtx" => new_hmtx.clone(),
+            b"cmap" | b"post" => {
+                let Some(rec) = find_table(kept_tag) else {
+                    continue;
+                };
+                let original = table_data(font_data, rec)?;
+                let subset = if kept_tag == b"cmap" {
+                    subset_cmap(original, &keep_gids)
+                } else {
+                    subset_post(original, &keep_gids)
+                };
+                subset.unwrap_or_else(|| original.to_vec())
+            }
             _ => {
                 // Copy the original table if it exists; skip if not.
                 match find_table(kept_tag) {
@@ -418,6 +430,265 @@ fn build_subset_hmtx(
     }
 
     Some(new_hmtx)
+}
+
+/// Build the `cmap` table for the subset: every encoding record in its original
+/// order, each subtable mapping only to kept glyphs.
+///
+/// Formats 0 and 6 keep their layout with dropped glyphs set to 0; formats 4
+/// and 12 are re-encoded from the kept mappings; other formats are copied
+/// unchanged. Records that share a subtable still share it.
+///
+/// Returns `None` if the table cannot be parsed.
+fn subset_cmap(cmap: &[u8], keep_gids: &BTreeSet<u16>) -> Option<Vec<u8>> {
+    let num_records = read_u16(cmap, 2)? as usize;
+    let table = ttf_parser::cmap::Table::parse(cmap)?;
+    let header_len = 4 + num_records * 8;
+
+    let mut header = Vec::with_capacity(header_len);
+    header.extend_from_slice(&0u16.to_be_bytes());
+    header.extend_from_slice(&(num_records as u16).to_be_bytes());
+    let mut body: Vec<u8> = Vec::new();
+    let mut new_offsets: HashMap<u32, u32> = HashMap::new();
+
+    for i in 0..num_records {
+        let rec = 4 + i * 8;
+        let offset = read_u32(cmap, rec + 4)?;
+        let new_offset = match new_offsets.get(&offset) {
+            Some(&new_offset) => new_offset,
+            None => {
+                let data = cmap_subtable_bytes(cmap, offset as usize)?;
+                let subset = table
+                    .subtables
+                    .get(i as u16)
+                    .and_then(|subtable| subset_cmap_subtable(&subtable, data, keep_gids));
+                let new_offset = (header_len + body.len()) as u32;
+                body.extend_from_slice(subset.as_deref().unwrap_or(data));
+                new_offsets.insert(offset, new_offset);
+                new_offset
+            }
+        };
+        header.extend_from_slice(cmap.get(rec..rec + 4)?);
+        header.extend_from_slice(&new_offset.to_be_bytes());
+    }
+
+    header.extend_from_slice(&body);
+    Some(header)
+}
+
+/// The bytes of the `cmap` subtable at `offset`, as long as its format declares.
+fn cmap_subtable_bytes(cmap: &[u8], offset: usize) -> Option<&[u8]> {
+    let len = match read_u16(cmap, offset)? {
+        0 | 2 | 4 | 6 => read_u16(cmap, offset + 2)? as usize,
+        8 | 10 | 12 | 13 => read_u32(cmap, offset + 4)? as usize,
+        14 => read_u32(cmap, offset + 2)? as usize,
+        _ => return None,
+    };
+    cmap.get(offset..offset.checked_add(len)?)
+}
+
+/// One `cmap` subtable restricted to kept glyphs, or `None` to keep it as is.
+fn subset_cmap_subtable(
+    subtable: &ttf_parser::cmap::Subtable,
+    data: &[u8],
+    keep_gids: &BTreeSet<u16>,
+) -> Option<Vec<u8>> {
+    match read_u16(data, 0)? {
+        0 => {
+            let mut out = data.to_vec();
+            for gid in out.get_mut(6..6 + 256)? {
+                if !keep_gids.contains(&u16::from(*gid)) {
+                    *gid = 0;
+                }
+            }
+            Some(out)
+        }
+        6 => {
+            let mut out = data.to_vec();
+            let entry_count = read_u16(data, 8)? as usize;
+            for i in 0..entry_count {
+                let offset = 10 + i * 2;
+                if !keep_gids.contains(&read_u16(data, offset)?) {
+                    write_u16(&mut out, offset, 0);
+                }
+            }
+            Some(out)
+        }
+        4 => {
+            let mappings = (0..0xFFFF)
+                .filter_map(|code| Some((code, subtable.glyph_index(code)?.0)))
+                .filter(|&(_, gid)| gid != 0 && keep_gids.contains(&gid))
+                .collect();
+            encode_cmap_format_4(read_u16(data, 4)?, &cmap_runs(mappings))
+        }
+        12 => Some(encode_cmap_format_12(
+            read_u32(data, 8)?,
+            &cmap_runs(format_12_kept_mappings(data, keep_gids)?),
+        )),
+        _ => None,
+    }
+}
+
+/// The (code, glyph) mappings of a format 12 subtable that reach kept glyphs
+/// other than 0, read group by group through the kept glyphs each group covers.
+///
+/// Returns `None` if the groups are truncated or yield more mappings than
+/// there are Unicode code points.
+fn format_12_kept_mappings(data: &[u8], keep_gids: &BTreeSet<u16>) -> Option<Vec<(u32, u16)>> {
+    let num_groups = read_u32(data, 12)? as usize;
+    let mut mappings: Vec<(u32, u16)> = Vec::new();
+    for i in 0..num_groups {
+        let group = 16 + i.checked_mul(12)?;
+        let (start, end) = (read_u32(data, group)?, read_u32(data, group + 4)?);
+        let Ok(start_gid) = u16::try_from(read_u32(data, group + 8)?) else {
+            continue;
+        };
+        let Some(span) = end.checked_sub(start) else {
+            continue;
+        };
+        for &gid in keep_gids.range(start_gid.max(1)..) {
+            let offset = u32::from(gid - start_gid);
+            if offset > span {
+                break;
+            }
+            mappings.push((start + offset, gid));
+        }
+        if mappings.len() > 0x110000 {
+            return None;
+        }
+    }
+    Some(mappings)
+}
+
+/// A run of consecutive codes mapped to consecutive glyphs:
+/// (first code, last code, glyph of the first code).
+type CmapRun = (u32, u32, u16);
+
+/// (code, glyph) mappings as runs; a code mapped twice keeps its lowest glyph.
+fn cmap_runs(mut mappings: Vec<(u32, u16)>) -> Vec<CmapRun> {
+    mappings.sort_unstable();
+    mappings.dedup_by_key(|&mut (code, _)| code);
+
+    let mut runs: Vec<CmapRun> = Vec::new();
+    for (code, gid) in mappings {
+        match runs.last_mut() {
+            Some((first, last, first_gid))
+                if code == *last + 1
+                    && u32::from(gid) == u32::from(*first_gid) + (code - *first) =>
+            {
+                *last = code;
+            }
+            _ => runs.push((code, code, gid)),
+        }
+    }
+    runs
+}
+
+/// A format 4 subtable holding `runs` (codes below 0xFFFF), one segment each
+/// with an `idDelta`, closed by the 0xFFFF segment.
+///
+/// Returns `None` if the subtable would not fit its 16-bit length.
+fn encode_cmap_format_4(language: u16, runs: &[CmapRun]) -> Option<Vec<u8>> {
+    let mut segments: Vec<(u16, u16, u16)> = runs
+        .iter()
+        .map(|&(first, last, gid)| (first as u16, last as u16, gid.wrapping_sub(first as u16)))
+        .collect();
+    segments.push((0xFFFF, 0xFFFF, 1));
+
+    let seg_count = segments.len();
+    let length = 16 + seg_count * 8;
+    if length > usize::from(u16::MAX) {
+        return None;
+    }
+    let entry_selector = seg_count.ilog2() as u16;
+    let search_range = 2u16 << entry_selector;
+    let range_shift = (seg_count * 2) as u16 - search_range;
+
+    let mut out = Vec::with_capacity(length);
+    for field in [
+        4,
+        length as u16,
+        language,
+        (seg_count * 2) as u16,
+        search_range,
+        entry_selector,
+        range_shift,
+    ] {
+        out.extend_from_slice(&field.to_be_bytes());
+    }
+    for &(_, last, _) in &segments {
+        out.extend_from_slice(&last.to_be_bytes());
+    }
+    out.extend_from_slice(&0u16.to_be_bytes()); // reservedPad
+    for &(first, _, _) in &segments {
+        out.extend_from_slice(&first.to_be_bytes());
+    }
+    for &(_, _, delta) in &segments {
+        out.extend_from_slice(&delta.to_be_bytes());
+    }
+    out.resize(length, 0); // idRangeOffset: all 0
+    Some(out)
+}
+
+/// A format 12 subtable holding `runs`, one sequential map group each.
+fn encode_cmap_format_12(language: u32, runs: &[CmapRun]) -> Vec<u8> {
+    let length = 16 + runs.len() * 12;
+    let mut out = Vec::with_capacity(length);
+    out.extend_from_slice(&12u16.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes()); // reserved
+    out.extend_from_slice(&(length as u32).to_be_bytes());
+    out.extend_from_slice(&language.to_be_bytes());
+    out.extend_from_slice(&(runs.len() as u32).to_be_bytes());
+    for &(first, last, gid) in runs {
+        out.extend_from_slice(&first.to_be_bytes());
+        out.extend_from_slice(&last.to_be_bytes());
+        out.extend_from_slice(&u32::from(gid).to_be_bytes());
+    }
+    out
+}
+
+/// Build the `post` table for the subset: format 2 with names kept for kept
+/// glyphs only, every other glyph pointing at `.notdef`.
+///
+/// Returns `None` for other formats, if the table cannot be parsed, or if the
+/// kept names would need an index from 32768 up (reserved).
+fn subset_post(post: &[u8], keep_gids: &BTreeSet<u16>) -> Option<Vec<u8>> {
+    if read_u32(post, 0)? != 0x00020000 {
+        return None;
+    }
+    let num_glyphs = read_u16(post, 32)? as usize;
+    let names_start = 34 + num_glyphs * 2;
+
+    let mut names: Vec<&[u8]> = Vec::new();
+    let mut pos = names_start;
+    while pos < post.len() {
+        let len = post[pos] as usize;
+        names.push(post.get(pos + 1..pos + 1 + len)?);
+        pos += 1 + len;
+    }
+
+    let mut out = post.get(..names_start)?.to_vec();
+    let mut new_names: Vec<&[u8]> = Vec::new();
+    for gid in 0..num_glyphs {
+        let offset = 34 + gid * 2;
+        let index = read_u16(post, offset)?;
+        let new_index = if !keep_gids.contains(&(gid as u16)) {
+            0
+        } else if index < 258 {
+            index
+        } else {
+            new_names.push(names.get(usize::from(index) - 258)?);
+            u16::try_from(257 + new_names.len())
+                .ok()
+                .filter(|&new_index| new_index < 32768)?
+        };
+        write_u16(&mut out, offset, new_index);
+    }
+    for name in new_names {
+        out.push(name.len() as u8);
+        out.extend_from_slice(name);
+    }
+    Some(out)
 }
 
 /// Calculate searchRange, entrySelector, rangeShift for the offset table.
@@ -767,6 +1038,229 @@ mod tests {
             "unrequested glyph kept"
         );
         assert!(result.data.len() < NOTO_SANS_REGULAR.len());
+    }
+
+    /// Raw bytes of table `tag` in `font`.
+    fn table_bytes<'a>(font: &'a [u8], tag: &[u8; 4]) -> &'a [u8] {
+        let num_tables = read_u16(font, 4).unwrap() as usize;
+        (0..num_tables)
+            .map(|i| 12 + i * 16)
+            .find(|&rec| &font[rec..rec + 4] == tag)
+            .map(|rec| {
+                let off = read_u32(font, rec + 8).unwrap() as usize;
+                let len = read_u32(font, rec + 12).unwrap() as usize;
+                &font[off..off + len]
+            })
+            .unwrap()
+    }
+
+    /// The Noto Sans subset keeping the glyphs of `text`.
+    fn noto_subset(text: &str) -> SubsetResult {
+        let face = ttf_parser::Face::parse(NOTO_SANS_REGULAR, 0).unwrap();
+        let gids: Vec<u16> = text
+            .chars()
+            .map(|c| face.glyph_index(c).unwrap().0)
+            .collect();
+        subset_font(NOTO_SANS_REGULAR, &gids).expect("subsetting should succeed")
+    }
+
+    fn noto_hello_subset() -> SubsetResult {
+        noto_subset("Hello")
+    }
+
+    #[test]
+    fn test_subset_real_font_cmap_keeps_only_kept_glyph_entries() {
+        let result = noto_hello_subset();
+        let original =
+            ttf_parser::cmap::Table::parse(table_bytes(NOTO_SANS_REGULAR, b"cmap")).unwrap();
+        let subset = ttf_parser::cmap::Table::parse(table_bytes(&result.data, b"cmap")).unwrap();
+
+        assert_eq!(subset.subtables.len(), original.subtables.len());
+        let mut kept_entries = 0;
+        for (orig, sub) in original.subtables.into_iter().zip(subset.subtables) {
+            assert_eq!(
+                (sub.platform_id, sub.encoding_id),
+                (orig.platform_id, orig.encoding_id)
+            );
+            orig.codepoints(|code| {
+                let expected = orig
+                    .glyph_index(code)
+                    .filter(|gid| result.gid_map.contains_key(&gid.0));
+                assert_eq!(sub.glyph_index(code), expected, "code {code:#x}");
+                kept_entries += usize::from(expected.is_some());
+            });
+        }
+        // "Hello" is four distinct characters in each of four subtables.
+        assert_eq!(kept_entries, 16);
+        assert!(table_bytes(&result.data, b"cmap").len() < 1024);
+        // Noto's (0,3)/(3,1) and (0,4)/(3,10) records each share one subtable.
+        let offsets = |cmap: &[u8]| -> Vec<u32> {
+            (0..read_u16(cmap, 2).unwrap() as usize)
+                .map(|i| read_u32(cmap, 4 + i * 8 + 4).unwrap())
+                .collect()
+        };
+        let out_offsets = offsets(table_bytes(&result.data, b"cmap"));
+        assert_eq!(out_offsets[0], out_offsets[2]);
+        assert_eq!(out_offsets[1], out_offsets[3]);
+        assert_ne!(out_offsets[0], out_offsets[1]);
+        assert_eq!(offsets(table_bytes(NOTO_SANS_REGULAR, b"cmap"))[0], 36);
+    }
+
+    #[test]
+    fn test_subset_real_font_post_keeps_only_kept_glyph_names() {
+        // Amacron and eng have names outside the standard Macintosh set.
+        let result = noto_subset("HelloĀŋ");
+        let original = ttf_parser::Face::parse(NOTO_SANS_REGULAR, 0).unwrap();
+        let subset = ttf_parser::Face::parse(&result.data, 0).unwrap();
+
+        let post = table_bytes(NOTO_SANS_REGULAR, b"post");
+        let custom_names = result
+            .gid_map
+            .keys()
+            .filter(|&&gid| read_u16(post, 34 + 2 * gid as usize).unwrap() >= 258)
+            .count();
+        assert!(
+            custom_names >= 2,
+            "{custom_names} kept glyphs with custom names"
+        );
+
+        for gid in 0..original.number_of_glyphs() {
+            let gid = ttf_parser::GlyphId(gid);
+            let name = original.glyph_name(gid).unwrap();
+            if result.gid_map.contains_key(&gid.0) {
+                assert_eq!(subset.glyph_name(gid), Some(name), "glyph {}", gid.0);
+                assert_eq!(subset.glyph_index_by_name(name), Some(gid), "name {name}");
+            } else {
+                assert_eq!(subset.glyph_name(gid), Some(".notdef"), "glyph {}", gid.0);
+            }
+        }
+        assert!(table_bytes(&result.data, b"post").len() < 32 + 2 + 2 * 3884 + 64);
+    }
+
+    /// A `cmap` table holding the given (platformID, encodingID, subtable) records.
+    fn build_cmap(records: &[(u16, u16, Vec<u8>)]) -> Vec<u8> {
+        let mut cmap = Vec::new();
+        cmap.extend_from_slice(&0u16.to_be_bytes());
+        cmap.extend_from_slice(&(records.len() as u16).to_be_bytes());
+        let mut offset = 4 + records.len() * 8;
+        for (platform, encoding, subtable) in records {
+            cmap.extend_from_slice(&platform.to_be_bytes());
+            cmap.extend_from_slice(&encoding.to_be_bytes());
+            cmap.extend_from_slice(&(offset as u32).to_be_bytes());
+            offset += subtable.len();
+        }
+        for (_, _, subtable) in records {
+            cmap.extend_from_slice(subtable);
+        }
+        cmap
+    }
+
+    #[test]
+    fn test_subset_cmap_formats_0_and_6_drop_entries_and_unknown_formats_are_copied() {
+        let mut format_0 = vec![0u8; 6 + 256];
+        write_u16(&mut format_0, 2, 262);
+        format_0[6 + 65] = 1;
+        format_0[6 + 66] = 2;
+        // Format 6: codes 0x41 and 0x42 map to glyphs 1 and 2.
+        let format_6 = [0, 6, 0, 14, 0, 0, 0, 0x41, 0, 2, 0, 1, 0, 2].to_vec();
+        // Format 14 with no variation selector records.
+        let format_14 = [0, 14, 0, 0, 0, 10, 0, 0, 0, 0].to_vec();
+        let cmap = build_cmap(&[
+            (1, 0, format_0),
+            (3, 0, format_6),
+            (0, 5, format_14.clone()),
+        ]);
+
+        let keep: BTreeSet<u16> = [0, 1].into();
+        let out = subset_cmap(&cmap, &keep).expect("cmap should be rewritten");
+
+        let table = ttf_parser::cmap::Table::parse(&out).unwrap();
+        for i in 0..2 {
+            let subtable = table.subtables.get(i).unwrap();
+            assert_eq!(
+                subtable.glyph_index(0x41),
+                Some(ttf_parser::GlyphId(1)),
+                "subtable {i}"
+            );
+            // ttf-parser reports glyph 0 as `None` for format 0 and as `Some(0)` for format 6.
+            let dropped = subtable.glyph_index(0x42).filter(|gid| gid.0 != 0);
+            assert_eq!(dropped, None, "subtable {i}");
+        }
+        let offset = read_u32(&out, 4 + 2 * 8 + 4).unwrap() as usize;
+        assert_eq!(&out[offset..offset + format_14.len()], &format_14[..]);
+    }
+
+    #[test]
+    fn test_subset_cmap_format_4_with_many_segments() {
+        // Every other code, each to its own glyph: one segment per code.
+        let runs: Vec<CmapRun> = (0..5000u32).map(|i| (i * 2, i * 2, i as u16 + 1)).collect();
+        let subtable = encode_cmap_format_4(0, &runs).expect("fits in 16 bits");
+
+        let cmap = build_cmap(&[(3, 1, subtable)]);
+        let table = ttf_parser::cmap::Table::parse(&cmap).unwrap();
+        let subtable = table.subtables.get(0).unwrap();
+        assert_eq!(subtable.glyph_index(0), Some(ttf_parser::GlyphId(1)));
+        assert_eq!(subtable.glyph_index(1), None);
+        assert_eq!(subtable.glyph_index(9998), Some(ttf_parser::GlyphId(5000)));
+        let seg_count_x2 = read_u16(&cmap, 12 + 6).unwrap();
+        assert_eq!(seg_count_x2, 5001 * 2);
+        // searchRange = 2 × 2^floor(log2(5001)), entrySelector, rangeShift.
+        assert_eq!(read_u16(&cmap, 12 + 8).unwrap(), 8192);
+        assert_eq!(read_u16(&cmap, 12 + 10).unwrap(), 12);
+        assert_eq!(read_u16(&cmap, 12 + 12).unwrap(), 10002 - 8192);
+    }
+
+    #[test]
+    fn test_subset_cmap_format_12_reads_only_kept_glyphs_of_a_huge_group() {
+        // One group mapping every 32-bit code to glyph (code - 0) … far past numGlyphs.
+        let mut format_12 = Vec::new();
+        for field in [12u16, 0] {
+            format_12.extend_from_slice(&field.to_be_bytes());
+        }
+        for field in [28u32, 0, 1, 0, u32::MAX, 0] {
+            format_12.extend_from_slice(&field.to_be_bytes());
+        }
+        let cmap = build_cmap(&[(3, 10, format_12)]);
+
+        let start = std::time::Instant::now();
+        let out = subset_cmap(&cmap, &[0, 5, 70].into()).expect("cmap should be rewritten");
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+
+        let table = ttf_parser::cmap::Table::parse(&out).unwrap();
+        let subtable = table.subtables.get(0).unwrap();
+        assert_eq!(subtable.glyph_index(5), Some(ttf_parser::GlyphId(5)));
+        assert_eq!(subtable.glyph_index(70), Some(ttf_parser::GlyphId(70)));
+        assert_eq!(subtable.glyph_index(6), None);
+        // Two groups (5 and 70); glyph 0 is not mapped.
+        assert_eq!(read_u32(&out, 12 + 12).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_subset_post_refuses_more_custom_names_than_indices_allow() {
+        // 32,511 glyphs, each with its own one-letter custom name.
+        let num_glyphs = 32_511usize;
+        let mut post = vec![0u8; 32];
+        write_u32(&mut post, 0, 0x00020000);
+        post.extend_from_slice(&(num_glyphs as u16).to_be_bytes());
+        for gid in 0..num_glyphs {
+            post.extend_from_slice(&(258 + gid as u16).to_be_bytes());
+        }
+        for _ in 0..num_glyphs {
+            post.extend_from_slice(&[1, b'a']);
+        }
+        let keep: BTreeSet<u16> = (0..num_glyphs as u16).collect();
+        assert!(subset_post(&post, &keep).is_none());
+        let keep: BTreeSet<u16> = (0..num_glyphs as u16 - 1).collect();
+        assert!(subset_post(&post, &keep).is_some());
+    }
+
+    #[test]
+    fn test_subset_post_leaves_other_formats_alone() {
+        // Long enough to parse as format 2 with one glyph.
+        let mut post = vec![0u8; 36];
+        write_u32(&mut post, 0, 0x00030000);
+        write_u16(&mut post, 32, 1);
+        assert!(subset_post(&post, &[0].into()).is_none());
     }
 
     #[test]
