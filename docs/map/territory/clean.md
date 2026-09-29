@@ -1,20 +1,20 @@
-# 정리 (clean/dedup)
+# Clean (clean/dedup)
 
 ## What it is
-값이 같은 객체를 중복 제거하고, 참조되지 않는 Null을 지우고, 객체 번호를 순서대로 다시 매긴다.
+Removes duplicate objects with equal values, deletes unreferenced Nulls, and renumbers objects in order.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- 중복 판정은 `same_value`다(#27): 값 비교(`PdfObject: PartialEq`)이고, 스트림끼리는 `/Length`를 빼고 사전·데이터를 비교한다(`/Length`는 쓰기 쪽이 버리고 다시 계산한다). Display 텍스트는 동일성의 대리가 될 수 없다 — 스트림 Display에는 데이터가 없고(#27 전: `AAAA`·`BBBB` 스트림이 합쳐졌다), `Real(1.0)`과 `Integer(1)`이 둘 다 `"1"`이다(#27 전: 둘이 합쳐져 `Integer(1)`이 사라졌다). NaN은 자기 자신과도 같지 않아 합쳐지지 않는다.
-  - **메인테이너 판단(2026-09-24, #27 triage)**: 동일성 = `PartialEq` 값 비교. 제시된 재현: 위 두 사례. 대안은 따로 제시되지 않았다(기본값 승인).
-- 합치기는 `merge_duplicates`가 한다 — `find_duplicates`로 찾고, 지우고, 참조를 다시 쓰기를 **변화가 없을 때까지 반복**한다. 한 번의 병합이 그 객체를 가리키던 객체들을 같게 만들 수 있기 때문이다(같은 `/SMask`를 따로 가진 두 이미지). [압축 dedup](compress-dedup.md)과 같은 함수를 쓴다.
-- `merge_duplicates`는 다시 쓴 참조에 남긴 객체의 세대를 준다(받은 `generations`, 없으면 0). `clean_objects`는 세대 맵이 없으므로 합친 참조를 세대 0으로 쓴다 — 결과를 쓰는 공개 직렬화 함수도 세대 0이다. `compact_object_numbers`의 번호 재부여는 목록 안 객체를 가리키는 참조를 모두 세대 0으로 다시 쓴다 — 번호가 바뀌지 않은 참조도. 결과를 쓰는 공개 직렬화 함수가 모든 객체를 세대 0으로 쓰기 때문이다(MuPDF `renumberobj`·qpdf도 번호를 다시 매기면 참조를 세대 0으로 쓴다). 목록 밖을 가리키는 참조는 그대로 둔다(#106, 기술적 판단).
-- 버킷 키 `bucket_key`: 스트림은 `/Length`를 뺀 사전 항목 + 데이터 해시(`DefaultHasher`), 그 밖은 Display 텍스트. 키가 같다고 합치지 않는다 — 같은 버킷 안에서만 `same_value`로 비교한다. 값은 같아도 Display가 다른 `0.0`과 `-0.0`은 버킷이 달라 합쳐지지 않는다(놓치는 쪽이라 무해).
-  - 키에 데이터가 없으면 사전이 같은 스트림이 한 버킷에 모여 비교가 제곱으로 는다 — 측정(release, 4096바이트 스트림이 끝 바이트만 다름, Display만 키로 쓴 중간 구현): 1,000개 212 ms, 4,000개 5.5 s, 16,000개 88 s. 지금 키로 같은 입력이 4 ms, 13 ms, 34 ms(2026-09-25).
-- 번호 재매김은 호출자가 들고 있는 catalog/info 참조를 갱신하지 않는다. [압축 파이프라인](compress-pipeline.md)이 `clean_objects` 대신 GC만 쓰는 이유가 이것이다(주석에 명시).
-- 값이 같으면 종류를 가리지 않고 합친다 — 같은 내용의 두 페이지 사전이나 이름이 같은 두 OCG도 하나가 된다(`/Kids [3 0 R 3 0 R]`). #27 전에도 같았다(lens 프로브, 2026-09-24).
+- Duplicates are decided by `same_value` (#27): a value comparison (`PdfObject: PartialEq`), and between streams it compares the dictionary without `/Length` plus the data (the write side drops and recomputes `/Length`). Display text cannot stand in for identity — a stream's Display has no data (before #27: streams `AAAA` and `BBBB` were merged), and `Real(1.0)` and `Integer(1)` are both `"1"` (before #27: the two were merged and `Integer(1)` disappeared). NaN is not equal even to itself, so it is never merged.
+  - **Maintainer decision (2026-09-24, #27 triage)**: identity = `PartialEq` value comparison. Reproductions offered: the two cases above. No separate alternatives were offered (default approved).
+- `merge_duplicates` does the merging — it finds with `find_duplicates`, deletes, and rewrites references, **repeating until nothing changes**. One merge can make the objects that pointed at that object equal (two images each with their own copy of the same `/SMask`). It uses the same function as [Compress dedup](compress-dedup.md).
+- `merge_duplicates` gives rewritten references the generation of the kept object (the `generations` it receives, or 0 without them). `clean_objects` has no generation map, so it writes merged references at generation 0 — the public serialization function that writes the result is also generation 0. Renumbering in `compact_object_numbers` rewrites every reference to an object in the list at generation 0 — even references whose number did not change. This is because the public serialization function that writes the result writes every object at generation 0 (MuPDF `renumberobj` and qpdf also write references at generation 0 when they renumber). References pointing outside the list are left as they are (#106, technical decision).
+- Bucket key `bucket_key`: for a stream, the dictionary entries without `/Length` + a hash of the data (`DefaultHasher`); for anything else, the Display text. An equal key does not merge — comparison with `same_value` happens only within the same bucket. `0.0` and `-0.0`, equal in value but different in Display, land in different buckets and are not merged (a miss, so harmless).
+  - Without data in the key, streams with the same dictionary gather in one bucket and comparison grows quadratically — measured (release, 4096-byte streams differing only in the last byte, an intermediate implementation keyed on Display alone): 1,000 at 212 ms, 4,000 at 5.5 s, 16,000 at 88 s. With the current key the same inputs take 4 ms, 13 ms, 34 ms (2026-09-25).
+- Renumbering does not update the catalog/info references the caller holds. This is why the [Compress pipeline](compress-pipeline.md) uses only GC instead of `clean_objects` (stated in a comment).
+- Equal values are merged regardless of kind — two page dictionaries with the same content, or two OCGs with the same name, also become one (`/Kids [3 0 R 3 0 R]`). This was the same before #27 (lens probe, 2026-09-24).
 
 ## Code
 - `justpdf-core/src/writer/clean.rs` — `clean_objects`, `same_value`, `bucket_key`, `find_duplicates`, `merge_duplicates`, `dedup_objects`, `test_no_dedup_of_streams_with_different_data`, `test_no_dedup_of_real_and_integer_with_the_same_text`, `test_clean_merges_equal_streams`, `rewrite_references`, `remove_null_objects`, `compact_object_numbers`, `CleanStats`, `test_compaction_writes_references_to_held_objects_at_generation_0`
@@ -23,13 +23,13 @@
 **None.**
 
 ## Cross-cutting invariants
-- [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — Display 텍스트를 버킷 키로 쓴다. 판정은 값 비교라 Display 표기가 모호해도(#28 전의 `Real(1.0)`=`"1"`) 합치기 결과는 바뀌지 않는다.
-- [원본 세대](../invariant/source-generation.md) — `merge_duplicates`와 `compact_object_numbers`가 참조의 번호를 다시 쓴다.
+- [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md) — uses Display text as the bucket key. The decision is a value comparison, so even an ambiguous Display form (`Real(1.0)`=`"1"` before #28) does not change the merge result.
+- [Source generation](../invariant/source-generation.md) — `merge_duplicates` and `compact_object_numbers` rewrite reference numbers.
 
 ## Blast radius
-- [압축 dedup](compress-dedup.md) — `merge_duplicates` 공유. 동일성 규칙을 바꾸면 두 경로가 함께 바뀐다.
-- [압축 파이프라인](compress-pipeline.md) — clean을 켜려면 catalog_ref 무효화 문제부터.
-- [CLI](cli.md) — `clean` 서브커맨드는 이 모듈이 아니라 재빌드만 한다(이름만 같다).
+- [Compress dedup](compress-dedup.md) — shares `merge_duplicates`. Changing the identity rule changes both paths together.
+- [Compress pipeline](compress-pipeline.md) — turning clean on starts with the catalog_ref invalidation problem.
+- [CLI](cli.md) — the `clean` subcommand does not use this module; it only rebuilds (same name only).
 
 ## Known holes / open
-- 제품 코드 호출자가 없다.
+- There are no callers in product code.
