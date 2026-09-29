@@ -2133,3 +2133,139 @@ fn test_written_xref_entries_are_20_bytes() {
     let linearized = justpdf_core::writer::linearize_pdf(&doc).unwrap();
     assert!(check_xref_entries(&linearized).0 > 1, "linearize");
 }
+
+/// `name` from the fixtures, authenticated with `user` when given.
+fn open_fixture(name: &str, user: Option<&[u8]>) -> PdfDocument {
+    let mut doc = PdfDocument::open(&fixture(name)).unwrap();
+    if let Some(user) = user {
+        doc.authenticate(user).unwrap();
+    }
+    doc
+}
+
+/// Fixtures written by qpdf: plain, and encrypted with RC4 (R3), AES-128
+/// (R4) and AES-256 (R6), the `objstm_*` ones with objects in object streams.
+fn generation_fixtures() -> Vec<(&'static str, Option<&'static [u8]>)> {
+    vec![
+        ("minimal.pdf", None),
+        ("stream_dict_string_r3.pdf", Some(b"user".as_slice())),
+        ("stream_dict_string_r4.pdf", Some(b"user".as_slice())),
+        ("stream_dict_string_r6.pdf", Some(b"user".as_slice())),
+        ("objstm_string_r3.pdf", Some(b"user".as_slice())),
+        ("objstm_string_r4.pdf", Some(b"user".as_slice())),
+        ("objstm_string_r6.pdf", Some(b"user".as_slice())),
+    ]
+}
+
+#[test]
+fn test_a_reference_at_another_generation_resolves_to_null() {
+    for (name, user) in generation_fixtures() {
+        // Each order once: the other generation first, then after the right
+        // one is cached.
+        for other_first in [true, false] {
+            let doc = open_fixture(name, user);
+            for r in doc.object_refs().collect::<Vec<_>>() {
+                let other = IndirectRef {
+                    obj_num: r.obj_num,
+                    gen_num: r.gen_num + 1,
+                };
+                let (first, second) = if other_first {
+                    (&other, &r)
+                } else {
+                    (&r, &other)
+                };
+                for iref in [first, second] {
+                    let obj = doc.resolve(iref).unwrap();
+                    assert_eq!(
+                        obj == PdfObject::Null,
+                        iref == &other,
+                        "{name}: {} {} R",
+                        iref.obj_num,
+                        iref.gen_num
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_an_object_in_an_object_stream_resolves_only_at_generation_zero() {
+    for name in [
+        "objstm_string_r3.pdf",
+        "objstm_string_r4.pdf",
+        "objstm_string_r6.pdf",
+    ] {
+        let doc = open_fixture(name, Some(b"user"));
+        let compressed: Vec<u32> = doc
+            .xref
+            .entries
+            .iter()
+            .filter(|(_, e)| matches!(e, justpdf_core::xref::XrefEntry::Compressed { .. }))
+            .map(|(n, _)| *n)
+            .collect();
+        assert!(
+            !compressed.is_empty(),
+            "{name}: no object in an object stream"
+        );
+        for obj_num in compressed {
+            let at = |gen_num| doc.resolve(&IndirectRef { obj_num, gen_num }).unwrap();
+            assert_ne!(at(0), PdfObject::Null, "{name}: {obj_num} 0 R");
+            assert_eq!(at(1), PdfObject::Null, "{name}: {obj_num} 1 R");
+        }
+    }
+}
+
+/// `minimal.pdf` with an update section defining a new object `N 1 obj`
+/// (`(generation one)`), where `N` is one above the source's highest number.
+/// Returns the bytes and `N`.
+fn with_an_object_at_generation_one() -> (Vec<u8>, u32) {
+    use std::io::Write;
+    let source = std::fs::read(fixture("minimal.pdf")).unwrap();
+    let doc = PdfDocument::from_bytes(source.clone()).unwrap();
+    let num = doc.object_refs().map(|r| r.obj_num).max().unwrap() + 1;
+    let startxref = justpdf_core::xref::find_startxref(&source).unwrap();
+    let root = doc.catalog_ref().unwrap().clone();
+    let mut buf = source;
+    if !buf.ends_with(b"\n") {
+        buf.push(b'\n');
+    }
+    let offset = buf.len();
+    write!(buf, "{num} 1 obj\n(generation one)\nendobj\n").unwrap();
+    let xref = buf.len();
+    write!(
+        buf,
+        "xref\n{num} 1\n{offset:010} 00001 n \ntrailer\n<< /Size {} /Root {} {} R /Prev {startxref} >>\nstartxref\n{xref}\n%%EOF\n",
+        num + 1,
+        root.obj_num,
+        root.gen_num
+    )
+    .unwrap();
+    (buf, num)
+}
+
+#[test]
+fn test_an_object_at_generation_one_resolves_only_at_generation_one() {
+    let (bytes, num) = with_an_object_at_generation_one();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert!(matches!(
+        doc.xref.get(num),
+        Some(justpdf_core::xref::XrefEntry::InUse { gen_num: 1, .. })
+    ));
+    assert_eq!(
+        doc.resolve(&IndirectRef {
+            obj_num: num,
+            gen_num: 1
+        })
+        .unwrap(),
+        PdfObject::String(b"generation one".to_vec())
+    );
+    assert_eq!(
+        doc.resolve(&IndirectRef {
+            obj_num: num,
+            gen_num: 0
+        })
+        .unwrap(),
+        PdfObject::Null
+    );
+}

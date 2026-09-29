@@ -6,7 +6,7 @@
 writer 쪽 규칙은 `PdfWriter`의 `generations`(0이 아닌 세대만)가 갖는다: [문서 수정기](../territory/document-modifier.md)의 `from_document`가 채우고, writer를 받는 직렬화 함수가 읽는다. 번호·객체 슬라이스만 받는 공개 함수는 세대를 모르므로 0으로 쓴다([파일 직렬화](../territory/file-serialization.md)).
 
 ## Why it is cross-cutting
-세대는 참조(복사된 값)와 정의(쓰는 쪽이 새로 만드는 헤더·xref·키)에 따로 나타나고, 둘을 맞추는 코드가 여러 모듈에 흩어져 있다: 전체 재작성, 증분 저장, xref 스트림, 중복 병합, 번호 압축, 선형화, object stream 패킹. 서로 호출하지 않는다. 그리고 justpdf 리더는 참조의 세대를 보지 않아([문서 접근](../territory/document-access.md), #98) 어긋나도 자기 왕복 테스트가 통과한다 — 쓰기 결함이 읽기 관용에 가려진다.
+세대는 참조(복사된 값)와 정의(쓰는 쪽이 새로 만드는 헤더·xref·키)에 따로 나타나고, 둘을 맞추는 코드가 여러 모듈에 흩어져 있다: 전체 재작성, 증분 저장, xref 스트림, 중복 병합, 번호 압축, 선형화, object stream 패킹. 서로 호출하지 않는다. #98 전에는 justpdf 리더가 참조의 세대를 보지 않아 어긋나도 자기 왕복 테스트가 통과했다 — 쓰기 결함이 읽기 관용에 가려졌다. 지금 리더는 세대가 틀린 참조를 `Null`로 읽는다([문서 접근](../territory/document-access.md)). 단 `object_refs()`로 얻은 참조는 xref 세대를 쓰므로, 문서 안에 적힌 참조를 따라가는 단언만 어긋남을 본다.
 
 ## Territories it holds in
 - [문서 수정기](../territory/document-modifier.md) — `from_document`가 세대를 담고, `build`(평문·`set_encryption`·원본 유지)·`build_with_xref_stream`이 그 세대로 쓴다. 지킨다(#72).
@@ -25,4 +25,4 @@ writer 쪽 규칙은 `PdfWriter`의 `generations`(0이 아닌 세대만)가 갖�
 2026-09-24 #26(증분 trailer) 작업 중 `DocumentModifier`가 세대를 버리는 것을 코드로 발견해 #72로 등록. 2026-09-29 #72 수정 중 테스트와 qpdf 판정으로 재현했고, check 단계의 assay·lens가 중복 병합 사이트를 찾았다. 나머지 어기는 사이트(번호 압축, 선형화, 패킹)는 같은 날 grep과 코드 읽기로 모았다.
 
 ## Where it will recur
-**원본 문서의 객체를 쓰거나, 참조의 번호를 다시 쓰는 코드는 이 불변식의 대상이다.** 원본에서 온 객체는 `PdfWriter`를 거쳐 writer 쪽 직렬화 함수로 쓴다. 참조 번호를 바꾸면 세대도 새 대상의 세대로 바꾼다(`merge_duplicates`의 `rewrite_references`). 검증: 세대 ≠ 0 픽스처(`with_info_at_generation`, `writer/modify.rs` 테스트)로 헤더·xref 항목을 직접 보고, 키는 RC4·AES-128 왕복으로 보고(R6은 증거가 아니다), 외부 판정은 pikepdf로 `pdf.trailer.Info.objgen`과 `check_pdf_syntax()`를 본다. justpdf 리더의 왕복만으로는 증거가 되지 않는다(#98). 도구가 볼 수 있는 절반: `rg '\{\} 0 obj|obj_num = new|r\.obj_num =' justpdf-core/src` — 선형화·`clean.rs`를 찾고, 새 번호만 쓰는 `sign_pdf`와 xref 스트림 자신도 걸린다(대상 아님). 도구가 볼 수 없는 절반: object stream 패킹(`pack_object_streams` — 세대를 모른다는 가정), 그리고 `writer().objects`의 번호를 직접 바꾸는 호출자.
+**원본 문서의 객체를 쓰거나, 참조의 번호를 다시 쓰는 코드는 이 불변식의 대상이다.** 원본에서 온 객체는 `PdfWriter`를 거쳐 writer 쪽 직렬화 함수로 쓴다. 참조 번호를 바꾸면 세대도 새 대상의 세대로 바꾼다(`merge_duplicates`의 `rewrite_references`). 검증: 세대 ≠ 0 픽스처(`with_info_at_generation`, `writer/modify.rs` 테스트)로 헤더·xref 항목을 직접 보고, 키는 RC4·AES-128 왕복으로 보고(R6은 증거가 아니다), 외부 판정은 pikepdf로 `pdf.trailer.Info.objgen`과 `check_pdf_syntax()`를 본다. justpdf 리더의 왕복은 문서 안에 적힌 참조(trailer·사전 값)를 resolve할 때만 증거가 된다 — `object_refs()`를 도는 왕복은 아니다. 도구가 볼 수 있는 절반: `rg '\{\} 0 obj|obj_num = new|r\.obj_num =' justpdf-core/src` — 선형화·`clean.rs`를 찾고, 새 번호만 쓰는 `sign_pdf`와 xref 스트림 자신도 걸린다(대상 아님). 도구가 볼 수 없는 절반: object stream 패킹(`pack_object_streams` — 세대를 모른다는 가정), 그리고 `writer().objects`의 번호를 직접 바꾸는 호출자.
