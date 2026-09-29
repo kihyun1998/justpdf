@@ -1,14 +1,14 @@
-# 래스터 장치 (tiny-skia)
+# Raster device
 
 ## What it is
-`PixmapDevice`가 tiny-skia 픽스맵에 경로 채우기·선 긋기·이미지·패턴을 그리고, 클립 마스크를 들고, PNG/JPEG/RGBA로 인코딩한다.
+`PixmapDevice` fills paths, strokes lines, and draws images and patterns onto a tiny-skia pixmap, holds the clip mask, and encodes to PNG/JPEG/RGBA.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- `clip_mask`가 `pub(crate)`이고 인터프리터가 소프트 마스크 적용 시 직접 바꾼다 — 장치 경계를 인터프리터가 넘는다.
-- `encode_png`는 이 내부 타입에만 있다. 공개 반환형(`RenderedPixmap`, `Vec<u8>`)에는 없다(README 예제가 이것을 부른다 — [게시 문서](published-docs.md)).
+- `clip_mask` is `pub(crate)` and the interpreter changes it directly when applying a soft mask — the interpreter crosses the device boundary.
+- `encode_png` exists only on this internal type. The public return types (`RenderedPixmap`, `Vec<u8>`) do not have it (the README example calls it — [Published docs](published-docs.md)).
 
 ## Code
 - `justpdf-render/src/device.rs` — `PixmapDevice`, `fill_path`, `stroke_path`, `draw_image`, `draw_pixmap`, `fill_path_with_pattern`, `set_clip_path`, `intersect_clip_path`, `clear_clip`, `encode_png`, `encode_jpeg`, `raw_rgba`
@@ -20,9 +20,9 @@
 **None.**
 
 ## Blast radius
-- [렌더 인터프리터](render-interpreter.md) — 유일한 호출자.
-- [클리핑](render-clipping.md), [투명도](render-transparency.md) — 클립 마스크 공유.
-- [렌더 API](render-api.md) — 인코딩 출력.
+- [Render interpreter](render-interpreter.md) — the only caller.
+- [Render clipping](render-clipping.md), [Render transparency](render-transparency.md) — share the clip mask.
+- [Render API](render-api.md) — the encoded output.
 
 ## Known holes / open
-- 테스트가 없다.
+- No tests.
