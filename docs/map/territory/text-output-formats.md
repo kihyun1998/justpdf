@@ -1,14 +1,14 @@
-# 텍스트 출력 형식
+# Text output formats
 
 ## What it is
-추출된 `PageText`를 plain / HTML / JSON / Markdown으로 서식화한다. CLI `text --format`이 유일한 소비처다.
+Formats an extracted `PageText` as plain / HTML / JSON / Markdown. CLI `text --format` is the only consumer.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- JSON은 손으로 만든 이스케이프(`json_string`)를 쓴다.
-- Markdown은 헤딩 감지 없이 블록 텍스트이며, 여러 페이지면 `## Page N`을 붙인다.
+- JSON uses hand-written escaping (`json_string`).
+- Markdown is block text with no heading detection; with several pages it adds `## Page N`.
 
 ## Code
 - `justpdf-core/src/text/format.rs` — `OutputFormat`, `format_page`, `format_pages`, `format_html`, `format_json`, `format_markdown`, `json_string`
@@ -20,9 +20,9 @@
 **None.**
 
 ## Blast radius
-- [텍스트 추출](text-extraction.md) — 입력 구조.
-- [CLI](cli.md) — `cmd_text`의 형식 이름 매핑. 형식을 추가하면 CLI 도움말도.
-- [게시 문서](published-docs.md) — CLI 문서의 형식 목록.
+- [Text extraction](text-extraction.md) — the input structure.
+- [CLI](cli.md) — the format name mapping in `cmd_text`. Adding a format means the CLI help too.
+- [Published docs](published-docs.md) — the format list in the CLI docs.
 
 ## Known holes / open
-**None.** 이 노트를 쓰며 발견된 구멍은 없다.
+**None.** No holes were found while writing this note.
