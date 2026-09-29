@@ -26,3 +26,4 @@ PyO3 모듈(maturin 빌드). `Document`(열기·인증·텍스트·렌더·Info)
 
 ## Known holes / open
 - 자체 `Cargo.lock`이 루트와 따로 움직인다 — core 의존성 업데이트가 여기엔 반영되지 않는다.
+- `get_page`의 모든 오류를 `IndexError`("out of range")로 바꾼다. Tracked: #134

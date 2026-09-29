@@ -35,4 +35,5 @@ Catalog → `/Pages` → `/Kids`를 걸어 `PageInfo` 목록을 만들고, 상�
 
 ## Known holes / open
 - 깊이 제한이 없다 — 순환 없는 극단적 깊이는 스택을 넘길 수 있다(추론).
-- Tracked: #122 (깊이 제한)
+- 같은 파일에 `get_page`와 `collect_pages`·`page_count`가 다르게 답할 수 있다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md)의 "다루지 않는 것".
+- Tracked: #122 (깊이 제한), #133 (페이지 API 불일치)
