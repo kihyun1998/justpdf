@@ -54,29 +54,31 @@ pub fn serialize_pdf_encrypted(
     )
 }
 
-/// Serialize the objects of `writer`, each at its generation number.
+/// Serialize the objects of `writer`, each at its generation number, with
+/// trailer `/Root` and `/Info` referring to objects `catalog_num` and
+/// `info_num` at theirs.
 pub(crate) fn serialize_writer(
     writer: &crate::writer::PdfWriter,
-    catalog_ref: &IndirectRef,
-    info_ref: Option<&IndirectRef>,
+    catalog_num: u32,
+    info_num: Option<u32>,
 ) -> Result<Vec<u8>> {
     serialize_pdf_impl(
         &writer.objects,
         &writer.generations,
         writer.version,
-        catalog_ref,
-        info_ref,
+        &writer.reference_to(catalog_num),
+        info_num.map(|n| writer.reference_to(n)).as_ref(),
         None,
         None,
     )
 }
 
-/// Serialize the objects of `writer` encrypted, each at its generation
-/// number, as [`serialize_pdf_encrypted`] does.
+/// Serialize the objects of `writer` encrypted, as [`serialize_writer`]
+/// does and with the encryption of [`serialize_pdf_encrypted`].
 pub(crate) fn serialize_writer_with_state(
     writer: &crate::writer::PdfWriter,
-    catalog_ref: &IndirectRef,
-    info_ref: Option<&IndirectRef>,
+    catalog_num: u32,
+    info_num: Option<u32>,
     encrypt_ref: &IndirectRef,
     encrypt_state: &crate::crypto::SecurityState,
     id_array: &[PdfObject],
@@ -85,8 +87,8 @@ pub(crate) fn serialize_writer_with_state(
         &writer.objects,
         &writer.generations,
         writer.version,
-        catalog_ref,
-        info_ref,
+        &writer.reference_to(catalog_num),
+        info_num.map(|n| writer.reference_to(n)).as_ref(),
         Some((encrypt_ref, encrypt_state, id_array)),
         None,
     )
@@ -97,8 +99,8 @@ pub(crate) fn serialize_writer_with_state(
 /// The file key is derived from `permanent_id`.
 pub(crate) fn serialize_writer_encrypted(
     writer: &mut crate::writer::PdfWriter,
-    catalog_ref: &IndirectRef,
-    info_ref: Option<&IndirectRef>,
+    catalog_num: u32,
+    info_num: Option<u32>,
     config: &crate::crypto::EncryptionConfig,
     permanent_id: &[u8],
     changing_id: &[u8],
@@ -112,8 +114,8 @@ pub(crate) fn serialize_writer_encrypted(
     state.encrypt_obj_num = Some(encrypt_ref.obj_num);
     serialize_writer_with_state(
         writer,
-        catalog_ref,
-        info_ref,
+        catalog_num,
+        info_num,
         &encrypt_ref,
         &state,
         &id_array,
@@ -304,21 +306,22 @@ pub fn serialize_pdf_with_xref_stream(
     )
 }
 
-/// Serialize the objects of `writer` with a cross-reference stream, each at
-/// its generation number, as [`serialize_pdf_with_xref_stream`] does.
+/// Serialize the objects of `writer` with a cross-reference stream, as
+/// [`serialize_writer`] does and with the layout of
+/// [`serialize_pdf_with_xref_stream`].
 pub(crate) fn serialize_writer_with_xref_stream(
     writer: &crate::writer::PdfWriter,
     compressed: &[crate::writer::object_stream::CompressedObjInfo],
-    catalog_ref: &IndirectRef,
-    info_ref: Option<&IndirectRef>,
+    catalog_num: u32,
+    info_num: Option<u32>,
 ) -> Result<Vec<u8>> {
     serialize_with_xref_stream_impl(
         &writer.objects,
         &writer.generations,
         compressed,
         writer.version,
-        catalog_ref,
-        info_ref,
+        &writer.reference_to(catalog_num),
+        info_num.map(|n| writer.reference_to(n)).as_ref(),
     )
 }
 
