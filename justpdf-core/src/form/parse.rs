@@ -4,13 +4,15 @@ use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfObject};
 use crate::page::Rect;
 use crate::parser::PdfDocument;
+use crate::tree_walk::VisitBudget;
 
 use super::types::*;
 
 /// Parse the AcroForm from a PDF document.
 /// Returns None if the document has no AcroForm.
 /// Fails with `CircularReference` when a field lists one of its own ancestors
-/// as a kid.
+/// as a kid, and with `LimitExceeded` when shared fields make the walk read
+/// more than a few times the size of the tree.
 pub fn parse_acroform(doc: &PdfDocument) -> Result<Option<AcroForm>> {
     let catalog_ref = doc
         .catalog_ref()
@@ -65,13 +67,22 @@ pub fn parse_acroform(doc: &PdfDocument) -> Result<Option<AcroForm>> {
         da: default_appearance.as_deref(),
     };
     let mut ancestors = HashSet::new();
+    let mut budget = VisitBudget::default();
 
     for item in &fields_arr {
         let field_ref = match item {
             PdfObject::Reference(r) => r.clone(),
             _ => continue,
         };
-        walk_field_tree(doc, &field_ref, "", inherited, &mut ancestors, &mut fields)?;
+        walk_field_tree(
+            doc,
+            &field_ref,
+            "",
+            inherited,
+            &mut ancestors,
+            &mut budget,
+            &mut fields,
+        )?;
     }
 
     Ok(Some(AcroForm {
@@ -91,16 +102,18 @@ struct InheritedField<'a> {
 }
 
 /// Recursively walk the field tree. `ancestors` holds the fields above
-/// `field_ref`; meeting one again is `CircularReference`.
+/// `field_ref`; meeting one again is `CircularReference`. Every field visit
+/// is charged to `budget`; past it is `LimitExceeded`.
 fn walk_field_tree(
     doc: &PdfDocument,
     field_ref: &IndirectRef,
     parent_name: &str,
     inherited: InheritedField<'_>,
     ancestors: &mut HashSet<IndirectRef>,
+    budget: &mut VisitBudget,
     fields: &mut Vec<FormField>,
 ) -> Result<()> {
-    let field_obj = doc.resolve(field_ref)?;
+    let field_obj = budget.enter(field_ref, || doc.resolve(field_ref))?;
     let dict = match field_obj.as_dict() {
         Some(d) => d.clone(),
         None => return Ok(()),
@@ -155,6 +168,7 @@ fn walk_field_tree(
                     &full_name,
                     InheritedField { ft, ff, da: da_ref },
                     ancestors,
+                    budget,
                     fields,
                 )?;
             }

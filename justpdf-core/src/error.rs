@@ -25,6 +25,9 @@ pub enum JustPdfError {
     #[error("circular reference detected at object {obj_num} {gen_num}")]
     CircularReference { obj_num: u32, gen_num: u16 },
 
+    #[error("tree walk visit limit exceeded at object {obj_num} {gen_num}")]
+    LimitExceeded { obj_num: u32, gen_num: u16 },
+
     #[error("unsupported PDF version: {version}")]
     UnsupportedVersion { version: String },
 

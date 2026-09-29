@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfObject};
 use crate::parser::PdfDocument;
+use crate::tree_walk::VisitBudget;
 
 use super::cert;
 use super::types::SignatureInfo;
@@ -13,7 +14,9 @@ use super::types::SignatureInfo;
 ///
 /// Walks the AcroForm field tree looking for /FT /Sig fields with a /V value,
 /// and extracts the signature information. Fails with `CircularReference`
-/// when a field lists one of its own ancestors as a kid.
+/// when a field lists one of its own ancestors as a kid, and with
+/// `LimitExceeded` when shared fields make the walk read more than a few times
+/// the size of the tree.
 pub fn detect_signatures(doc: &PdfDocument) -> Result<Vec<SignatureInfo>> {
     let catalog_ref = doc
         .catalog_ref()
@@ -44,13 +47,21 @@ pub fn detect_signatures(doc: &PdfDocument) -> Result<Vec<SignatureInfo>> {
 
     let mut signatures = Vec::new();
     let mut ancestors = HashSet::new();
+    let mut budget = VisitBudget::default();
 
     for field_obj in &fields_arr {
         let field_ref = match field_obj {
             PdfObject::Reference(r) => r.clone(),
             _ => continue,
         };
-        collect_sig_fields(doc, &field_ref, "", &mut ancestors, &mut signatures)?;
+        collect_sig_fields(
+            doc,
+            &field_ref,
+            "",
+            &mut ancestors,
+            &mut budget,
+            &mut signatures,
+        )?;
     }
 
     Ok(signatures)
@@ -58,15 +69,17 @@ pub fn detect_signatures(doc: &PdfDocument) -> Result<Vec<SignatureInfo>> {
 
 /// Recursively walk the field tree looking for signature fields.
 /// `ancestors` holds the fields above `field_ref`; meeting one again is
-/// `CircularReference`.
+/// `CircularReference`. Every field visit is charged to `budget`; past it is
+/// `LimitExceeded`.
 fn collect_sig_fields(
     doc: &PdfDocument,
     field_ref: &IndirectRef,
     parent_name: &str,
     ancestors: &mut HashSet<IndirectRef>,
+    budget: &mut VisitBudget,
     sigs: &mut Vec<SignatureInfo>,
 ) -> Result<()> {
-    let obj = doc.resolve(field_ref)?;
+    let obj = budget.enter(field_ref, || doc.resolve(field_ref))?;
     let dict = match obj.as_dict() {
         Some(d) => d.clone(),
         None => return Ok(()),
@@ -98,7 +111,7 @@ fn collect_sig_fields(
         let kids = kids.clone();
         for kid in &kids {
             if let PdfObject::Reference(r) = kid {
-                collect_sig_fields(doc, r, &full_name, ancestors, sigs)?;
+                collect_sig_fields(doc, r, &full_name, ancestors, budget, sigs)?;
             }
         }
         ancestors.remove(field_ref);

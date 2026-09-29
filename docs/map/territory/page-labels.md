@@ -7,7 +7,7 @@
 **None.**
 
 ## Design model
-- 숫자 트리에서 조상을 가리키는 kid는 건너뛴다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md). 접두사는 손실 디코드된다 — [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
+- 숫자 트리에서 조상을 가리키는 kid와 방문 예산을 넘긴 kid는 건너뛴다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md). 접두사는 손실 디코드된다 — [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
 - 설정 시 `/Nums`를 정렬한다.
 
 ## Code
@@ -26,5 +26,5 @@
 - [파사드](facade.md) — `page_labels`.
 
 ## Known holes / open
-- 깊이 제한이 없고(순환 없는 극단적 깊이는 스택을 넘길 수 있다), 공유 노드는 층마다 다시 걷는다(k층에 2^k) — 모두 추론.
-- Tracked: #33 (텍스트 문자열 인코딩), #120 (공유 노드 재방문), #122 (깊이 제한)
+- 깊이 제한이 없다 — 순환 없는 극단적 깊이는 스택을 넘길 수 있다(추론).
+- Tracked: #33 (텍스트 문자열 인코딩), #122 (깊이 제한)

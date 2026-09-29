@@ -12,12 +12,14 @@ Catalog → `/Pages` → `/Kids`를 걸어 `PageInfo` 목록을 만들고, 상�
 - MediaBox가 없으면 612×792.
 - `/Type /Page`이거나 MediaBox(상속 포함)가 있으면 페이지로 본다.
 - 간접 배열로 된 박스는 무시된다(`get_array`가 참조를 따르지 않음 — [객체 모델](object-model.md)).
-- `page_count`는 루트 `/Count`를 믿는다.
+- `page_count`는 루트 `/Count`를 믿는다. 음수이거나 없으면 0이다.
+- `get_page`는 음이 아닌 정수 `/Count`로만 서브트리를 건너뛴다. 음수이거나 없는 `/Count`는 아무것도 건너뛰지 않는다 — 그런 서브트리도 `collect_pages`와 같은 페이지를 찾는다.
 - 두 워커(`walk_page_tree`, `walk_page_tree_find`)가 거의 중복이다.
-- `/Pages` 노드가 자기 조상을 kid로 가지면 `CircularReference`다. 같은 노드를 두 번 나열한 것은 두 번 걷는다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md).
+- `/Pages` 노드가 자기 조상을 kid로 가지면 `CircularReference`다. 같은 노드를 두 번 나열한 것은 두 번 걷되, 방문 예산을 넘기면 `LimitExceeded`다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md). 예산은 `/Count`를 보지 않으므로 거짓 `/Count`로 가지치기를 끈 `get_page`도 멈춘다.
 
 ## Code
-- `justpdf-core/src/page/mod.rs` — `Rect`, `PageInfo`, `collect_pages`, `page_count`, `get_page`, `walk_page_tree`, `walk_page_tree_find`, `InheritedAttrs`
+- `justpdf-core/src/page/mod.rs` — `Rect`, `PageInfo`, `collect_pages`, `page_count`, `get_page`, `walk_page_tree`, `walk_page_tree_find`, `InheritedAttrs`, `subtree_count`
+- `justpdf-core/src/tree_walk.rs` — `VisitBudget` (여덟 트리 워커가 함께 쓴다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md))
 
 ## Reference behaviour
 **None.** 비교 대상 조항: ISO 32000-2 §7.7.3(페이지 트리, 상속 속성).
@@ -32,5 +34,6 @@ Catalog → `/Pages` → `/Kids`를 걸어 `PageInfo` 목록을 만들고, 상�
 - [파사드](facade.md), [CLI](cli.md), [언어 바인딩](language-bindings.md) — `collect_pages`/`get_page`/`page_count`를 직접 부른다.
 
 ## Known holes / open
-- 깊이 제한이 없고(순환 없는 극단적 깊이는 스택을 넘길 수 있다), 공유 노드는 층마다 다시 걷는다(k층에 2^k) — 모두 추론.
-- Tracked: #120 (공유 노드 재방문), #122 (깊이 제한)
+- 깊이 제한이 없다 — 순환 없는 극단적 깊이는 스택을 넘길 수 있다(추론).
+- 같은 파일에 `get_page`와 `collect_pages`·`page_count`가 다르게 답할 수 있다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md)의 "다루지 않는 것".
+- Tracked: #122 (깊이 제한), #133 (페이지 API 불일치)

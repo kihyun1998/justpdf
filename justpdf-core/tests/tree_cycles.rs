@@ -3,7 +3,7 @@
 use justpdf_core::embedded_file::read_embedded_files;
 use justpdf_core::form::parse_acroform;
 use justpdf_core::outline::{read_named_destinations, read_outlines};
-use justpdf_core::page::{collect_pages, get_page};
+use justpdf_core::page::{collect_pages, get_page, page_count};
 use justpdf_core::page_label::read_page_labels;
 use justpdf_core::sign::detect_signatures;
 use justpdf_core::{JustPdfError, PdfDocument};
@@ -291,4 +291,280 @@ fn read_named_destinations_skips_cyclic_kid_on_every_path() {
             .collect();
         assert_eq!(names, expected, "{layout}");
     }
+}
+
+// ---- shared nodes: a walk past its visit budget (#120) -------------------
+
+/// `k` intermediate nodes, each listing the next one twice, so a walk that
+/// reads every listing visits the bottom node 2^k times. `node(i, next)` is
+/// intermediate node `i`, whose object number is `first + i`; `bottom` is the
+/// node under the last one.
+fn doubling(
+    prefix: &[&str],
+    k: usize,
+    node: impl Fn(usize, usize) -> String,
+    bottom: &str,
+) -> PdfDocument {
+    let first = prefix.len() + 1;
+    let mut objects: Vec<String> = prefix.iter().map(|s| s.to_string()).collect();
+    objects.extend((0..k).map(|i| node(i, first + i + 1)));
+    objects.push(bottom.to_string());
+    pdf(&objects.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+fn assert_limit<T>(result: justpdf_core::Result<T>) {
+    match result {
+        Err(JustPdfError::LimitExceeded { .. }) => {}
+        other => panic!("expected LimitExceeded, got {:?}", other.map(|_| ())),
+    }
+}
+
+fn doubling_page_tree(count: &str) -> PdfDocument {
+    doubling(
+        &["<< /Type /Catalog /Pages 2 0 R >>"],
+        16,
+        |_, next| format!("<< /Type /Pages /Kids [{next} 0 R {next} 0 R] /Count {count} >>"),
+        "<< /Type /Page /MediaBox [0 0 100 100] >>",
+    )
+}
+
+#[test]
+fn collect_pages_stops_at_visit_limit() {
+    assert_limit(collect_pages(&doubling_page_tree("65536")));
+}
+
+#[test]
+fn collect_pages_reads_a_large_unshared_tree() {
+    // 100 intermediate nodes of 50 distinct pages each.
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        String::new(),
+    ];
+    let mut kids = Vec::new();
+    for _ in 0..100 {
+        let node = objects.len() + 1;
+        kids.push(format!("{node} 0 R"));
+        let leaves: Vec<String> = (1..=50).map(|j| format!("{} 0 R", node + j)).collect();
+        objects.push(format!(
+            "<< /Type /Pages /Kids [{}] /Count 50 >>",
+            leaves.join(" ")
+        ));
+        objects.extend((0..50).map(|_| "<< /Type /Page /MediaBox [0 0 100 100] >>".to_string()));
+    }
+    objects[1] = format!("<< /Type /Pages /Kids [{}] /Count 5000 >>", kids.join(" "));
+    let doc = pdf(&objects.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(collect_pages(&doc).unwrap().len(), 5000);
+    assert_eq!(get_page(&doc, 4999).unwrap().page_ref.obj_num, 5102);
+}
+
+#[test]
+fn get_page_stops_at_visit_limit_when_count_lies() {
+    // Every /Count claims more pages than the tree reaches, so no subtree is
+    // skipped and the walk goes through every listing.
+    assert_limit(get_page(&doubling_page_tree("999999999"), 999_999_998));
+}
+
+#[test]
+fn get_page_walks_through_negative_count() {
+    // Four leaves through a shared node; the negative /Count says nothing.
+    let doc = pdf(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R 3 0 R] /Count -1 >>",
+        "<< /Type /Pages /Kids [4 0 R 4 0 R] /Count -1 >>",
+        "<< /Type /Page /MediaBox [0 0 100 100] >>",
+    ]);
+    assert_eq!(get_page(&doc, 2).unwrap().index, 2);
+    assert!(get_page(&doc, 4).is_err());
+}
+
+#[test]
+fn get_page_walks_through_missing_count() {
+    // Node 3 has no /Count; collect_pages finds its two pages.
+    let doc = pdf(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 2 >>",
+        "<< /Type /Pages /Kids [4 0 R 5 0 R] >>",
+        "<< /Type /Page /MediaBox [0 0 100 100] >>",
+        "<< /Type /Page /MediaBox [0 0 100 100] >>",
+    ]);
+    assert_eq!(collect_pages(&doc).unwrap()[1].page_ref.obj_num, 5);
+    assert_eq!(get_page(&doc, 1).unwrap().page_ref.obj_num, 5);
+}
+
+#[test]
+fn page_count_reads_negative_count_as_zero() {
+    let doc = pdf(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [] /Count -1 >>",
+    ]);
+    assert_eq!(page_count(&doc).unwrap(), 0);
+}
+
+fn doubling_field_tree(ft: &str) -> PdfDocument {
+    doubling(
+        &[
+            "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [3 0 R] >> >>",
+            "<< /Type /Pages /Kids [] /Count 0 >>",
+        ],
+        16,
+        |i, next| format!("<< /T (f{i}) /FT /{ft} /Kids [{next} 0 R {next} 0 R] >>"),
+        "<< /T (leaf) >>",
+    )
+}
+
+#[test]
+fn parse_acroform_stops_at_visit_limit() {
+    assert_limit(parse_acroform(&doubling_field_tree("Tx")));
+}
+
+#[test]
+fn detect_signatures_stops_at_visit_limit() {
+    assert_limit(detect_signatures(&doubling_field_tree("Sig")));
+}
+
+#[test]
+fn read_outlines_stops_at_visit_limit() {
+    // On each level, item a and its next sibling b share a's first child, so
+    // every level doubles the items read below it.
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 3 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [] /Count 0 >>".to_string(),
+        "<< /Type /Outlines /First 4 0 R >>".to_string(),
+    ];
+    for i in 0..16 {
+        let a = 4 + 2 * i;
+        objects.push(format!(
+            "<< /Title (a{i}) /Next {} 0 R /First {} 0 R >>",
+            a + 1,
+            a + 2
+        ));
+        objects.push(format!("<< /Title (b{i}) /First {} 0 R >>", a + 2));
+    }
+    objects.push("<< /Title (leaf) >>".to_string());
+    let doc = pdf(&objects.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_limit(read_outlines(&doc));
+}
+
+/// A lookup tree past its visit budget skips the rest of its listings and
+/// returns some entries, far fewer than the 2^16 listings.
+fn assert_truncated(len: usize) {
+    assert!(
+        (1..100).contains(&len),
+        "expected a truncated result, got {len} entries"
+    );
+}
+
+#[test]
+fn read_page_labels_stops_at_visit_limit() {
+    let doc = doubling(
+        &[
+            "<< /Type /Catalog /Pages 2 0 R /PageLabels 3 0 R >>",
+            "<< /Type /Pages /Kids [] /Count 0 >>",
+        ],
+        16,
+        |_, next| format!("<< /Kids [{next} 0 R {next} 0 R] >>"),
+        "<< /Nums [0 << /S /D >>] >>",
+    );
+    assert_truncated(read_page_labels(&doc).unwrap().len());
+}
+
+#[test]
+fn read_embedded_files_stops_at_visit_limit() {
+    let doc = doubling(
+        &[
+            "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 3 0 R >> >>",
+            "<< /Type /Pages /Kids [] /Count 0 >>",
+        ],
+        16,
+        |_, next| format!("<< /Kids [{next} 0 R {next} 0 R] >>"),
+        "<< /Names [(a.txt) << /Type /Filespec /F (a.txt) >>] >>",
+    );
+    assert_truncated(read_embedded_files(&doc).unwrap().len());
+}
+
+#[test]
+fn read_named_destinations_stops_at_visit_limit() {
+    let doc = doubling(
+        &[
+            "<< /Type /Catalog /Pages 2 0 R /Names << /Dests 4 0 R >> >>",
+            "<< /Type /Pages /Kids [] /Count 0 >>",
+            "<< /Type /Page >>",
+        ],
+        16,
+        |_, next| format!("<< /Kids [{next} 0 R {next} 0 R] >>"),
+        "<< /Names [(leaf) [3 0 R /Fit]] >>",
+    );
+    assert_truncated(read_named_destinations(&doc).unwrap().len());
+}
+
+// ---- shared nodes: a walk charged by the size of what it reads (#120) ----
+
+/// A root listing `n` distinct nodes, each listing one shared `leaf` three
+/// times. Each distinct node adds three visits of the leaf, so the walk visits
+/// under four times as many nodes as it has seen, however large the leaf is.
+/// `entries` opens the root's and each node's dictionary.
+fn wide_shared_leaf(prefix: &[&str], entries: &str, n: usize, leaf: &str) -> PdfDocument {
+    let root = prefix.len() + 1;
+    let leaf_num = root + n + 1;
+    let mut objects: Vec<String> = prefix.iter().map(|s| s.to_string()).collect();
+    let kids: Vec<String> = (1..=n).map(|i| format!("{} 0 R", root + i)).collect();
+    objects.push(format!("<< {entries} /Kids [{}] >>", kids.join(" ")));
+    objects.extend(
+        (0..n).map(|_| {
+            format!("<< {entries} /Kids [{leaf_num} 0 R {leaf_num} 0 R {leaf_num} 0 R] >>")
+        }),
+    );
+    objects.push(leaf.to_string());
+    pdf(&objects.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+#[test]
+fn read_page_labels_is_charged_by_leaf_size() {
+    // 300 nodes over a leaf of 300 entries: reading every listing yields
+    // 270,000 entries from about 1,800 array elements in the file.
+    let nums: Vec<String> = (0..300).map(|i| format!("{i} << /S /D >>")).collect();
+    let doc = wide_shared_leaf(
+        &[
+            "<< /Type /Catalog /Pages 2 0 R /PageLabels 3 0 R >>",
+            "<< /Type /Pages /Kids [] /Count 0 >>",
+        ],
+        "",
+        300,
+        &format!("<< /Nums [{}] >>", nums.join(" ")),
+    );
+    let len = read_page_labels(&doc).unwrap().len();
+    assert!(
+        len > 0 && len <= 4 * (300 + 3 * 300 + 2 * 300),
+        "got {len} entries"
+    );
+}
+
+#[test]
+fn collect_pages_is_charged_by_leaf_size() {
+    // Each of 300 nodes lists one page, whose /Contents lists 300 streams,
+    // three times.
+    let contents: Vec<String> = (0..300).map(|_| "2 0 R".to_string()).collect();
+    let doc = wide_shared_leaf(
+        &["<< /Type /Catalog /Pages 3 0 R >>", "<< >>"],
+        "/Type /Pages",
+        300,
+        &format!(
+            "<< /Type /Page /MediaBox [0 0 100 100] /Contents [{}] >>",
+            contents.join(" ")
+        ),
+    );
+    assert_limit(collect_pages(&doc));
+}
+
+#[test]
+fn collect_pages_reads_the_wide_shared_leaf_fixture() {
+    // The same shape over a page smaller than each node stays within the
+    // budget, so the fixture reaches the leaf 900 times.
+    let doc = wide_shared_leaf(
+        &["<< /Type /Catalog /Pages 3 0 R >>", "<< >>"],
+        "/Type /Pages",
+        300,
+        "<< /Type /Page >>",
+    );
+    assert_eq!(collect_pages(&doc).unwrap().len(), 900);
 }

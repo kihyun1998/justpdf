@@ -27,4 +27,5 @@ C ABI 함수(`justpdf_open` … `justpdf_page_size`)와 손으로 쓴 헤더 `in
 
 ## Known holes / open
 - 헤더와 Rust 시그니처의 일치를 검사하는 장치가 없다.
-- Tracked: #36 (justpdf-wasm 매니페스트·ADR-0002)
+- `get_page`의 모든 오류(`CircularReference`, `LimitExceeded` 포함)를 `JUSTPDF_ERR_OUT_OF_RANGE`로 돌려준다.
+- Tracked: #36 (justpdf-wasm 매니페스트·ADR-0002), #134 (오류 매핑)

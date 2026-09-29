@@ -11,6 +11,7 @@ use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::parser::PdfDocument;
 use crate::stream;
+use crate::tree_walk::VisitBudget;
 use crate::writer::encode::make_stream;
 use crate::writer::modify::DocumentModifier;
 
@@ -159,7 +160,9 @@ fn resolve_dict<'a>(
 ///
 /// Parses the Catalog -> /Names -> /EmbeddedFiles name tree and returns
 /// a `Vec<FileSpec>` for each attachment found. A name tree kid that points
-/// back at one of its ancestors is skipped.
+/// back at one of its ancestors is skipped, and so is a kid whose reading
+/// would, through shared nodes, take the walk past a few times the size of
+/// the tree.
 pub fn read_embedded_files(doc: &PdfDocument) -> Result<Vec<FileSpec>> {
     // Get catalog
     let catalog_ref = match doc.catalog_ref() {
@@ -190,17 +193,25 @@ pub fn read_embedded_files(doc: &PdfDocument) -> Result<Vec<FileSpec>> {
         .cloned()
         .into_iter()
         .collect();
-    collect_name_tree_values(doc, &ef_tree, &mut ancestors, &mut file_specs)?;
+    collect_name_tree_values(
+        doc,
+        &ef_tree,
+        &mut ancestors,
+        &mut VisitBudget::default(),
+        &mut file_specs,
+    )?;
 
     Ok(file_specs)
 }
 
 /// Recursively collect FileSpec values from a name tree node.
 /// `ancestors` holds the nodes above `node`; a kid naming one is skipped.
+/// Every kid is read through `budget`; a kid it refuses is skipped.
 fn collect_name_tree_values(
     doc: &PdfDocument,
     node: &PdfDict,
     ancestors: &mut HashSet<IndirectRef>,
+    budget: &mut VisitBudget,
     out: &mut Vec<FileSpec>,
 ) -> Result<()> {
     // Leaf node: /Names array of [name1, value1, name2, value2, ...]
@@ -233,12 +244,15 @@ fn collect_name_tree_values(
         let kids: Vec<PdfObject> = kids_arr.to_vec();
         for kid in &kids {
             if let PdfObject::Reference(r) = kid {
-                if !ancestors.insert(r.clone()) {
+                if ancestors.contains(r) {
                     continue;
                 }
-                let child = doc.resolve(r)?;
+                let Some(child) = budget.visit(r, || doc.resolve(r))? else {
+                    continue;
+                };
+                ancestors.insert(r.clone());
                 if let PdfObject::Dict(d) = child {
-                    collect_name_tree_values(doc, &d, ancestors, out)?;
+                    collect_name_tree_values(doc, &d, ancestors, budget, out)?;
                 }
                 ancestors.remove(r);
             }

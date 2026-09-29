@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::parser::PdfDocument;
+use crate::tree_walk::VisitBudget;
 use crate::writer::modify::DocumentModifier;
 
 // ---------------------------------------------------------------------------
@@ -109,10 +110,12 @@ impl PageLabelRange {
 ///   nodes, and optionally a /Limits array `[min max]`.
 ///
 /// `ancestors` holds the nodes above `node`; a kid naming one is skipped.
+/// Every indirect kid is read through `budget`; a kid it refuses is skipped.
 fn parse_number_tree(
     doc: &PdfDocument,
     node: &PdfObject,
     ancestors: &mut HashSet<IndirectRef>,
+    budget: &mut VisitBudget,
     out: &mut Vec<(i64, PdfObject)>,
 ) -> Result<()> {
     let dict = match node {
@@ -144,15 +147,18 @@ fn parse_number_tree(
         for kid in &kids_owned {
             match kid {
                 PdfObject::Reference(r) => {
-                    if !ancestors.insert(r.clone()) {
+                    if ancestors.contains(r) {
                         continue;
                     }
-                    let child = doc.resolve(r)?;
-                    parse_number_tree(doc, &child, ancestors, out)?;
+                    let Some(child) = budget.visit(r, || doc.resolve(r))? else {
+                        continue;
+                    };
+                    ancestors.insert(r.clone());
+                    parse_number_tree(doc, &child, ancestors, budget, out)?;
                     ancestors.remove(r);
                 }
                 PdfObject::Dict(_) => {
-                    parse_number_tree(doc, kid, ancestors, out)?;
+                    parse_number_tree(doc, kid, ancestors, budget, out)?;
                 }
                 _ => {}
             }
@@ -179,7 +185,9 @@ fn build_nums_array(entries: &[(i64, PdfObject)]) -> Vec<PdfObject> {
 /// Read page label ranges from the document catalog's /PageLabels number tree.
 ///
 /// Returns an empty vec if no page labels are defined. A number tree kid that
-/// points back at one of its ancestors is skipped.
+/// points back at one of its ancestors is skipped, and so is a kid whose
+/// reading would, through shared nodes, take the walk past a few times the
+/// size of the tree.
 pub fn read_page_labels(doc: &PdfDocument) -> Result<Vec<PageLabelRange>> {
     // Get catalog
     let catalog_ref = match doc.catalog_ref() {
@@ -204,7 +212,13 @@ pub fn read_page_labels(doc: &PdfDocument) -> Result<Vec<PageLabelRange>> {
 
     // Parse the number tree
     let mut entries: Vec<(i64, PdfObject)> = Vec::new();
-    parse_number_tree(doc, &page_labels_obj, &mut ancestors, &mut entries)?;
+    parse_number_tree(
+        doc,
+        &page_labels_obj,
+        &mut ancestors,
+        &mut VisitBudget::default(),
+        &mut entries,
+    )?;
 
     // Sort by key (page index)
     entries.sort_by_key(|(k, _)| *k);
