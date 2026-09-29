@@ -8,7 +8,7 @@
 
 ## Design model
 - `/Title`은 손실 디코드(UTF-16BE 미처리)되고 UTF-8 바이트로 쓰인다 — [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
-- `visited`가 형제 체인 하나만 막고 자식 재귀는 막지 않는다(추론: 순환 위험).
+- 항목이 자기 조상으로 돌아가면(`/First`든 `/Next`든) `CircularReference`다. 같은 층의 `/Next` 고리는 조용히 멈춘다. 이름 있는 목적지 트리는 순환 kid를 건너뛴다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md).
 - `/A`는 `/D`만 읽는다.
 
 ## Code
@@ -21,6 +21,7 @@
 
 ## Cross-cutting invariants
 - [텍스트 문자열 인코딩](../invariant/text-string-encoding.md)
+- [트리 순회 순환](../invariant/tree-traversal-cycles.md)
 
 ## Blast radius
 - [액션](actions.md) — `Destination` 공유, `/A` 중복 파싱.
@@ -30,4 +31,5 @@
 
 ## Known holes / open
 - 한글 제목 북마크를 만들면 다른 뷰어에서 깨진다(추론, 위 불변식).
-- Tracked: #33 (텍스트 문자열 인코딩), #52 (순환 방어)
+- 깊이 제한이 없다 — 순환 없는 극단적 깊이는 스택을 넘길 수 있다(추론).
+- Tracked: #33 (텍스트 문자열 인코딩), #122 (깊이 제한)

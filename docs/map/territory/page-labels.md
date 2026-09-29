@@ -7,7 +7,7 @@
 **None.**
 
 ## Design model
-- 숫자 트리 파서에 순환 방어가 없다. 접두사는 손실 디코드된다 — [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
+- 숫자 트리에서 조상을 가리키는 kid는 건너뛴다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md). 접두사는 손실 디코드된다 — [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
 - 설정 시 `/Nums`를 정렬한다.
 
 ## Code
@@ -18,6 +18,7 @@
 
 ## Cross-cutting invariants
 - [텍스트 문자열 인코딩](../invariant/text-string-encoding.md)
+- [트리 순회 순환](../invariant/tree-traversal-cycles.md)
 
 ## Blast radius
 - [페이지 트리](page-tree.md) — 인덱스 기준.
@@ -25,4 +26,5 @@
 - [파사드](facade.md) — `page_labels`.
 
 ## Known holes / open
-- Tracked: #33 (텍스트 문자열 인코딩), #52 (순환 방어)
+- 깊이 제한이 없고(순환 없는 극단적 깊이는 스택을 넘길 수 있다), 공유 노드는 층마다 다시 걷는다(k층에 2^k) — 모두 추론.
+- Tracked: #33 (텍스트 문자열 인코딩), #120 (공유 노드 재방문), #122 (깊이 제한)

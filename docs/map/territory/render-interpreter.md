@@ -35,4 +35,5 @@
 - [렌더 API](render-api.md) — 호출자.
 
 ## Known holes / open
+- 콘텐츠 스트림 재귀에 조상 방어가 없다: SMask `/G`가 자기를 다시 적용하면 스택 오버플로, Form XObject는 깊이(>10)만 막아 자기 호출 k번이면 k^11번 실행(2026-09-29 프로브로 재현). Tracked: #119
 - `interpreter.rs`, `graphics_state.rs`에 테스트가 없다. 렌더 통합 테스트는 PNG 매직 바이트·길이만 확인하고 픽셀 내용을 보지 않는다.

@@ -47,4 +47,5 @@
 
 ## Known holes / open
 - resolve 실패 객체를 경고 없이 버린다.
-- Tracked: #33 (텍스트 문자열 인코딩)
+- `graft_page`가 `deep_copy_object`로 원본 페이지의 `/Parent`를 따라가 원본 페이지 트리 전체를 복사하고, `/Parent`를 덮어써 고아로 남긴다 — N페이지 병합이면 약 N벌(추론).
+- Tracked: #33 (텍스트 문자열 인코딩), #121 (graft_page 트리 복사)

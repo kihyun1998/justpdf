@@ -14,6 +14,7 @@ Catalog → `/Pages` → `/Kids`를 걸어 `PageInfo` 목록을 만들고, 상�
 - 간접 배열로 된 박스는 무시된다(`get_array`가 참조를 따르지 않음 — [객체 모델](object-model.md)).
 - `page_count`는 루트 `/Count`를 믿는다.
 - 두 워커(`walk_page_tree`, `walk_page_tree_find`)가 거의 중복이다.
+- `/Pages` 노드가 자기 조상을 kid로 가지면 `CircularReference`다. 같은 노드를 두 번 나열한 것은 두 번 걷는다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md).
 
 ## Code
 - `justpdf-core/src/page/mod.rs` — `Rect`, `PageInfo`, `collect_pages`, `page_count`, `get_page`, `walk_page_tree`, `walk_page_tree_find`, `InheritedAttrs`
@@ -22,7 +23,7 @@ Catalog → `/Pages` → `/Kids`를 걸어 `PageInfo` 목록을 만들고, 상�
 **None.** 비교 대상 조항: ISO 32000-2 §7.7.3(페이지 트리, 상속 속성).
 
 ## Cross-cutting invariants
-**None.**
+- [트리 순회 순환](../invariant/tree-traversal-cycles.md)
 
 ## Blast radius
 - [렌더 API](render-api.md), [렌더 인터프리터](render-interpreter.md) — `PageInfo`/`Rect`를 그대로 쓴다.
@@ -31,5 +32,5 @@ Catalog → `/Pages` → `/Kids`를 걸어 `PageInfo` 목록을 만들고, 상�
 - [파사드](facade.md), [CLI](cli.md), [언어 바인딩](language-bindings.md) — `collect_pages`/`get_page`/`page_count`를 직접 부른다.
 
 ## Known holes / open
-- `/Kids` 순환에 대한 방어(visited, 깊이 제한)가 없다 — 순환 트리는 무한 재귀(추론).
-- Tracked: #52 (순환 방어)
+- 깊이 제한이 없고(순환 없는 극단적 깊이는 스택을 넘길 수 있다), 공유 노드는 층마다 다시 걷는다(k층에 2^k) — 모두 추론.
+- Tracked: #120 (공유 노드 재방문), #122 (깊이 제한)

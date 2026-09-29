@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::parser::PdfDocument;
@@ -66,6 +68,9 @@ pub struct PageInfo {
 }
 
 /// Walk the page tree and collect all pages in order.
+///
+/// Fails with `CircularReference` when a `/Pages` node lists one of its own
+/// ancestors as a kid.
 pub fn collect_pages(doc: &PdfDocument) -> Result<Vec<PageInfo>> {
     let catalog_ref = doc
         .catalog_ref()
@@ -88,7 +93,7 @@ pub fn collect_pages(doc: &PdfDocument) -> Result<Vec<PageInfo>> {
 
     let mut pages = Vec::new();
     let inherited = InheritedAttrs::default();
-    walk_page_tree(doc, &pages_ref, &inherited, &mut pages)?;
+    walk_page_tree(doc, &pages_ref, &inherited, &mut HashSet::new(), &mut pages)?;
     Ok(pages)
 }
 
@@ -128,6 +133,9 @@ pub fn page_count(doc: &PdfDocument) -> Result<usize> {
 /// `PageInfo` for the requested page as soon as it is found.  For documents
 /// with many pages this avoids allocating and resolving every page object when
 /// only a single page is needed.
+///
+/// Fails with `CircularReference` when a `/Pages` node lists one of its own
+/// ancestors as a kid.
 pub fn get_page(doc: &PdfDocument, index: usize) -> Result<PageInfo> {
     let catalog_ref = doc
         .catalog_ref()
@@ -166,7 +174,7 @@ pub fn get_page(doc: &PdfDocument, index: usize) -> Result<PageInfo> {
 
     let inherited = InheritedAttrs::default();
     let mut counter: usize = 0;
-    walk_page_tree_find(doc, &pages_ref, &inherited, index, &mut counter)
+    walk_page_tree_find(doc, &pages_ref, &inherited, index, &mut counter, &mut HashSet::new())
         .and_then(|opt| {
             opt.ok_or(JustPdfError::InvalidObject {
                 offset: 0,
@@ -179,12 +187,15 @@ pub fn get_page(doc: &PdfDocument, index: usize) -> Result<PageInfo> {
 /// `counter` tracks how many leaf pages have been seen so far.
 /// Returns `Ok(Some(page))` as soon as the target page is found, or
 /// `Ok(None)` after exhausting the subtree without finding it.
+/// `ancestors` holds the `/Pages` nodes above `node_ref`; meeting one again
+/// is `CircularReference`.
 fn walk_page_tree_find(
     doc: &PdfDocument,
     node_ref: &IndirectRef,
     inherited: &InheritedAttrs,
     target: usize,
     counter: &mut usize,
+    ancestors: &mut HashSet<IndirectRef>,
 ) -> Result<Option<PageInfo>> {
     let node_obj = doc.resolve(node_ref)?;
     let dict = node_obj.as_dict().ok_or(JustPdfError::InvalidObject {
@@ -205,6 +216,7 @@ fn walk_page_tree_find(
             }
 
             let updated = inherited.with_overrides(dict);
+            enter_pages_node(ancestors, node_ref)?;
             if let Some(kids) = dict.get_array(b"Kids") {
                 let kid_refs: Vec<IndirectRef> = kids
                     .iter()
@@ -213,12 +225,13 @@ fn walk_page_tree_find(
 
                 for kid_ref in kid_refs {
                     if let Some(page) =
-                        walk_page_tree_find(doc, &kid_ref, &updated, target, counter)?
+                        walk_page_tree_find(doc, &kid_ref, &updated, target, counter, ancestors)?
                     {
                         return Ok(Some(page));
                     }
                 }
             }
+            ancestors.remove(node_ref);
             Ok(None)
         }
         _ if node_type == b"Page"
@@ -297,11 +310,25 @@ impl InheritedAttrs {
     }
 }
 
-/// Recursively walk the page tree.
+/// Records `node_ref` as an ancestor of the kids about to be walked.
+fn enter_pages_node(ancestors: &mut HashSet<IndirectRef>, node_ref: &IndirectRef) -> Result<()> {
+    if ancestors.insert(node_ref.clone()) {
+        Ok(())
+    } else {
+        Err(JustPdfError::CircularReference {
+            obj_num: node_ref.obj_num,
+            gen_num: node_ref.gen_num,
+        })
+    }
+}
+
+/// Recursively walk the page tree. `ancestors` holds the `/Pages` nodes
+/// above `node_ref`; meeting one again is `CircularReference`.
 fn walk_page_tree(
     doc: &PdfDocument,
     node_ref: &IndirectRef,
     inherited: &InheritedAttrs,
+    ancestors: &mut HashSet<IndirectRef>,
     pages: &mut Vec<PageInfo>,
 ) -> Result<()> {
     let node_obj = doc.resolve(node_ref)?;
@@ -315,6 +342,7 @@ fn walk_page_tree(
     match node_type {
         b"Pages" => {
             let updated = inherited.with_overrides(dict);
+            enter_pages_node(ancestors, node_ref)?;
             if let Some(kids) = dict.get_array(b"Kids") {
                 let kid_refs: Vec<IndirectRef> = kids
                     .iter()
@@ -322,9 +350,10 @@ fn walk_page_tree(
                     .collect();
 
                 for kid_ref in kid_refs {
-                    walk_page_tree(doc, &kid_ref, &updated, pages)?;
+                    walk_page_tree(doc, &kid_ref, &updated, ancestors, pages)?;
                 }
             }
+            ancestors.remove(node_ref);
         }
         _ if node_type == b"Page"
             || dict.contains_key(b"MediaBox")

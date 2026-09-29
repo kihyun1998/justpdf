@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfObject};
 use crate::page::Rect;
@@ -7,6 +9,8 @@ use super::types::*;
 
 /// Parse the AcroForm from a PDF document.
 /// Returns None if the document has no AcroForm.
+/// Fails with `CircularReference` when a field lists one of its own ancestors
+/// as a kid.
 pub fn parse_acroform(doc: &PdfDocument) -> Result<Option<AcroForm>> {
     let catalog_ref = doc
         .catalog_ref()
@@ -55,24 +59,19 @@ pub fn parse_acroform(doc: &PdfDocument) -> Result<Option<AcroForm>> {
     };
 
     let mut fields = Vec::new();
-    let inherited_ft: Option<&[u8]> = None;
-    let inherited_ff: u32 = 0;
-    let inherited_da: Option<&str> = default_appearance.as_deref();
+    let inherited = InheritedField {
+        ft: None,
+        ff: 0,
+        da: default_appearance.as_deref(),
+    };
+    let mut ancestors = HashSet::new();
 
     for item in &fields_arr {
         let field_ref = match item {
             PdfObject::Reference(r) => r.clone(),
             _ => continue,
         };
-        walk_field_tree(
-            doc,
-            &field_ref,
-            "",
-            inherited_ft,
-            inherited_ff,
-            inherited_da,
-            &mut fields,
-        )?;
+        walk_field_tree(doc, &field_ref, "", inherited, &mut ancestors, &mut fields)?;
     }
 
     Ok(Some(AcroForm {
@@ -83,14 +82,22 @@ pub fn parse_acroform(doc: &PdfDocument) -> Result<Option<AcroForm>> {
     }))
 }
 
-/// Recursively walk the field tree.
+/// Field attributes a child takes from its parent when it has none of its own.
+#[derive(Clone, Copy)]
+struct InheritedField<'a> {
+    ft: Option<&'a [u8]>,
+    ff: u32,
+    da: Option<&'a str>,
+}
+
+/// Recursively walk the field tree. `ancestors` holds the fields above
+/// `field_ref`; meeting one again is `CircularReference`.
 fn walk_field_tree(
     doc: &PdfDocument,
     field_ref: &IndirectRef,
     parent_name: &str,
-    inherited_ft: Option<&[u8]>,
-    inherited_ff: u32,
-    inherited_da: Option<&str>,
+    inherited: InheritedField<'_>,
+    ancestors: &mut HashSet<IndirectRef>,
     fields: &mut Vec<FormField>,
 ) -> Result<()> {
     let field_obj = doc.resolve(field_ref)?;
@@ -116,23 +123,29 @@ fn walk_field_tree(
     // Get field type — either from this dict or inherited
     let ft = dict
         .get_name(b"FT")
-        .or(inherited_ft);
+        .or(inherited.ft);
 
     // Get field flags — either from this dict or inherited
     let ff = dict
         .get_i64(b"Ff")
         .map(|v| v as u32)
-        .unwrap_or(inherited_ff);
+        .unwrap_or(inherited.ff);
 
     // Get default appearance — either from this dict or inherited
     let da = dict
         .get(b"DA")
         .and_then(|o| o.as_str())
         .map(|b| String::from_utf8_lossy(b).into_owned());
-    let da_ref = da.as_deref().or(inherited_da);
+    let da_ref = da.as_deref().or(inherited.da);
 
     // Check for /Kids — if present, recurse
     if let Some(kids) = dict.get_array(b"Kids") {
+        if !ancestors.insert(field_ref.clone()) {
+            return Err(JustPdfError::CircularReference {
+                obj_num: field_ref.obj_num,
+                gen_num: field_ref.gen_num,
+            });
+        }
         let kids: Vec<PdfObject> = kids.to_vec();
         for kid in &kids {
             if let Some(kid_ref) = kid.as_reference() {
@@ -140,13 +153,13 @@ fn walk_field_tree(
                     doc,
                     kid_ref,
                     &full_name,
-                    ft,
-                    ff,
-                    da_ref,
+                    InheritedField { ft, ff, da: da_ref },
+                    ancestors,
                     fields,
                 )?;
             }
         }
+        ancestors.remove(field_ref);
         return Ok(());
     }
 

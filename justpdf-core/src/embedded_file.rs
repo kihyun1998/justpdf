@@ -3,6 +3,8 @@
 //! Supports reading embedded files from the catalog name tree, extracting
 //! file data, and adding new embedded files to a document.
 
+use std::collections::HashSet;
+
 use md5::{Digest, Md5};
 
 use crate::error::{JustPdfError, Result};
@@ -156,7 +158,8 @@ fn resolve_dict<'a>(
 /// Read all embedded file specifications from the document catalog.
 ///
 /// Parses the Catalog -> /Names -> /EmbeddedFiles name tree and returns
-/// a `Vec<FileSpec>` for each attachment found.
+/// a `Vec<FileSpec>` for each attachment found. A name tree kid that points
+/// back at one of its ancestors is skipped.
 pub fn read_embedded_files(doc: &PdfDocument) -> Result<Vec<FileSpec>> {
     // Get catalog
     let catalog_ref = match doc.catalog_ref() {
@@ -182,15 +185,22 @@ pub fn read_embedded_files(doc: &PdfDocument) -> Result<Vec<FileSpec>> {
 
     // Collect leaf values from the name tree
     let mut file_specs = Vec::new();
-    collect_name_tree_values(doc, &ef_tree, &mut file_specs)?;
+    let mut ancestors: HashSet<IndirectRef> = names_dict
+        .get_ref(b"EmbeddedFiles")
+        .cloned()
+        .into_iter()
+        .collect();
+    collect_name_tree_values(doc, &ef_tree, &mut ancestors, &mut file_specs)?;
 
     Ok(file_specs)
 }
 
 /// Recursively collect FileSpec values from a name tree node.
+/// `ancestors` holds the nodes above `node`; a kid naming one is skipped.
 fn collect_name_tree_values(
     doc: &PdfDocument,
     node: &PdfDict,
+    ancestors: &mut HashSet<IndirectRef>,
     out: &mut Vec<FileSpec>,
 ) -> Result<()> {
     // Leaf node: /Names array of [name1, value1, name2, value2, ...]
@@ -223,11 +233,14 @@ fn collect_name_tree_values(
         let kids: Vec<PdfObject> = kids_arr.to_vec();
         for kid in &kids {
             if let PdfObject::Reference(r) = kid {
-                let r = r.clone();
-                let child = doc.resolve(&r)?;
-                if let PdfObject::Dict(d) = child {
-                    collect_name_tree_values(doc, &d, out)?;
+                if !ancestors.insert(r.clone()) {
+                    continue;
                 }
+                let child = doc.resolve(r)?;
+                if let PdfObject::Dict(d) = child {
+                    collect_name_tree_values(doc, &d, ancestors, out)?;
+                }
+                ancestors.remove(r);
             }
         }
     }
