@@ -8,6 +8,7 @@ AcroForm 필드 트리를 재귀로 걸어 `/FT /Sig`이고 `/V`가 있는 필�
 
 ## Design model
 - `/Name`·`/Reason`·`/T` 등은 `from_utf8_lossy`로 디코드한다 — PDFDocEncoding·UTF-16BE BOM을 이해하지 못한다([텍스트 문자열 인코딩](../invariant/text-string-encoding.md)).
+- 필드가 자기 조상을 kid로 가지면 `CircularReference`다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md).
 - `/Kids`가 있으면 조기 반환하므로, 위젯만 자식으로 가진 필드는 검사되지 않는다(추론).
 - 암호화 문서에서는 `/Contents`가 `resolve`를 지나며 복호화된다(추론: 스펙상 서명 값은 암호화 대상이 아님).
 
@@ -19,6 +20,7 @@ AcroForm 필드 트리를 재귀로 걸어 `/FT /Sig`이고 `/V`가 있는 필�
 
 ## Cross-cutting invariants
 - [텍스트 문자열 인코딩](../invariant/text-string-encoding.md)
+- [트리 순회 순환](../invariant/tree-traversal-cycles.md)
 
 ## Blast radius
 - [AcroForm](acroform.md) — 같은 필드 트리를 각자 걷는다.
@@ -29,4 +31,5 @@ AcroForm 필드 트리를 재귀로 걸어 `/FT /Sig`이고 `/V`가 있는 필�
 
 ## Known holes / open
 - justpdf가 방금 서명한 파일에서 서명을 찾지 못한다(추론; 서명 → 감지 테스트 없음).
-- Tracked: #33 (텍스트 문자열 인코딩), #37 (서명 연결·CLI sign)
+- 깊이 제한이 없고(순환 없는 극단적 깊이는 스택을 넘길 수 있다), 공유 노드는 층마다 다시 걷는다(k층에 2^k) — 모두 추론.
+- Tracked: #33 (텍스트 문자열 인코딩), #37 (서명 연결·CLI sign), #120 (공유 노드 재방문), #122 (깊이 제한)

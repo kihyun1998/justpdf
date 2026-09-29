@@ -4,8 +4,10 @@
 //! "A-1", "A-2" instead of raw sequential page numbers. Labels are defined
 //! as a number tree in the document catalog under the /PageLabels key.
 
+use std::collections::HashSet;
+
 use crate::error::{JustPdfError, Result};
-use crate::object::{PdfDict, PdfObject};
+use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::parser::PdfDocument;
 use crate::writer::modify::DocumentModifier;
 
@@ -105,9 +107,12 @@ impl PageLabelRange {
 /// - Leaf nodes contain a /Nums array: `[key1 value1 key2 value2 ...]`
 /// - Intermediate nodes contain a /Kids array of indirect references to child
 ///   nodes, and optionally a /Limits array `[min max]`.
+///
+/// `ancestors` holds the nodes above `node`; a kid naming one is skipped.
 fn parse_number_tree(
     doc: &PdfDocument,
     node: &PdfObject,
+    ancestors: &mut HashSet<IndirectRef>,
     out: &mut Vec<(i64, PdfObject)>,
 ) -> Result<()> {
     let dict = match node {
@@ -139,11 +144,15 @@ fn parse_number_tree(
         for kid in &kids_owned {
             match kid {
                 PdfObject::Reference(r) => {
+                    if !ancestors.insert(r.clone()) {
+                        continue;
+                    }
                     let child = doc.resolve(r)?;
-                    parse_number_tree(doc, &child, out)?;
+                    parse_number_tree(doc, &child, ancestors, out)?;
+                    ancestors.remove(r);
                 }
                 PdfObject::Dict(_) => {
-                    parse_number_tree(doc, kid, out)?;
+                    parse_number_tree(doc, kid, ancestors, out)?;
                 }
                 _ => {}
             }
@@ -169,7 +178,8 @@ fn build_nums_array(entries: &[(i64, PdfObject)]) -> Vec<PdfObject> {
 
 /// Read page label ranges from the document catalog's /PageLabels number tree.
 ///
-/// Returns an empty vec if no page labels are defined.
+/// Returns an empty vec if no page labels are defined. A number tree kid that
+/// points back at one of its ancestors is skipped.
 pub fn read_page_labels(doc: &PdfDocument) -> Result<Vec<PageLabelRange>> {
     // Get catalog
     let catalog_ref = match doc.catalog_ref() {
@@ -182,10 +192,11 @@ pub fn read_page_labels(doc: &PdfDocument) -> Result<Vec<PageLabelRange>> {
     };
 
     // Get /PageLabels
+    let mut ancestors = HashSet::new();
     let page_labels_obj = match catalog.get(b"PageLabels") {
         Some(PdfObject::Reference(r)) => {
-            let r = r.clone();
-            doc.resolve(&r)?
+            ancestors.insert(r.clone());
+            doc.resolve(r)?
         }
         Some(obj) => obj.clone(),
         None => return Ok(Vec::new()),
@@ -193,7 +204,7 @@ pub fn read_page_labels(doc: &PdfDocument) -> Result<Vec<PageLabelRange>> {
 
     // Parse the number tree
     let mut entries: Vec<(i64, PdfObject)> = Vec::new();
-    parse_number_tree(doc, &page_labels_obj, &mut entries)?;
+    parse_number_tree(doc, &page_labels_obj, &mut ancestors, &mut entries)?;
 
     // Sort by key (page index)
     entries.sort_by_key(|(k, _)| *k);

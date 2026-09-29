@@ -1,5 +1,7 @@
 //! Signature field detection in PDF documents.
 
+use std::collections::HashSet;
+
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfObject};
 use crate::parser::PdfDocument;
@@ -10,7 +12,8 @@ use super::types::SignatureInfo;
 /// Detect all digital signatures in a PDF document.
 ///
 /// Walks the AcroForm field tree looking for /FT /Sig fields with a /V value,
-/// and extracts the signature information.
+/// and extracts the signature information. Fails with `CircularReference`
+/// when a field lists one of its own ancestors as a kid.
 pub fn detect_signatures(doc: &PdfDocument) -> Result<Vec<SignatureInfo>> {
     let catalog_ref = doc
         .catalog_ref()
@@ -40,23 +43,27 @@ pub fn detect_signatures(doc: &PdfDocument) -> Result<Vec<SignatureInfo>> {
     };
 
     let mut signatures = Vec::new();
+    let mut ancestors = HashSet::new();
 
     for field_obj in &fields_arr {
         let field_ref = match field_obj {
             PdfObject::Reference(r) => r.clone(),
             _ => continue,
         };
-        collect_sig_fields(doc, &field_ref, "", &mut signatures)?;
+        collect_sig_fields(doc, &field_ref, "", &mut ancestors, &mut signatures)?;
     }
 
     Ok(signatures)
 }
 
 /// Recursively walk the field tree looking for signature fields.
+/// `ancestors` holds the fields above `field_ref`; meeting one again is
+/// `CircularReference`.
 fn collect_sig_fields(
     doc: &PdfDocument,
     field_ref: &IndirectRef,
     parent_name: &str,
+    ancestors: &mut HashSet<IndirectRef>,
     sigs: &mut Vec<SignatureInfo>,
 ) -> Result<()> {
     let obj = doc.resolve(field_ref)?;
@@ -82,12 +89,19 @@ fn collect_sig_fields(
 
     // Check for /Kids — if present, recurse
     if let Some(PdfObject::Array(kids)) = dict.get(b"Kids") {
+        if !ancestors.insert(field_ref.clone()) {
+            return Err(JustPdfError::CircularReference {
+                obj_num: field_ref.obj_num,
+                gen_num: field_ref.gen_num,
+            });
+        }
         let kids = kids.clone();
         for kid in &kids {
             if let PdfObject::Reference(r) = kid {
-                collect_sig_fields(doc, r, &full_name, sigs)?;
+                collect_sig_fields(doc, r, &full_name, ancestors, sigs)?;
             }
         }
+        ancestors.remove(field_ref);
         return Ok(());
     }
 
