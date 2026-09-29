@@ -8,6 +8,9 @@
 //! - **CBZ** — Comic Book Archive (feature `cbz`)
 //! - **Plain Text** → PDF (feature `plaintext`)
 
+#![doc(html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png")]
+#![doc(html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png")]
+
 pub mod error;
 pub mod common;
 pub mod detect;

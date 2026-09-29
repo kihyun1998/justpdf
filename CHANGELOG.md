@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Brand assets** — the justpdf logo under `logo/`, shown at the top of every README and as the docs.rs logo and favicon
 - `writer::embed_rgb` (also `justpdf::embed_rgb`) — embed 8-bit RGB pixels as a Flate-compressed image XObject, for `PageBuilder::add_image` / `draw_image` (#88)
 - **CLI `compress` subcommand** — `justpdf compress <file> --preset low|medium|high|extreme -o <out>` (#10)
 - **CLI `compress` options** — per-knob overrides on top of `--preset` (`--jpeg-quality`, `--max-dpi`, `--no-strip-metadata`, …) (#11), `--password` for encrypted input (output is unencrypted) (#13), `--analyze` preview (#12), `--verbose` breakdown (#14)

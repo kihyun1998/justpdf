@@ -1,3 +1,6 @@
+#![doc(html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png")]
+#![doc(html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png")]
+
 pub mod action;
 pub mod annot;
 pub mod color;
