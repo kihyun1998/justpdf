@@ -1,31 +1,31 @@
-# 압축 — 스트림 중복 제거
+# Compress dedup
 
 ## What it is
-사전과 데이터가 모두 같은 스트림을 하나로 합치고, 참조를 다시 쓴다.
+Merges streams whose dict and data are both equal into one, and rewrites the references.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- [정리(clean)](clean.md)와 같은 `merge_duplicates`를 스트림에만 적용한다(#27). 판정은 사전(`/Length` 제외) 정확 일치 + 데이터, 합치기는 변화가 없을 때까지 반복. #27 전에는 데이터의 SHA-256만 봐서, 같은 16바이트에 `/Width 4 /Height 4`와 `/Width 2 /Height 8`인 두 스트림이 합쳐졌다(재현). 실제 파일 `testpdf.pdf`(low 프리셋)에서는 `/BBox`만 다른 두 폼 XObject가 합쳐지고 있었다 — #27 뒤 제거 수 21 → 20, 출력 +220바이트.
-- 지운 스트림을 가리키던 참조는 남긴 스트림의 번호와 **세대**(writer의 `generations`)로 다시 쓴다. 번호만 바꾸면 남긴 스트림이 원본 세대 g ≠ 0으로 쓰일 때 참조 `K 0 R`이 가리키는 객체가 없다(#72 check 단계에서 발견, `test_dedup_points_references_at_the_generation_of_the_kept_stream`). [원본 세대](../invariant/source-generation.md).
-- 사전 비교는 정확 일치라 참조(`/SMask 12 0 R` 등)가 다르면 그 차례에는 합치지 않는다. 참조 대상이 합쳐져 참조가 같아지면 다음 차례에 합친다.
-  - **메인테이너 판단(2026-09-24, #27 triage)**: 사전 정확 일치. 의미상 동치(직접 값과 같은 값을 가리키는 참조 등)를 인정하는 더 공격적인 dedup은 범위 밖으로 두었다. 대안은 따로 제시되지 않았다(기본값 승인).
-  - **메인테이너 판단(2026-09-24, #27 구현 중)**: `/Length`는 비교에서 빼고, 변화가 없을 때까지 반복한다. 위 판단은 이 두 경우를 보지 못한 채 내려졌다 — lens가 재현했다: 간접 `/Length N 0 R`만 다른 같은 이미지 두 개(master 1개 제거, 정확 일치 0개), 같은 `/SMask`를 따로 가진 같은 이미지 두 개(master 2개, 한 번만 도는 정확 일치 1개). 제시된 대안: 지금대로 정확 일치·한 번. 판단 근거로 제시된 사실: 쓰기 쪽이 `/Length`를 버리고 다시 계산한다(`serialize.rs`), MuPDF `pdf-write.c`는 dedup 전에 간접 길이를 값으로 바꾸고 변화가 없을 때까지 반복한다.
+- Applies the same `merge_duplicates` as [Clean](clean.md), to streams only (#27). The test is an exact match of the dict (excluding `/Length`) plus the data; merging repeats until nothing changes. Before #27 it looked only at the SHA-256 of the data, so two streams with the same 16 bytes but `/Width 4 /Height 4` and `/Width 2 /Height 8` were merged (reproduced). In the real file `testpdf.pdf` (low preset), two form XObjects that differed only in `/BBox` were being merged — after #27 the removed count went 21 → 20, output +220 bytes.
+- References that pointed at a deleted stream are rewritten to the kept stream's number and **generation** (the writer's `generations`). Changing only the number leaves the reference `K 0 R` pointing at no object when the kept stream is written at its source generation g ≠ 0 (found in the #72 check step, `test_dedup_points_references_at_the_generation_of_the_kept_stream`). [Source generation](../invariant/source-generation.md).
+- The dict comparison is an exact match, so if references differ (`/SMask 12 0 R` and so on) the streams are not merged in that round. Once the reference targets are merged and the references become equal, they merge in the next round.
+  - **Maintainer decision (2026-09-24, #27 triage)**: exact dict match. A more aggressive dedup that accepts semantic equivalence (a direct value and a reference to the same value, and so on) was left out of scope. No alternative was offered separately (default approved).
+  - **Maintainer decision (2026-09-24, during #27 implementation)**: leave `/Length` out of the comparison, and repeat until nothing changes. The decision above was made without seeing these two cases — lens reproduced them: two identical images differing only in an indirect `/Length N 0 R` (master removed 1, exact match 0), and two identical images each with its own identical `/SMask` (master 2, a single-pass exact match 1). Alternative offered: keep exact match and a single pass. Facts offered as grounds for the decision: the writing side drops `/Length` and recomputes it (`serialize.rs`); MuPDF `pdf-write.c` turns indirect lengths into values before dedup and repeats until nothing changes.
 
 ## Code
 - `justpdf-core/src/writer/compress.rs` — `dedup_streams`, `test_dedup_merges_streams_with_equal_dict_and_data`, `test_dedup_keeps_streams_whose_dicts_differ`, `test_dedup_ignores_the_length_entry`, `test_dedup_merges_streams_that_become_equal_after_a_merge`, `test_dedup_points_references_at_the_generation_of_the_kept_stream`, `test_dedup_identical_images`
 - `justpdf-core/src/writer/clean.rs` — `merge_duplicates`, `find_duplicates`, `same_value`, `bucket_key`, `rewrite_references`
 
 ## Reference behaviour
-MuPDF `pdf-write.c` — `removeduplicateobjs`: 스트림은 사전과 데이터를 함께 비교하고, 변화가 없을 때까지 반복하며, 페이지 객체는 합치지 않는다("Never common up pages!").
+MuPDF `pdf-write.c` — `removeduplicateobjs`: compares a stream's dict and data together, repeats until nothing changes, and never merges page objects ("Never common up pages!").
 
 ## Cross-cutting invariants
-- [원본 세대](../invariant/source-generation.md) — 합친 참조가 남긴 스트림의 세대를 받는다.
+- [Source generation](../invariant/source-generation.md) — a merged reference takes the kept stream's generation.
 
 ## Blast radius
-- [정리(clean)](clean.md) — `merge_duplicates` 공유. 동일성 규칙을 바꾸면 두 경로가 함께 바뀐다.
-- [compress-images](compress-images.md), [스트림 재압축](compress-stream-recompression.md) — 앞 단계 출력이 dedup 입력이다.
+- [Clean](clean.md) — shares `merge_duplicates`. Changing the equality rule changes both paths together.
+- [Compress images](compress-images.md), [Compress stream recompression](compress-stream-recompression.md) — the earlier stages' output is dedup's input.
 
 ## Known holes / open
 **None.**
