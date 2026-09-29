@@ -17,6 +17,7 @@ pub struct CleanStats {
 ///
 /// Performs the following operations:
 /// 1. Removes duplicate objects (equal values, streams without `/Length`), rewriting references
+///    to the kept object at generation 0
 /// 2. Removes null/empty objects
 /// 3. Compacts object numbers sequentially to eliminate gaps
 ///
@@ -112,10 +113,12 @@ fn find_duplicates(
 
 /// Merge duplicates ([`find_duplicates`]) among the objects `select` accepts:
 /// remove each duplicate and point its references at the object it
-/// duplicates, repeating until none remain, since a merge can make objects
-/// that referenced the merged ones equal. Returns the number removed.
+/// duplicates, at that object's generation in `generations` (0 when absent),
+/// repeating until none remain, since a merge can make objects that
+/// referenced the merged ones equal. Returns the number removed.
 pub(crate) fn merge_duplicates(
     objects: &mut Vec<(u32, PdfObject)>,
+    generations: &HashMap<u32, u16>,
     select: impl Fn(&PdfObject) -> bool,
 ) -> usize {
     let mut removed = 0;
@@ -127,7 +130,7 @@ pub(crate) fn merge_duplicates(
         removed += remap.len();
         objects.retain(|(obj_num, _)| !remap.contains_key(obj_num));
         for (_, obj) in objects.iter_mut() {
-            rewrite_references(obj, &remap);
+            rewrite_references(obj, &remap, Some(generations));
         }
     }
 }
@@ -135,40 +138,53 @@ pub(crate) fn merge_duplicates(
 /// Remove duplicate objects ([`merge_duplicates`]), keeping the first of each
 /// and rewriting references to it. Returns the number of duplicates removed.
 fn dedup_objects(objects: &mut Vec<(u32, PdfObject)>) -> usize {
-    merge_duplicates(objects, |_| true)
+    merge_duplicates(objects, &HashMap::new(), |_| true)
 }
 
 /// Recursively rewrite indirect references according to the remap table.
-fn rewrite_references(obj: &mut PdfObject, remap: &HashMap<u32, u32>) {
+/// With `generations`, a rewritten reference takes its new number's
+/// generation there (0 when absent); without, it keeps its generation.
+fn rewrite_references(
+    obj: &mut PdfObject,
+    remap: &HashMap<u32, u32>,
+    generations: Option<&HashMap<u32, u16>>,
+) {
     match obj {
         PdfObject::Reference(r) => {
             if let Some(&new_num) = remap.get(&r.obj_num) {
                 r.obj_num = new_num;
+                if let Some(generations) = generations {
+                    r.gen_num = crate::writer::generation_of(generations, new_num);
+                }
             }
         }
         PdfObject::Array(items) => {
             for item in items.iter_mut() {
-                rewrite_references(item, remap);
+                rewrite_references(item, remap, generations);
             }
         }
         PdfObject::Dict(dict) => {
-            rewrite_references_in_dict(dict, remap);
+            rewrite_references_in_dict(dict, remap, generations);
         }
         PdfObject::Stream { dict, .. } => {
-            rewrite_references_in_dict(dict, remap);
+            rewrite_references_in_dict(dict, remap, generations);
         }
         _ => {}
     }
 }
 
 /// Rewrite references within a dictionary.
-fn rewrite_references_in_dict(dict: &mut PdfDict, remap: &HashMap<u32, u32>) {
+fn rewrite_references_in_dict(
+    dict: &mut PdfDict,
+    remap: &HashMap<u32, u32>,
+    generations: Option<&HashMap<u32, u16>>,
+) {
     // We need to collect keys first since we can't mutate while iterating
     let keys: Vec<Vec<u8>> = dict.keys().cloned().collect();
     for key in keys {
         if let Some(val) = dict.get(&key) {
             let mut val = val.clone();
-            rewrite_references(&mut val, remap);
+            rewrite_references(&mut val, remap, generations);
             dict.insert(key, val);
         }
     }
@@ -243,7 +259,7 @@ fn compact_object_numbers(objects: &mut Vec<(u32, PdfObject)>) {
 
     // Rewrite references
     for (_, obj) in objects.iter_mut() {
-        rewrite_references(obj, &remap);
+        rewrite_references(obj, &remap, None);
     }
 }
 
@@ -399,7 +415,7 @@ mod tests {
             }),
         ]);
 
-        rewrite_references(&mut obj, &remap);
+        rewrite_references(&mut obj, &remap, None);
 
         if let PdfObject::Array(items) = &obj {
             if let PdfObject::Dict(d) = &items[0] {

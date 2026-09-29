@@ -19,11 +19,11 @@
 - 새 trailer는 `incremental_trailer`로 만든다 — 원본 trailer의 키를 옮긴다([증분 trailer](../invariant/incremental-trailer.md)).
 - 원본이 암호화되어 있으면 `doc`의 `SecurityState` 파일 키로 덧붙이는 객체를 `encrypt_object`한다(`/Encrypt` 객체는 복사도 비교도 하지 않는다). 키의 출처는 `doc` 하나다 — `DocumentModifier`는 `SecurityState`를 들지 않는다(#25, 메인테이너 판단). 인증되지 않은 암호화 문서로는 modifier를 만들 수 없다([문서 수정기](document-modifier.md)의 `from_document`가 거부한다). `incremental_save` 자신의 검사는 `doc`을 보므로, 같은 바이트를 인증 없이 다시 연 `doc`을 넘기면 걸린다.
   - **메인테이너 판단(2026-09-23, #26)**: 증분 저장은 암호화 입력을 지원하고 서명은 거부한다. 대안이었던 "둘 다 거부"와 "둘 다 지원(서명에 비밀번호 인자 추가)"이 함께 제시되었다.
-- `DocumentModifier`는 세대 번호를 버린다 — 바뀐 객체는 `N 0 obj`로 덧붙고, 암호화 키도 세대 0으로 유도한다. 원본에 세대가 0이 아닌 객체가 있으면 참조(`N g R`)와 어긋난다(추론). free 항목은 65535로 쓰므로 원본 세대에 기대지 않는다.
+- 덧붙이는 객체는 `PdfWriter`가 든 세대(원본 세대, 새 객체는 0)로 헤더·xref 항목을 쓰고 그 세대로 암호화 키를 유도한다(#72, [문서 수정기](document-modifier.md)). #72 전에는 바뀐 객체를 `N 0 obj`로 덧붙여, qpdf가 원본의 `N 1 R`을 이전 구간의 옛 객체로 읽었다 — 수정이 보이지 않았다(2026-09-29 측정). free 항목은 65535로 쓰므로 원본 세대에 기대지 않는다.
   - **메인테이너 판단(2026-09-24, #25)**: #25를 #72보다 먼저, 독립으로 한다. 처음(triage 1라운드)에는 "#72 먼저"였다 — free 항목에 원본 세대 + 1이 필요하다는 전제였다. 비교 기준을 저장 시점의 `doc`으로 정한 뒤(원본 세대는 `doc`의 xref가 안다), 그리고 65535 free 형식을 고른 뒤 그 전제가 없어져 다시 물었다.
 
 ## Code
-- `justpdf-core/src/writer/modify.rs` — `incremental_save`, `incremental_trailer`, `source_objects`, `DocumentModifier`, `test_incremental_save_keeps_encryption`, `test_incremental_save_reopens_with_intact_objects`, `test_incremental_save_appends_only_changed_objects`, `test_incremental_save_without_changes_returns_the_original`, `test_incremental_save_frees_removed_objects`, `test_incremental_save_keeps_an_object_that_does_not_resolve`, `test_incremental_save_keeps_object_streams_that_hold_unchanged_objects`, `test_incremental_save_deletes_a_page_of_a_packed_document`, `test_incremental_save_of_an_encrypted_document`, `test_incremental_save_appends_an_object_edited_in_place`, `test_incremental_save_after_xref_stream_section`
+- `justpdf-core/src/writer/modify.rs` — `incremental_save`, `incremental_trailer`, `source_objects`, `DocumentModifier`, `test_incremental_save_keeps_encryption`, `test_incremental_save_reopens_with_intact_objects`, `test_incremental_save_appends_only_changed_objects`, `test_incremental_save_without_changes_returns_the_original`, `test_incremental_save_frees_removed_objects`, `test_incremental_save_keeps_an_object_that_does_not_resolve`, `test_incremental_save_keeps_object_streams_that_hold_unchanged_objects`, `test_incremental_save_deletes_a_page_of_a_packed_document`, `test_incremental_save_of_an_encrypted_document`, `test_incremental_save_appends_an_object_edited_in_place`, `test_incremental_save_after_xref_stream_section`, `test_incremental_save_keeps_a_source_generation`
 
 ## Reference behaviour
 MuPDF `pdf-write.c`(`dowriteobject`의 `pdf_xref_is_incremental` 필터, 증분 삭제의 `gen_list[num] = 65535`, 변경 없음 조기 반환). 비교 대상 조항: ISO 32000-2 §7.5.6(원문 대조는 ISO 32000-1:2008 §7.5.4·§7.5.6으로 했다).
@@ -32,6 +32,7 @@ MuPDF `pdf-write.c`(`dowriteobject`의 `pdf_xref_is_incremental` 필터, 증분 
 - [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — 스트림을 Display로 쓰는 사이트.
 - [증분 trailer](../invariant/incremental-trailer.md) — 쓰기 쪽 사이트 둘 중 하나.
 - [xref 항목 형식](../invariant/xref-entry-format.md) — 덧붙인 구간의 xref 테이블.
+- [원본 세대](../invariant/source-generation.md) — 덧붙이는 객체의 헤더·xref 항목·키.
 
 ## Blast radius
 - [xref](xref.md) — 덧붙인 구간을 읽는 쪽.
@@ -41,4 +42,3 @@ MuPDF `pdf-write.c`(`dowriteobject`의 `pdf_xref_is_incremental` 필터, 증분 
 
 ## Known holes / open
 - 제품 코드 호출자가 없다(`writer/mod.rs` 재수출뿐).
-- 세대 번호가 0이 아닌 객체(위). Tracked: #72

@@ -2139,7 +2139,8 @@ fn strip_non_essential(
 /// equal ([`merge_duplicates`]): keeps the first of each and rewrites
 /// references to it.
 fn dedup_streams(modifier: &mut DocumentModifier, stats: &mut CompressStats) {
-    stats.duplicates_removed = merge_duplicates(&mut modifier.writer().objects, |obj| {
+    let writer = modifier.writer();
+    stats.duplicates_removed = merge_duplicates(&mut writer.objects, &writer.generations, |obj| {
         matches!(obj, PdfObject::Stream { .. })
     });
 }
@@ -2677,6 +2678,41 @@ mod tests {
         dict.insert(b"Width".to_vec(), PdfObject::Integer(width));
         dict.insert(b"Height".to_vec(), PdfObject::Integer(height));
         dict
+    }
+
+    /// A duplicate merged into a kept stream of generation 1 → its references
+    /// read `N 1 R`, the generation the kept stream is written at.
+    #[test]
+    fn test_dedup_points_references_at_the_generation_of_the_kept_stream() {
+        let doc = PdfDocument::from_bytes(create_text_pdf(1)).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let stream = PdfObject::Stream {
+            dict: image_dict(4, 4),
+            data: vec![7u8; 16],
+        };
+        let kept = modifier.add_object(stream.clone()).obj_num;
+        modifier.writer().generations.insert(kept, 1);
+        let duplicate = modifier.add_object(stream);
+        let holder = modifier.add_object(PdfObject::Array(vec![
+            PdfObject::Reference(IndirectRef {
+                obj_num: kept,
+                gen_num: 1,
+            }),
+            PdfObject::Reference(duplicate),
+        ]));
+
+        let mut stats = CompressStats::default();
+        dedup_streams(&mut modifier, &mut stats);
+
+        assert_eq!(stats.duplicates_removed, 1);
+        let kept_ref = PdfObject::Reference(IndirectRef {
+            obj_num: kept,
+            gen_num: 1,
+        });
+        assert_eq!(
+            modifier.find_object_pub(holder.obj_num),
+            Some(&PdfObject::Array(vec![kept_ref.clone(), kept_ref]))
+        );
     }
 
     /// C-T2: Two streams with equal dictionaries and data → one, references merged.

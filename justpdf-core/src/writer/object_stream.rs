@@ -206,6 +206,28 @@ pub fn write_xref_stream(
     info_ref: Option<&crate::object::IndirectRef>,
     xref_stm_obj_num: u32,
 ) -> Result<()> {
+    write_xref_stream_with_generations(
+        buf,
+        offsets,
+        &std::collections::HashMap::new(),
+        compressed,
+        catalog_ref,
+        info_ref,
+        xref_stm_obj_num,
+    )
+}
+
+/// [`write_xref_stream`] with each in-use entry at its generation number in
+/// `generations` (0 when absent).
+pub(crate) fn write_xref_stream_with_generations(
+    buf: &mut Vec<u8>,
+    offsets: &[(u32, usize)],
+    generations: &std::collections::HashMap<u32, u16>,
+    compressed: &[CompressedObjInfo],
+    catalog_ref: &crate::object::IndirectRef,
+    info_ref: Option<&crate::object::IndirectRef>,
+    xref_stm_obj_num: u32,
+) -> Result<()> {
     let max_obj_num = offsets
         .iter()
         .map(|(n, _)| *n)
@@ -238,7 +260,8 @@ pub fn write_xref_stream(
     let w2 = bytes_needed(max_offset.max(max_objstm_num) as u64);
     let w1 = 1u8;
     let max_index = compressed.iter().map(|c| c.index).max().unwrap_or(0);
-    let w3 = bytes_needed(max_index.max(255) as u64);
+    let max_gen = generations.values().copied().max().unwrap_or(0);
+    let w3 = bytes_needed(max_index.max(255).max(u32::from(max_gen)) as u64);
 
     // Build stream data
     let entry_size = (w1 + w2 + w3) as usize;
@@ -251,10 +274,11 @@ pub fn write_xref_stream(
             write_field(&mut stream_data, 0, w2);
             write_field(&mut stream_data, 255, w3);
         } else if let Some(&off) = offset_map.get(&obj_num) {
-            // In-use entry: type=1, offset, gen=0
+            // In-use entry: type=1, offset, generation
             stream_data.push(1u8);
             write_field(&mut stream_data, off as u64, w2);
-            write_field(&mut stream_data, 0, w3);
+            let gen_num = crate::writer::generation_of(generations, obj_num);
+            write_field(&mut stream_data, u64::from(gen_num), w3);
         } else if let Some(&(objstm_num, index)) = compressed_map.get(&obj_num) {
             // Compressed entry: type=2, objstm number, index within stream
             stream_data.push(2u8);

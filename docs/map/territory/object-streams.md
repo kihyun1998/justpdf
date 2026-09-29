@@ -22,7 +22,7 @@
 ISO 32000-1:2008 §7.5.7 원문(Adobe 무료 사본, 2026-09-27)과 대조한 것은 암호화 문장 "strings occurring anywhere in an object stream shall not be separately encrypted"뿐이다 — 읽기 쪽 복호화가 이를 따른다([객체 복호화](object-decryption.md)). 나머지(`/First`, 인덱스 쌍, 적격 규칙)와 ISO 32000-2 §7.5.7은 대조하지 않았다.
 
 ## Cross-cutting invariants
-**None.** `/First` 규칙은 두 사이트가 공유하지만 한 포맷에 속한 설계 규칙이므로 여기 Design model에 둔다.
+- [원본 세대](../invariant/source-generation.md) — object stream 안 객체는 세대 0이어야 한다(ISO 32000-1 §7.5.7). `/First` 규칙은 두 사이트가 공유하지만 한 포맷에 속한 설계 규칙이므로 여기 Design model에 둔다.
 
 ## Blast radius
 - [xref](xref.md) — 타입 2 엔트리의 출처. xref 스트림 쓰기(`write_xref_stream`)와 짝을 이룬다.
@@ -32,4 +32,5 @@ ISO 32000-1:2008 §7.5.7 원문(Adobe 무료 사본, 2026-09-27)과 대조한 �
 - [문서 접근](document-access.md) — 디코드된 스트림 캐시를 소유한다.
 
 ## Known holes / open
+- 공개 `pack_object_streams`는 세대 정보 없이 번호·객체만 받아, 원본 세대 ≠ 0 객체도 object stream에 넣는다 — 그 객체를 가리키는 `N g R`이 어긋난다([원본 세대](../invariant/source-generation.md)). Tracked: #106
 - 패킹은 구현돼 있지만 압축 파이프라인에서 꺼져 있다(CHANGELOG 0.1.3 항목과 설계 문서가 이 상태를 적고 있다).
