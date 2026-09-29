@@ -4,7 +4,7 @@ use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
 use justpdf_core::font::{FontInfo, ToUnicodeCMap, parse_font_info};
 use justpdf_core::image;
-use justpdf_core::object::{PdfDict, PdfObject};
+use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::ocg::{self, OCConfig};
 use justpdf_core::page::PageInfo;
 use justpdf_core::PdfDocument;
@@ -42,6 +42,9 @@ pub struct RenderInterpreter<'a> {
     path_builder: Option<PathBuilder>,
     /// Form XObject recursion depth limit.
     xobject_depth: u32,
+    /// Content streams being executed (Form XObjects, tiling patterns, soft
+    /// mask forms), outermost first.
+    running_streams: Vec<IndirectRef>,
     /// Cache for pre-built glyph paths.
     glyph_cache: GlyphCache,
     /// Optional content configuration for layer visibility.
@@ -72,6 +75,7 @@ impl<'a> RenderInterpreter<'a> {
             page_transform,
             path_builder: None,
             xobject_depth: 0,
+            running_streams: Vec::new(),
             glyph_cache: GlyphCache::with_default_capacity(),
             oc_config,
             oc_skip_depth: 0,
@@ -805,24 +809,29 @@ impl<'a> RenderInterpreter<'a> {
             }
             "G" => {
                 self.state.stroke_cs = ColorSpace::DeviceGray;
+                self.state.stroke_pattern_name = None;
                 self.state.stroke_color = PdfColor::gray(f(operands, 0));
             }
             "g" => {
                 self.state.fill_cs = ColorSpace::DeviceGray;
+                self.state.fill_pattern_name = None;
                 self.state.fill_color = PdfColor::gray(f(operands, 0));
             }
             "RG" => {
                 self.state.stroke_cs = ColorSpace::DeviceRGB;
+                self.state.stroke_pattern_name = None;
                 self.state.stroke_color =
                     PdfColor::rgb(f(operands, 0), f(operands, 1), f(operands, 2));
             }
             "rg" => {
                 self.state.fill_cs = ColorSpace::DeviceRGB;
+                self.state.fill_pattern_name = None;
                 self.state.fill_color =
                     PdfColor::rgb(f(operands, 0), f(operands, 1), f(operands, 2));
             }
             "K" => {
                 self.state.stroke_cs = ColorSpace::DeviceCMYK;
+                self.state.stroke_pattern_name = None;
                 self.state.stroke_color = PdfColor::cmyk(
                     f(operands, 0),
                     f(operands, 1),
@@ -832,6 +841,7 @@ impl<'a> RenderInterpreter<'a> {
             }
             "k" => {
                 self.state.fill_cs = ColorSpace::DeviceCMYK;
+                self.state.fill_pattern_name = None;
                 self.state.fill_color = PdfColor::cmyk(
                     f(operands, 0),
                     f(operands, 1),
@@ -1313,6 +1323,26 @@ impl<'a> RenderInterpreter<'a> {
 
     // --- XObject rendering ---
 
+    /// Runs `f` with `stream` recorded as a content stream being executed.
+    /// Returns `None` without running `f` when `stream` is already being
+    /// executed. A direct (`None`) stream is always run.
+    fn with_running_stream<T>(
+        &mut self,
+        stream: Option<&IndirectRef>,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> Option<T> {
+        let Some(stream) = stream else {
+            return Some(f(self));
+        };
+        if self.running_streams.contains(stream) {
+            return None;
+        }
+        self.running_streams.push(stream.clone());
+        let out = f(self);
+        self.running_streams.pop();
+        Some(out)
+    }
+
     fn do_xobject(&mut self, name: &[u8], page: &PageInfo) -> Result<()> {
         let xobj = self.resolve_xobject(name, page)?;
         let xobj = match xobj {
@@ -1324,12 +1354,18 @@ impl<'a> RenderInterpreter<'a> {
             XObjectData::Image { dict, data } => {
                 let _ = self.render_image(&dict, &data); // skip broken images
             }
-            XObjectData::Form { dict, data } => {
+            XObjectData::Form {
+                obj_ref,
+                dict,
+                data,
+            } => {
                 if self.xobject_depth > 10 {
-                    return Ok(()); // prevent infinite recursion
+                    return Ok(()); // nested too deep
                 }
                 self.xobject_depth += 1;
-                let _ = self.render_form_xobject(&dict, &data, page);
+                self.with_running_stream(Some(&obj_ref), |this| {
+                    let _ = this.render_form_xobject(&dict, &data, page);
+                });
                 self.xobject_depth -= 1;
             }
         }
@@ -1392,6 +1428,7 @@ impl<'a> RenderInterpreter<'a> {
                     b"Form" => {
                         match self.doc.decode_stream(&dict, &data) {
                             Ok(decoded) => Ok(Some(XObjectData::Form {
+                                obj_ref: xobj_ref,
                                 dict,
                                 data: decoded,
                             })),
@@ -2039,28 +2076,42 @@ impl<'a> RenderInterpreter<'a> {
         };
 
         // /G: form XObject reference for the mask
-        let form_obj = match smask_dict.get(b"G") {
+        let (form_ref, form_obj) = match smask_dict.get(b"G") {
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
                 match self.doc.resolve(&r) {
-                    Ok(obj) => obj,
+                    Ok(obj) => (Some(r), obj),
                     Err(_) => return Ok(()),
                 }
             }
-            Some(other) => other.clone(),
+            Some(other) => (None, other.clone()),
             None => return Ok(()),
         };
 
         let (form_dict, form_data) = match form_obj {
-            PdfObject::Stream { dict, data } => {
-                match self.doc.decode_stream(&dict, &data) {
-                    Ok(decoded) => (dict, decoded),
-                    Err(_) => return Ok(()),
-                }
-            }
+            PdfObject::Stream { dict, data } => (dict, data),
             _ => return Ok(()),
         };
 
+        self.with_running_stream(form_ref.as_ref(), |this| {
+            let form_data = match this.doc.decode_stream(&form_dict, &form_data) {
+                Ok(decoded) => decoded,
+                Err(_) => return Ok(()),
+            };
+            this.render_soft_mask(subtype, &form_dict, &form_data, page)
+        })
+        .unwrap_or(Ok(()))
+    }
+
+    /// Render a soft mask form into a mask and install it as the current
+    /// soft mask.
+    fn render_soft_mask(
+        &mut self,
+        subtype: SoftMaskSubtype,
+        form_dict: &PdfDict,
+        form_data: &[u8],
+        page: &PageInfo,
+    ) -> Result<()> {
         let w = self.device.pixmap.width();
         let h = self.device.pixmap.height();
 
@@ -2100,7 +2151,7 @@ impl<'a> RenderInterpreter<'a> {
         }
 
         // Render the mask form
-        if let Ok(ops) = parse_content_stream(&form_data) {
+        if let Ok(ops) = parse_content_stream(form_data) {
             let _ = self.execute_ops(&ops, page);
         }
 
@@ -2154,8 +2205,13 @@ impl<'a> RenderInterpreter<'a> {
 
     // --- Pattern rendering ---
 
-    /// Resolve a pattern from page resources.
-    fn resolve_pattern(&mut self, name: &[u8], page: &PageInfo) -> Result<Option<PdfObject>> {
+    /// Resolve a pattern from page resources, with its reference when it is
+    /// an indirect object.
+    fn resolve_pattern(
+        &mut self,
+        name: &[u8],
+        page: &PageInfo,
+    ) -> Result<Option<(Option<IndirectRef>, PdfObject)>> {
         let resources_obj = match &page.resources_ref {
             Some(obj) => self.resolve_object(obj)?,
             None => return Ok(None),
@@ -2183,9 +2239,10 @@ impl<'a> RenderInterpreter<'a> {
         match pattern_dict.get(name) {
             Some(PdfObject::Reference(r)) => {
                 let r = r.clone();
-                Ok(Some(self.doc.resolve(&r)?))
+                let obj = self.doc.resolve(&r)?;
+                Ok(Some((Some(r), obj)))
             }
-            Some(other) => Ok(Some(other.clone())),
+            Some(other) => Ok(Some((None, other.clone()))),
             None => Ok(None),
         }
     }
@@ -2264,8 +2321,9 @@ impl<'a> RenderInterpreter<'a> {
         self.state_stack.push(self.state.clone());
         let saved_page_transform = self.page_transform;
 
-        // Set up state for rendering into the cell
+        // Set up state for rendering into the cell, without the soft mask
         self.state.ctm = Matrix::identity();
+        self.state.soft_mask = None;
         self.page_transform = cell_transform;
 
         // Render the pattern content stream
@@ -2342,8 +2400,8 @@ impl<'a> RenderInterpreter<'a> {
         name: &[u8],
         page: &PageInfo,
     ) -> Result<Option<Pixmap>> {
-        let pattern_obj = match self.resolve_pattern(name, page)? {
-            Some(obj) => obj,
+        let (pattern_ref, pattern_obj) = match self.resolve_pattern(name, page)? {
+            Some(found) => found,
             None => return Ok(None),
         };
 
@@ -2353,12 +2411,14 @@ impl<'a> RenderInterpreter<'a> {
                 match pattern_type {
                     1 => {
                         // Tiling pattern
-                        let decoded = match self.doc.decode_stream(dict, data) {
-                            Ok(d) => d,
-                            Err(_) => return Ok(None),
-                        };
-                        let dict = dict.clone();
-                        self.render_tiling_pattern(&dict, &decoded, page)
+                        self.with_running_stream(pattern_ref.as_ref(), |this| {
+                            let decoded = match this.doc.decode_stream(dict, data) {
+                                Ok(d) => d,
+                                Err(_) => return Ok(None),
+                            };
+                            this.render_tiling_pattern(dict, &decoded, page)
+                        })
+                        .unwrap_or(Ok(None))
                     }
                     2 => {
                         // Shading pattern: render shading into a temp pixmap
@@ -2460,8 +2520,15 @@ impl<'a> RenderInterpreter<'a> {
 }
 
 enum XObjectData {
-    Image { dict: PdfDict, data: Vec<u8> },
-    Form { dict: PdfDict, data: Vec<u8> },
+    Image {
+        dict: PdfDict,
+        data: Vec<u8>,
+    },
+    Form {
+        obj_ref: IndirectRef,
+        dict: PdfDict,
+        data: Vec<u8>,
+    },
 }
 
 /// Convert decoded image data to RGBA bytes.
