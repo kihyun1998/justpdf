@@ -28,7 +28,7 @@ pub fn set_outlines(modifier: &mut DocumentModifier, items: &[OutlineItem]) -> R
     modifier.set_object(outlines_obj_num, PdfObject::Dict(outlines_dict));
 
     // Update catalog to reference outlines
-    let catalog_ref = modifier.catalog_ref().clone();
+    let catalog_ref = modifier.catalog_ref();
     if let Some(catalog_obj) = modifier.find_object_pub(catalog_ref.obj_num).cloned() {
         if let PdfObject::Dict(mut catalog_dict) = catalog_obj {
             catalog_dict.insert(
@@ -134,7 +134,7 @@ fn build_outline_children(
 
 /// Remove all outlines from the document.
 pub fn remove_outlines(modifier: &mut DocumentModifier) -> Result<()> {
-    let catalog_ref = modifier.catalog_ref().clone();
+    let catalog_ref = modifier.catalog_ref();
     if let Some(catalog_obj) = modifier.find_object_pub(catalog_ref.obj_num).cloned() {
         if let PdfObject::Dict(mut catalog_dict) = catalog_obj {
             catalog_dict.remove(b"Outlines");

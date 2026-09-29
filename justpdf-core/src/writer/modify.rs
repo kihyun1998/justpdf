@@ -16,8 +16,10 @@ use crate::writer::PdfWriter;
 /// Loads all objects from a PdfDocument, allows modification, then saves.
 pub struct DocumentModifier {
     writer: PdfWriter,
-    catalog_ref: IndirectRef,
-    info_ref: Option<IndirectRef>,
+    /// Object number of the catalog.
+    catalog_num: u32,
+    /// Object number of the document info dictionary, when there is one.
+    info_num: Option<u32>,
     /// First element of the source trailer's `/ID`, empty when absent.
     source_file_id: Vec<u8>,
     /// The source's security state and `/Encrypt` dictionary, when the source
@@ -51,20 +53,8 @@ impl DocumentModifier {
         let mut writer = PdfWriter::new();
         writer.version = doc.version;
 
-        // Find catalog reference
-        let catalog_ref = doc
-            .catalog_ref()
-            .cloned()
-            .unwrap_or(IndirectRef {
-                obj_num: 1,
-                gen_num: 0,
-            });
-
-        // Find info reference from trailer
-        let info_ref = doc
-            .trailer()
-            .get_ref(b"Info")
-            .cloned();
+        let catalog_num = doc.catalog_ref().map_or(1, |r| r.obj_num);
+        let info_num = doc.trailer().get_ref(b"Info").map(|r| r.obj_num);
 
         // Copy all objects; new numbers start above every number the source uses
         let max_obj = doc.object_refs().map(|r| r.obj_num).max().unwrap_or(0);
@@ -78,8 +68,8 @@ impl DocumentModifier {
 
         Ok(Self {
             writer,
-            catalog_ref,
-            info_ref,
+            catalog_num,
+            info_num,
             source_file_id: doc.extract_file_id(),
             source_encryption: doc
                 .security_state()
@@ -93,9 +83,10 @@ impl DocumentModifier {
         &mut self.writer
     }
 
-    /// Get the catalog reference.
-    pub fn catalog_ref(&self) -> &IndirectRef {
-        &self.catalog_ref
+    /// Reference to the catalog at the generation `build` writes it at — the
+    /// trailer's `/Root`.
+    pub fn catalog_ref(&self) -> IndirectRef {
+        self.writer.reference_to(self.catalog_num)
     }
 
     /// Replace an object at a given object number.
@@ -193,15 +184,13 @@ impl DocumentModifier {
 
     /// Set or update a metadata field in the Info dictionary.
     pub fn set_info(&mut self, key: &[u8], value: &str) {
-        let info_num = if let Some(ref r) = self.info_ref {
-            r.obj_num
-        } else {
-            let num = self.writer.alloc_object_num();
-            self.info_ref = Some(IndirectRef {
-                obj_num: num,
-                gen_num: 0,
-            });
-            num
+        let info_num = match self.info_num {
+            Some(num) => num,
+            None => {
+                let num = self.writer.alloc_object_num();
+                self.info_num = Some(num);
+                num
+            }
         };
 
         // Get or create info dict
@@ -226,9 +215,9 @@ impl DocumentModifier {
         let mut reachable = std::collections::HashSet::new();
 
         // Mark catalog and info as roots
-        reachable.insert(self.catalog_ref.obj_num);
-        if let Some(ref info) = self.info_ref {
-            reachable.insert(info.obj_num);
+        reachable.insert(self.catalog_num);
+        if let Some(info_num) = self.info_num {
+            reachable.insert(info_num);
         }
 
         // Iteratively mark all reachable objects
@@ -281,8 +270,8 @@ impl DocumentModifier {
             Encryption::None | Encryption::Source => {
                 return crate::writer::serialize::serialize_writer(
                     &self.writer,
-                    self.catalog_ref.obj_num,
-                    self.info_num(),
+                    self.catalog_num,
+                    self.info_num,
                 );
             }
         };
@@ -295,11 +284,10 @@ impl DocumentModifier {
                 crate::crypto::random_file_id()?,
             )
         };
-        let info_num = self.info_num();
         crate::writer::serialize::serialize_writer_encrypted(
             &mut self.writer,
-            self.catalog_ref.obj_num,
-            info_num,
+            self.catalog_num,
+            self.info_num,
             &config,
             &permanent_id,
             &changing_id,
@@ -321,8 +309,8 @@ impl DocumentModifier {
         state.encrypt_obj_num = Some(encrypt_ref.obj_num);
         crate::writer::serialize::serialize_writer_with_state(
             &self.writer,
-            self.catalog_ref.obj_num,
-            self.info_num(),
+            self.catalog_num,
+            self.info_num,
             &encrypt_ref,
             &state,
             &id_array,
@@ -350,14 +338,9 @@ impl DocumentModifier {
         crate::writer::serialize::serialize_writer_with_xref_stream(
             &self.writer,
             compressed,
-            self.catalog_ref.obj_num,
-            self.info_num(),
+            self.catalog_num,
+            self.info_num,
         )
-    }
-
-    /// Object number of the document info dictionary, when there is one.
-    fn info_num(&self) -> Option<u32> {
-        self.info_ref.as_ref().map(|r| r.obj_num)
     }
 
     /// Save to file.
@@ -371,7 +354,7 @@ impl DocumentModifier {
 
     fn find_pages_ref(&self) -> Result<IndirectRef> {
         // Look up Catalog → /Pages
-        if let Some(PdfObject::Dict(catalog)) = self.find_object(self.catalog_ref.obj_num) {
+        if let Some(PdfObject::Dict(catalog)) = self.find_object(self.catalog_num) {
             if let Some(PdfObject::Reference(r)) = catalog.get(b"Pages") {
                 return Ok(r.clone());
             }
@@ -576,9 +559,9 @@ pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result
     let trailer = incremental_trailer(
         &previous_trailer,
         max_obj_num + 1,
-        &modifier.writer.reference_to(modifier.catalog_ref.obj_num),
+        &modifier.catalog_ref(),
         modifier
-            .info_num()
+            .info_num
             .map(|n| modifier.writer.reference_to(n))
             .as_ref(),
         old_startxref,
@@ -997,7 +980,7 @@ mod tests {
         let source_nums: Vec<u32> = doc.object_refs().map(|r| r.obj_num).collect();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.set_info(b"Title", "Updated Title");
-        let info_num = modifier.info_ref.as_ref().unwrap().obj_num;
+        let info_num = modifier.info_num.unwrap();
 
         let result = incremental_save(&doc, modifier).unwrap();
         let reopened = PdfDocument::from_bytes(result).unwrap();
@@ -1116,7 +1099,7 @@ mod tests {
     fn create_packed_pdf() -> Vec<u8> {
         let doc = PdfDocument::from_bytes(create_test_pdf("Packed", 2)).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
-        let catalog_num = modifier.catalog_ref.obj_num;
+        let catalog_num = modifier.catalog_num;
         let pages_num = modifier.find_pages_ref().unwrap().obj_num;
         let packed = crate::writer::object_stream::pack_object_streams(
             &modifier.writer.objects,
@@ -2117,6 +2100,41 @@ mod tests {
         let doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
         assert_eq!(doc.catalog_ref().unwrap().gen_num, 1);
         assert_root_is_a_catalog(bytes);
+    }
+
+    #[test]
+    fn test_catalog_ref_is_the_root_the_modifier_writes() {
+        let doc = PdfDocument::from_bytes(with_catalog_at_generation_one()).unwrap();
+        let catalog_num = doc.catalog_ref().unwrap().obj_num;
+        let catalog = doc.resolve(doc.catalog_ref().unwrap()).unwrap();
+        let written_root = |modifier: DocumentModifier| {
+            let bytes = modifier.build().unwrap();
+            PdfDocument::from_bytes(bytes)
+                .unwrap()
+                .catalog_ref()
+                .unwrap()
+                .clone()
+        };
+
+        let held = DocumentModifier::from_document(&doc).unwrap();
+        let reported = held.catalog_ref();
+        assert_eq!(
+            reported,
+            IndirectRef {
+                obj_num: catalog_num,
+                gen_num: 1
+            }
+        );
+        assert_eq!(reported, written_root(held));
+
+        let mut set_again = DocumentModifier::from_document(&doc).unwrap();
+        set_again
+            .writer()
+            .objects
+            .retain(|(n, _)| *n != catalog_num);
+        set_again.set_object(catalog_num, catalog);
+        let reported = set_again.catalog_ref();
+        assert_eq!(reported, written_root(set_again));
     }
 
     #[test]
