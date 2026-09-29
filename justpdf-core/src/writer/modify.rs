@@ -40,7 +40,9 @@ enum Encryption {
 impl DocumentModifier {
     /// Create a modifier from an existing PdfDocument.
     /// Copies all objects from the document into the writer, except the
-    /// trailer's `/Encrypt` dictionary. An encrypted document must be
+    /// trailer's `/Encrypt` dictionary; each keeps its generation number, which
+    /// `build`, `build_with_xref_stream` and `incremental_save` write it at.
+    /// Objects added later are generation 0. An encrypted document must be
     /// authenticated first (`JustPdfError::EncryptedDocument` otherwise).
     pub fn from_document(doc: &PdfDocument) -> Result<Self> {
         if doc.is_encrypted() && !doc.is_authenticated() {
@@ -67,6 +69,11 @@ impl DocumentModifier {
         // Copy all objects; new numbers start above every number the source uses
         let max_obj = doc.object_refs().map(|r| r.obj_num).max().unwrap_or(0);
         writer.objects.extend(source_objects(doc));
+        writer.generations = doc
+            .object_refs()
+            .filter(|r| r.gen_num != 0)
+            .map(|r| (r.obj_num, r.gen_num))
+            .collect();
         writer.next_obj_num = max_obj + 1;
 
         Ok(Self {
@@ -272,9 +279,8 @@ impl DocumentModifier {
                 return self.build_with_source_encryption();
             }
             Encryption::None | Encryption::Source => {
-                return serialize_pdf(
-                    &self.writer.objects,
-                    self.writer.version,
+                return crate::writer::serialize::serialize_writer(
+                    &self.writer,
                     &self.catalog_ref,
                     self.info_ref.as_ref(),
                 );
@@ -312,9 +318,8 @@ impl DocumentModifier {
         ];
         let encrypt_ref = self.writer.add_object(PdfObject::Dict(encrypt_dict));
         state.encrypt_obj_num = Some(encrypt_ref.obj_num);
-        crate::writer::serialize::serialize_pdf_encrypted(
-            &self.writer.objects,
-            self.writer.version,
+        crate::writer::serialize::serialize_writer_with_state(
+            &self.writer,
             &self.catalog_ref,
             self.info_ref.as_ref(),
             &encrypt_ref,
@@ -341,10 +346,9 @@ impl DocumentModifier {
                 detail: "encryption is not supported when writing xref streams".into(),
             });
         }
-        crate::writer::serialize::serialize_pdf_with_xref_stream(
-            &self.writer.objects,
+        crate::writer::serialize::serialize_writer_with_xref_stream(
+            &self.writer,
             compressed,
-            self.writer.version,
             &self.catalog_ref,
             self.info_ref.as_ref(),
         )
@@ -517,18 +521,19 @@ pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result
     );
     let mut offsets: Vec<(u32, usize)> = Vec::new();
     for (obj_num, obj) in changed {
+        let gen_num = modifier.writer.generation(*obj_num);
         let write_obj = match security {
             Some(state) => crate::crypto::encrypt_object_for_writing(
                 obj,
                 state,
                 *obj_num,
-                0,
+                gen_num,
                 Some(*obj_num) == metadata_num,
             )?,
             None => obj.clone(),
         };
         offsets.push((*obj_num, buf.len()));
-        write!(buf, "{} 0 obj\n", obj_num)?;
+        write!(buf, "{} {} obj\n", obj_num, gen_num)?;
         crate::writer::serialize::serialize_object(&mut buf, &write_obj)?;
         write!(buf, "\nendobj\n")?;
     }
@@ -544,7 +549,12 @@ pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result
     for (obj_num, offset) in &entries {
         write!(buf, "{} 1\n", obj_num)?;
         match offset {
-            Some(offset) => writeln!(buf, "{:010} {:05} n ", offset, 0)?,
+            Some(offset) => writeln!(
+                buf,
+                "{:010} {:05} n ",
+                offset,
+                modifier.writer.generation(*obj_num)
+            )?,
             None => writeln!(buf, "{:010} {:05} f ", 0, 65535)?,
         }
     }
@@ -1815,5 +1825,239 @@ mod tests {
             info_title(&doc),
             Some(PdfObject::String(b"Incremental title".to_vec()))
         );
+    }
+
+    /// `source` with an update section that redefines its `/Info` dictionary at
+    /// generation `gen_num` as `<< /Title (Generation one) >>`, the trailer's
+    /// `/Info` reading `N gen_num R`. Encrypted with the source's file key when
+    /// `password` is given.
+    fn with_info_at_generation(source: Vec<u8>, password: Option<&[u8]>, gen_num: u16) -> Vec<u8> {
+        use std::io::Write;
+        let mut doc = PdfDocument::from_bytes(source.clone()).unwrap();
+        if let Some(password) = password {
+            doc.authenticate(password).unwrap();
+        }
+        let info_num = doc.trailer().get_ref(b"Info").unwrap().obj_num;
+        let mut dict = PdfDict::new();
+        dict.insert(
+            b"Title".to_vec(),
+            PdfObject::String(b"Generation one".to_vec()),
+        );
+        let info = match doc.security_state() {
+            Some(state) => crate::crypto::encrypt_object_for_writing(
+                &PdfObject::Dict(dict),
+                state,
+                info_num,
+                gen_num,
+                false,
+            )
+            .unwrap(),
+            None => PdfObject::Dict(dict),
+        };
+
+        let mut buf = source.clone();
+        let info_offset = buf.len();
+        write!(buf, "{info_num} {gen_num} obj\n").unwrap();
+        crate::writer::serialize::serialize_object(&mut buf, &info).unwrap();
+        write!(buf, "\nendobj\n").unwrap();
+        let xref_offset = buf.len();
+        write!(
+            buf,
+            "xref\n{info_num} 1\n{info_offset:010} {gen_num:05} n \r\ntrailer\n"
+        )
+        .unwrap();
+        let trailer = incremental_trailer(
+            doc.trailer(),
+            info_num + 1,
+            doc.catalog_ref().unwrap(),
+            Some(&IndirectRef {
+                obj_num: info_num,
+                gen_num,
+            }),
+            crate::xref::find_startxref(&source).unwrap(),
+        );
+        crate::writer::serialize::serialize_dict(&mut buf, &trailer).unwrap();
+        write!(buf, "\nstartxref\n{xref_offset}\n%%EOF\n").unwrap();
+        buf
+    }
+
+    /// Assert that `bytes` keep the `/Info` of `with_info_at_generation` at
+    /// generation `gen_num` — trailer reference, object header and xref entry —
+    /// and that it reads `title` once opened with `password`.
+    fn assert_info_at_generation(
+        bytes: Vec<u8>,
+        password: Option<&[u8]>,
+        gen_num: u16,
+        title: &[u8],
+    ) {
+        let mut doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
+        if let Some(password) = password {
+            doc.authenticate(password).unwrap();
+        }
+        let info = doc.trailer().get_ref(b"Info").unwrap().clone();
+        assert_eq!(info.gen_num, gen_num, "trailer /Info");
+        let header = format!("\n{} {gen_num} obj", info.obj_num);
+        assert!(
+            bytes.windows(header.len()).any(|w| w == header.as_bytes()),
+            "no `{} {gen_num} obj` header",
+            info.obj_num
+        );
+        assert!(
+            matches!(
+                doc.xref.get(info.obj_num),
+                Some(crate::xref::XrefEntry::InUse { gen_num: g, .. }) if *g == gen_num
+            ),
+            "xref entry {:?}",
+            doc.xref.get(info.obj_num)
+        );
+        assert_all_objects_resolve(&doc);
+        assert_eq!(info_title(&doc), Some(PdfObject::String(title.to_vec())));
+    }
+
+    /// `create_plain_pdf` with its `/Info` at generation 1, plain or encrypted
+    /// with user password `user`.
+    fn generation_one_sources() -> Vec<(Vec<u8>, Option<&'static [u8]>)> {
+        use crate::crypto::EncryptionMethod;
+        let mut sources = vec![(
+            with_info_at_generation(create_plain_pdf(None), None, 1),
+            None,
+        )];
+        for method in [EncryptionMethod::RC4_128, EncryptionMethod::AES128] {
+            let encrypted = encrypt_with_modifier(create_plain_pdf(None), method);
+            let user: &'static [u8] = b"user";
+            sources.push((
+                with_info_at_generation(encrypted, Some(user), 1),
+                Some(user),
+            ));
+        }
+        sources
+    }
+
+    fn open(bytes: Vec<u8>, password: Option<&[u8]>) -> PdfDocument {
+        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        if let Some(password) = password {
+            doc.authenticate(password).unwrap();
+        }
+        doc
+    }
+
+    #[test]
+    fn test_generation_one_source_reads_its_info() {
+        for (source, password) in generation_one_sources() {
+            assert_info_at_generation(source, password, 1, b"Generation one");
+        }
+    }
+
+    #[test]
+    fn test_build_keeps_a_source_generation() {
+        for (source, password) in generation_one_sources() {
+            let doc = open(source, password);
+            let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+            modifier.preserve_encryption();
+            assert_info_at_generation(modifier.build().unwrap(), password, 1, b"Generation one");
+        }
+    }
+
+    #[test]
+    fn test_build_keeps_the_generation_of_a_replaced_object() {
+        let (source, _) = generation_one_sources().remove(0);
+        let doc = open(source, None);
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.set_info(b"Title", "Replaced");
+        assert_info_at_generation(modifier.build().unwrap(), None, 1, b"Replaced");
+    }
+
+    #[test]
+    fn test_build_with_encryption_keeps_a_source_generation() {
+        use crate::crypto::EncryptionMethod;
+        for method in [EncryptionMethod::RC4_128, EncryptionMethod::AES128] {
+            let (source, _) = generation_one_sources().remove(0);
+            let doc = open(source, None);
+            let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+            modifier.set_encryption(encryption_config(method));
+            assert_info_at_generation(
+                modifier.build().unwrap(),
+                Some(b"user"),
+                1,
+                b"Generation one",
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_with_xref_stream_keeps_a_source_generation() {
+        let (source, _) = generation_one_sources().remove(0);
+        let doc = open(source, None);
+        let modifier = DocumentModifier::from_document(&doc).unwrap();
+        assert_info_at_generation(
+            modifier.build_with_xref_stream(&[]).unwrap(),
+            None,
+            1,
+            b"Generation one",
+        );
+    }
+
+    #[test]
+    fn test_build_with_xref_stream_keeps_a_generation_wider_than_a_byte() {
+        let source = with_info_at_generation(create_plain_pdf(None), None, 300);
+        assert_info_at_generation(source.clone(), None, 300, b"Generation one");
+        let doc = open(source, None);
+        let modifier = DocumentModifier::from_document(&doc).unwrap();
+        assert_info_at_generation(
+            modifier.build_with_xref_stream(&[]).unwrap(),
+            None,
+            300,
+            b"Generation one",
+        );
+    }
+
+    #[test]
+    fn test_incremental_save_keeps_a_source_generation() {
+        for (source, password) in generation_one_sources() {
+            let doc = open(source.clone(), password);
+            let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+            modifier.set_info(b"Title", "Incremental");
+            let bytes = incremental_save(&doc, modifier).unwrap();
+            let appended = &bytes[source.len()..];
+            let info_num = doc.trailer().get_ref(b"Info").unwrap().obj_num;
+            let header = format!("{info_num} 1 obj");
+            assert!(
+                appended
+                    .windows(header.len())
+                    .any(|w| w == header.as_bytes()),
+                "appended /Info is not `{header}`"
+            );
+            assert_info_at_generation(bytes, password, 1, b"Incremental");
+        }
+    }
+
+    #[test]
+    fn test_set_object_at_a_number_no_longer_held_is_generation_zero() {
+        let (source, _) = generation_one_sources().remove(0);
+        let doc = open(source, None);
+        let info_num = doc.trailer().get_ref(b"Info").unwrap().obj_num;
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        modifier.writer().objects.retain(|(n, _)| *n != info_num);
+        modifier.set_object(info_num, PdfObject::String(b"new".to_vec()));
+        let bytes = modifier.build().unwrap();
+        let header = format!("\n{info_num} 0 obj");
+        assert!(bytes.windows(header.len()).any(|w| w == header.as_bytes()));
+        let reopened = PdfDocument::from_bytes(bytes).unwrap();
+        assert!(matches!(
+            reopened.xref.get(info_num),
+            Some(crate::xref::XrefEntry::InUse { gen_num: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn test_add_object_after_from_document_is_generation_zero() {
+        let (source, _) = generation_one_sources().remove(0);
+        let doc = open(source, None);
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let added = modifier.add_object(PdfObject::String(b"added".to_vec()));
+        assert_eq!(added.gen_num, 0);
+        let text = format!("\n{} 0 obj", added.obj_num);
+        let bytes = modifier.build().unwrap();
+        assert!(bytes.windows(text.len()).any(|w| w == text.as_bytes()));
     }
 }

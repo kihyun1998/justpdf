@@ -22,6 +22,7 @@
 
 ## Cross-cutting invariants
 - [xref 항목 형식](../invariant/xref-entry-format.md) — main xref 테이블.
+- [원본 세대](../invariant/source-generation.md) — 원본 객체를 `(번호, 객체)`로 모아 모두 `N 0 obj`·세대 0 xref 항목으로 쓴다.
 
 ## Blast radius
 - [파일 직렬화](file-serialization.md) — 쓰기 쪽이 xref·trailer를 직접 쓴다.
@@ -32,3 +33,4 @@
 - 쓰기 쪽(`linearize_pdf`)은 재수출만 되고 제품 코드에서 호출되지 않는다. CLI에도 선형화 명령이 없다.
 - 읽기 쪽 힌트 헤더 길이·인용 표 번호가 스펙과 다를 수 있다(원문 대조 전까지 판정 보류).
 - Tracked: #56 (힌트 테이블 레이아웃)
+- 원본 세대를 버린다 — 세대 ≠ 0 객체를 참조하는 `N g R`이 파일에 없는 객체를 가리킨다(코드 근거, [원본 세대](../invariant/source-generation.md)). Tracked: #106

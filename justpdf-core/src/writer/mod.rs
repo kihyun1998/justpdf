@@ -21,6 +21,7 @@ pub use serialize::{serialize_pdf, serialize_pdf_encrypted};
 use crate::error::Result;
 use crate::object::{IndirectRef, PdfObject};
 
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Low-level PDF writer that accumulates indirect objects and serializes them
@@ -32,6 +33,8 @@ pub struct PdfWriter {
     pub(crate) next_obj_num: u32,
     /// PDF version as (major, minor), e.g. (1, 7).
     pub version: (u8, u8),
+    /// Generation number of each held object whose generation is not 0.
+    pub(crate) generations: HashMap<u32, u16>,
 }
 
 impl PdfWriter {
@@ -41,6 +44,7 @@ impl PdfWriter {
             objects: Vec::new(),
             next_obj_num: 1,
             version: (1, 7),
+            generations: HashMap::new(),
         }
     }
 
@@ -64,20 +68,28 @@ impl PdfWriter {
     }
 
     /// Set (or replace) an object at a specific object number.
-    /// If an object with this number already exists, it is replaced;
-    /// otherwise later `add_object`/`alloc_object_num` numbers start above it.
+    /// If an object with this number already exists, it is replaced and keeps
+    /// its generation; otherwise the object is generation 0 and later
+    /// `add_object`/`alloc_object_num` numbers start above it.
     pub fn set_object(&mut self, obj_num: u32, obj: PdfObject) {
         if let Some(entry) = self.objects.iter_mut().find(|(n, _)| *n == obj_num) {
             entry.1 = obj;
         } else {
             self.objects.push((obj_num, obj));
+            self.generations.remove(&obj_num);
             self.next_obj_num = self.next_obj_num.max(obj_num.saturating_add(1));
         }
     }
 
+    /// Generation number the held object `obj_num` is written at: its source
+    /// generation when `DocumentModifier::from_document` copied it, 0 otherwise.
+    pub(crate) fn generation(&self, obj_num: u32) -> u16 {
+        generation_of(&self.generations, obj_num)
+    }
+
     /// Serialize all objects into a complete PDF byte stream.
     pub fn write_to_bytes(&self, catalog_ref: &IndirectRef) -> Result<Vec<u8>> {
-        serialize_pdf(&self.objects, self.version, catalog_ref, None)
+        serialize::serialize_writer(self, catalog_ref, None)
     }
 
     /// Serialize and write to a file.
@@ -86,6 +98,11 @@ impl PdfWriter {
         std::fs::write(path, bytes)?;
         Ok(())
     }
+}
+
+/// Generation number of `obj_num` in `generations`, 0 when absent.
+pub(crate) fn generation_of(generations: &HashMap<u32, u16>, obj_num: u32) -> u16 {
+    generations.get(&obj_num).copied().unwrap_or(0)
 }
 
 impl Default for PdfWriter {

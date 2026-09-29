@@ -1,11 +1,14 @@
+use std::collections::HashMap;
 use std::io::Write;
 
 use crate::error::Result;
 use crate::object::{ByteSink, IndirectRef, PdfDict, PdfObject, write_name};
+use crate::writer::generation_of;
 
 /// Serialize a collection of PDF objects into a complete, valid PDF byte stream.
 ///
-/// `objects` contains `(obj_num, PdfObject)` pairs.
+/// `objects` contains `(obj_num, PdfObject)` pairs, each written at
+/// generation 0.
 /// `version` is the PDF version, e.g. `(1, 7)`.
 /// `catalog_ref` points to the document catalog object.
 /// `info_ref` optionally points to the document info dictionary.
@@ -15,13 +18,22 @@ pub fn serialize_pdf(
     catalog_ref: &IndirectRef,
     info_ref: Option<&IndirectRef>,
 ) -> Result<Vec<u8>> {
-    serialize_pdf_impl(objects, version, catalog_ref, info_ref, None, None)
+    serialize_pdf_impl(
+        objects,
+        &HashMap::new(),
+        version,
+        catalog_ref,
+        info_ref,
+        None,
+        None,
+    )
 }
 
 /// Serialize a PDF with encryption.
 ///
 /// `encrypt_ref` and `encrypt_state` together drive per-object encryption
-/// and add /Encrypt and /ID to the trailer.
+/// and add /Encrypt and /ID to the trailer. Every object is written, and its
+/// key derived, at generation 0.
 pub fn serialize_pdf_encrypted(
     objects: &[(u32, PdfObject)],
     version: (u8, u8),
@@ -33,7 +45,46 @@ pub fn serialize_pdf_encrypted(
 ) -> Result<Vec<u8>> {
     serialize_pdf_impl(
         objects,
+        &HashMap::new(),
         version,
+        catalog_ref,
+        info_ref,
+        Some((encrypt_ref, encrypt_state, id_array)),
+        None,
+    )
+}
+
+/// Serialize the objects of `writer`, each at its generation number.
+pub(crate) fn serialize_writer(
+    writer: &crate::writer::PdfWriter,
+    catalog_ref: &IndirectRef,
+    info_ref: Option<&IndirectRef>,
+) -> Result<Vec<u8>> {
+    serialize_pdf_impl(
+        &writer.objects,
+        &writer.generations,
+        writer.version,
+        catalog_ref,
+        info_ref,
+        None,
+        None,
+    )
+}
+
+/// Serialize the objects of `writer` encrypted, each at its generation
+/// number, as [`serialize_pdf_encrypted`] does.
+pub(crate) fn serialize_writer_with_state(
+    writer: &crate::writer::PdfWriter,
+    catalog_ref: &IndirectRef,
+    info_ref: Option<&IndirectRef>,
+    encrypt_ref: &IndirectRef,
+    encrypt_state: &crate::crypto::SecurityState,
+    id_array: &[PdfObject],
+) -> Result<Vec<u8>> {
+    serialize_pdf_impl(
+        &writer.objects,
+        &writer.generations,
+        writer.version,
         catalog_ref,
         info_ref,
         Some((encrypt_ref, encrypt_state, id_array)),
@@ -59,9 +110,8 @@ pub(crate) fn serialize_writer_encrypted(
     ];
     let encrypt_ref = writer.add_object(PdfObject::Dict(encrypt_dict));
     state.encrypt_obj_num = Some(encrypt_ref.obj_num);
-    serialize_pdf_encrypted(
-        &writer.objects,
-        writer.version,
+    serialize_writer_with_state(
+        writer,
         catalog_ref,
         info_ref,
         &encrypt_ref,
@@ -81,6 +131,7 @@ pub(crate) fn document_metadata_num(objects: &[(u32, PdfObject)], catalog_num: u
 /// Internal implementation handling both encrypted and unencrypted serialization.
 fn serialize_pdf_impl(
     objects: &[(u32, PdfObject)],
+    generations: &HashMap<u32, u16>,
     version: (u8, u8),
     catalog_ref: &IndirectRef,
     info_ref: Option<&IndirectRef>,
@@ -102,6 +153,7 @@ fn serialize_pdf_impl(
     for (obj_num, obj) in objects {
         let offset = buf.len();
         offsets.push((*obj_num, offset));
+        let gen_num = generation_of(generations, *obj_num);
 
         // Encrypt the object if needed
         let write_obj = if let Some((encrypt_ref, state, _)) = &encryption {
@@ -113,7 +165,7 @@ fn serialize_pdf_impl(
                     obj,
                     state,
                     *obj_num,
-                    0,
+                    gen_num,
                     Some(*obj_num) == metadata_num,
                 )?
             }
@@ -121,7 +173,7 @@ fn serialize_pdf_impl(
             obj.clone()
         };
 
-        write!(buf, "{} 0 obj\n", obj_num)?;
+        write!(buf, "{} {} obj\n", obj_num, gen_num)?;
         serialize_object(&mut buf, &write_obj)?;
         write!(buf, "\nendobj\n")?;
     }
@@ -148,7 +200,12 @@ fn serialize_pdf_impl(
     // Entries 1..xref_size
     for obj_num in 1..xref_size {
         if let Some(&off) = offset_map.get(&obj_num) {
-            writeln!(buf, "{:010} {:05} n ", off, 0)?;
+            writeln!(
+                buf,
+                "{:010} {:05} n ",
+                off,
+                generation_of(generations, obj_num)
+            )?;
         } else {
             // Free entry
             buf.extend_from_slice(b"0000000000 00000 f \n");
@@ -229,9 +286,45 @@ pub(crate) fn serialize_dict(buf: &mut Vec<u8>, dict: &PdfDict) -> Result<()> {
 ///
 /// This variant is used when object streams are present. It writes the body
 /// objects normally, then writes a cross-reference stream instead of a
-/// traditional xref table + trailer.
+/// traditional xref table + trailer. Every object is written at generation 0.
 pub fn serialize_pdf_with_xref_stream(
     objects: &[(u32, PdfObject)],
+    compressed: &[crate::writer::object_stream::CompressedObjInfo],
+    version: (u8, u8),
+    catalog_ref: &IndirectRef,
+    info_ref: Option<&IndirectRef>,
+) -> Result<Vec<u8>> {
+    serialize_with_xref_stream_impl(
+        objects,
+        &HashMap::new(),
+        compressed,
+        version,
+        catalog_ref,
+        info_ref,
+    )
+}
+
+/// Serialize the objects of `writer` with a cross-reference stream, each at
+/// its generation number, as [`serialize_pdf_with_xref_stream`] does.
+pub(crate) fn serialize_writer_with_xref_stream(
+    writer: &crate::writer::PdfWriter,
+    compressed: &[crate::writer::object_stream::CompressedObjInfo],
+    catalog_ref: &IndirectRef,
+    info_ref: Option<&IndirectRef>,
+) -> Result<Vec<u8>> {
+    serialize_with_xref_stream_impl(
+        &writer.objects,
+        &writer.generations,
+        compressed,
+        writer.version,
+        catalog_ref,
+        info_ref,
+    )
+}
+
+fn serialize_with_xref_stream_impl(
+    objects: &[(u32, PdfObject)],
+    generations: &HashMap<u32, u16>,
     compressed: &[crate::writer::object_stream::CompressedObjInfo],
     version: (u8, u8),
     catalog_ref: &IndirectRef,
@@ -252,7 +345,12 @@ pub fn serialize_pdf_with_xref_stream(
         let offset = buf.len();
         offsets.push((*obj_num, offset));
 
-        write!(buf, "{} 0 obj\n", obj_num)?;
+        write!(
+            buf,
+            "{} {} obj\n",
+            obj_num,
+            generation_of(generations, *obj_num)
+        )?;
         serialize_object(&mut buf, obj)?;
         write!(buf, "\nendobj\n")?;
     }
@@ -266,9 +364,10 @@ pub fn serialize_pdf_with_xref_stream(
         .max(compressed.iter().map(|c| c.obj_num).max().unwrap_or(0));
     let xref_stm_obj_num = max_obj_num + 1;
 
-    crate::writer::object_stream::write_xref_stream(
+    crate::writer::object_stream::write_xref_stream_with_generations(
         &mut buf,
         &offsets,
+        generations,
         compressed,
         catalog_ref,
         info_ref,
