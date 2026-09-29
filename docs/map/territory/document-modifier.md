@@ -12,7 +12,7 @@
 - 새 객체 번호는 원본이 쓰는 **모든** 번호(건너뛴 것 포함) 위에서 시작한다. 건너뛴 번호를 다시 주면, 암호화 제외가 번호로만 판정되는 탓에([파일 직렬화](file-serialization.md)) 새 객체가 옛 `/Encrypt` 번호를 받아 증분 저장에서 평문으로 나간다 — `test_incremental_save_keeps_encryption`이 잡는다.
 - `build`는 GC를 하지 않는다. GC는 `garbage_collect`를 따로 불러야 한다 — 그래서 [리댁션](redaction.md)이 걷어낸 옛 콘텐츠 스트림이 파일에 남는다.
 - **세대 번호**: `from_document`가 원본 xref의 세대 번호(0이 아닌 것만)를 `PdfWriter`의 `generations`에 담고, `build`(평문·`set_encryption`·원본 유지)·`build_with_xref_stream`·[증분 저장](incremental-save.md)이 그 세대로 객체 헤더(`N g obj`)·xref 항목·객체 암호화 키를 쓴다(#72). 문서 안의 참조 `N g R`은 원본 그대로 복사되므로, 세대를 버리면 참조가 가리키는 객체가 파일에 없다. #72 전 출력을 qpdf 12.4.1(pikepdf 10.15.0)로 읽으면 전체 재작성·xref 스트림 출력의 trailer `/Info N 1 R`이 null이었고, 증분 저장 출력에서는 이전 구간의 옛 객체(바뀌기 전 값)가 읽혔다(2026-09-29, 세대 1·300 픽스처, 평문·RC4·AES-128). 고친 뒤 같은 13개 출력을 qpdf가 경고 없이 `(N, 1)`/`(N, 300)`으로 읽는다.
-- justpdf 리더는 참조의 세대를 보지 않는다([문서 접근](document-access.md), #98). 그래서 자기 왕복 테스트로는 세대 결함이 드러나지 않는다 — 테스트(`assert_info_at_generation`)는 헤더를 바이트로, xref 항목을 파싱 결과로 보고, 키는 RC4·AES-128 왕복으로 본다. R6(AES-256)은 객체 키가 번호·세대와 무관해 증거가 되지 않는다. 픽스처(`with_info_at_generation`)는 justpdf 자신이 쓰므로 위 qpdf 판정이 독립 판정자다.
+- #98 전 justpdf 리더는 참조의 세대를 보지 않아, 자기 왕복 테스트로는 세대 결함이 드러나지 않았다. 지금은 세대가 틀린 참조가 `Null`이므로([문서 접근](document-access.md)) trailer·문서 안 참조를 resolve하는 단언(`info_title`)이 세대 결함을 잡는다. `object_refs()`로 도는 단언(`assert_all_objects_resolve`)은 xref 세대를 쓰므로 여전히 못 잡는다. 테스트(`assert_info_at_generation`)는 헤더를 바이트로, xref 항목을 파싱 결과로도 보고, 키는 RC4·AES-128 왕복으로 본다. R6(AES-256)은 객체 키가 번호·세대와 무관해 증거가 되지 않는다. 픽스처(`with_info_at_generation`)는 justpdf 자신이 쓰므로 위 qpdf 판정이 독립 판정자다.
 - 세대는 writer가 그 번호의 객체를 들고 있는 동안만 유지된다: `set_object`로 들고 있는 객체를 바꾸면 세대를 유지하고, 들고 있지 않은 번호(GC로 지운 번호, resolve 실패로 복사되지 않은 번호, 원본 `/Encrypt` 번호)에 넣으면 세대 0이다. `add_object`도 0. `set_object`는 참조를 돌려주지 않으므로 호출자가 새 객체를 가리킬 참조는 `N 0 R`이다. 번호 재사용 시 세대 + 1(ISO 32000-1 §7.5.4, MuPDF `gen_list[num]++`)은 하지 않는다 — 새 번호는 원본 최대 번호 위에서 주므로 crate 안에서 재사용하는 호출자가 없다.
 - `generations`는 `objects` 옆의 별도 맵이다. 공개 필드 `objects: Vec<(u32, PdfObject)>`의 타입을 바꾸면 공개 API가 깨지고, compress 등 crate 안에서 직접 고치는 곳도 많다(기술적 판단, #72). 대가: 참조의 번호를 바꾸는 코드는 세대도 함께 맞춰야 한다 — [원본 세대](../invariant/source-generation.md).
   - **메인테이너 판단(2026-09-29, #72)**: 세대 ≠ 0 객체를 object stream에서 빼는 일은 이번 변경에서 뺐다(ISO 32000-1 §7.5.7: object stream 안 객체의 세대는 0). 보여 준 것: crate 안의 유일한 패커 `pack_into_object_streams`는 비활성(`#[allow(dead_code)]`, 호출부 주석 처리)이고, 공개 `pack_object_streams`는 세대 정보 없이 번호·객체만 받아 세대를 걸러내려면 공개 시그니처를 바꿔야 한다는 것. 대안: 비활성 내부 함수만 고침, 공개 API까지 변경. 이 판단은 패킹만 다뤘다 — 아래 번호 재작성 사이트는 다루지 않았다.
@@ -46,4 +46,5 @@
 
 ## Known holes / open
 - resolve 실패 객체를 경고 없이 버린다.
+- `set_info`가 writer에 없는 `/Info`를 새로 만들면 세대 0으로 쓰지만 `info_ref`는 원본 세대 그대로다 — 원본 `/Info`가 세대 ≠ 0이면 trailer 참조가 어긋난다(코드 근거). Tracked: #110
 - Tracked: #33 (텍스트 문자열 인코딩)

@@ -19,6 +19,19 @@ pub enum XrefEntry {
     },
 }
 
+impl XrefEntry {
+    /// Generation number of the object this entry defines: the entry's
+    /// generation for an in-use object, 0 for an object in an object stream,
+    /// `None` for a free entry.
+    pub(crate) fn defined_generation(&self) -> Option<u16> {
+        match self {
+            XrefEntry::InUse { gen_num, .. } => Some(*gen_num),
+            XrefEntry::Compressed { .. } => Some(0),
+            XrefEntry::Free { .. } => None,
+        }
+    }
+}
+
 /// The complete cross-reference table with merged trailer.
 #[derive(Debug)]
 pub struct Xref {

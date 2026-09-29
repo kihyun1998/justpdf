@@ -398,6 +398,8 @@ impl PdfDocument {
     /// Resolve an indirect reference to the actual object.
     /// Uses internal LRU cache. Detects circular references.
     /// Automatically decrypts if the document is encrypted and authenticated.
+    /// A reference whose generation is not the one its xref entry defines
+    /// resolves to `Null`.
     ///
     /// Returns a cloned `PdfObject` (owned). The interior LRU cache is
     /// protected by a `RwLock`, so this method only requires `&self` and
@@ -419,11 +421,28 @@ impl PdfDocument {
             }
         }
 
+        if !self.generation_matches(iref) {
+            return Ok(PdfObject::Null);
+        }
+
         // Load the object (no lock held during I/O)
         let obj = self.load_object(iref, &mut HashSet::new())?;
         let result = obj.clone();
         self.objects.write().unwrap().insert(iref.clone(), obj);
         Ok(result)
+    }
+
+    /// Whether `iref`'s generation is the one its xref entry defines
+    /// ([`XrefEntry::defined_generation`]). A free or missing entry matches.
+    fn generation_matches(&self, iref: &IndirectRef) -> bool {
+        match self
+            .xref
+            .get(iref.obj_num)
+            .and_then(XrefEntry::defined_generation)
+        {
+            Some(gen_num) => gen_num == iref.gen_num,
+            None => true,
+        }
     }
 
     /// Load an object, tracking visited refs to detect cycles.
@@ -628,20 +647,11 @@ impl PdfDocument {
 
     /// Iterate over all in-use object references.
     pub fn object_refs(&self) -> impl Iterator<Item = IndirectRef> + '_ {
-        self.xref
-            .entries
-            .iter()
-            .filter_map(|(&obj_num, entry)| match entry {
-                XrefEntry::InUse { gen_num, .. } => Some(IndirectRef {
-                    obj_num,
-                    gen_num: *gen_num,
-                }),
-                XrefEntry::Compressed { .. } => Some(IndirectRef {
-                    obj_num,
-                    gen_num: 0,
-                }),
-                XrefEntry::Free { .. } => None,
-            })
+        self.xref.entries.iter().filter_map(|(&obj_num, entry)| {
+            entry
+                .defined_generation()
+                .map(|gen_num| IndirectRef { obj_num, gen_num })
+        })
     }
 
     /// Decode a stream object's data.
