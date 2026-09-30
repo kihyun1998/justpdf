@@ -1,4 +1,4 @@
-# Raster device
+# Raster device (tiny-skia)
 
 ## What it is
 `PixmapDevice` fills paths, strokes lines, and draws images and patterns onto a tiny-skia pixmap, holds the clip mask, and encodes to PNG/JPEG/RGBA.

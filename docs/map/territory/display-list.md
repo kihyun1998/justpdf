@@ -1,4 +1,4 @@
-# Display list
+# Display list and tile rendering
 
 ## What it is
 A structure that records drawing commands and then replays them, replays them under a transform, optimizes them, or renders them tile by tile.
