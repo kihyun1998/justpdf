@@ -21,7 +21,7 @@ The encoding tables (Standard, WinAnsi, MacRoman, PDFDoc, Identity) that turn a 
 
 ## Cross-cutting invariants
 - [Text string encoding](../invariant/text-string-encoding.md) — where the only correct decoder lives.
-- [Font resolution paths](../invariant/font-resolution.md) — text uses these tables, render uses the font's cmap.
+- [Font resolution](../invariant/font-resolution.md) — text uses these tables, render uses the font's cmap.
 
 ## Blast radius
 - [Text extraction](text-extraction.md) — `show_string` calls `decode_text`.

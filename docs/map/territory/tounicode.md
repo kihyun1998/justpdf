@@ -17,7 +17,7 @@ Parses the `bfchar`/`bfrange` sections of a font's `/ToUnicode` stream into a co
 **None.** Clause to compare against: ISO 32000-2 §9.10.3.
 
 ## Cross-cutting invariants
-- [Font resolution paths](../invariant/font-resolution.md) — duplicated interpretation code.
+- [Font resolution](../invariant/font-resolution.md) — duplicated interpretation code.
 
 ## Blast radius
 - [Text extraction](text-extraction.md) — first-priority mapping.

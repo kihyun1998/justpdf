@@ -56,7 +56,7 @@ Keeps only the glyphs the document actually uses from an embedded TrueType font 
 - **MuPDF** `source/pdf/pdf-subset.c` — one `font_usage_t` per font file ("We have one of these records for each fontfile", found by `num`/`gen`), holding the list of top-level font dictionaries that use it and heaps of GIDs and CIDs. `font_analysis_Tf` resolves each font dictionary down to its FontFile/FontFile2/FontFile3 and attaches it to that record; after every page is examined, `subset_ttf`/`subset_cff` runs once per record — the same shape as the per-stream subsetting here. It also merges font files held as different objects but with the same `fz_font_digest`, by pointing the FontDescriptor at the first one. It has no "leave whole" guard, because `examine_page` processes the page contents, every annotation and every widget.
 
 ## Cross-cutting invariants
-- [Font resolution paths](../invariant/font-resolution.md) — the renderer and text extraction each interpret the subset result in their own way.
+- [Font resolution](../invariant/font-resolution.md) — the renderer and text extraction each interpret the subset result in their own way.
 
 ## Blast radius
 - [Font loading](font-loading.md) — shares the `/Widths` indexing rule (`FontWidths::Simple`).

@@ -19,7 +19,7 @@ The path that reads Type0 composite fonts and their descendant CIDFont: splittin
 **None.** Clause to compare against: ISO 32000-2 §9.7.
 
 ## Cross-cutting invariants
-- [Font resolution paths](../invariant/font-resolution.md) — this note is the prime example of the mismatch (widths only in text, GID mapping only in render).
+- [Font resolution](../invariant/font-resolution.md) — this note is the prime example of the mismatch (widths only in text, GID mapping only in render).
 
 ## Blast radius
 - [Text extraction](text-extraction.md), [Glyph rendering](glyph-rendering.md) — the two implementations.

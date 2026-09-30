@@ -9,7 +9,7 @@ Turns the character codes of text-showing operators into glyph IDs, takes outlin
 ## Design model
 - Font data is looked up in the order FontFile2 → FontFile3 → FontFile and all of it is handed to `ttf_parser::Face::parse`. Pure CFF and Type1 programs fail and a **placeholder box** is drawn (inferred). Core's [CFF parser](cff.md) is not used.
 - Code → GID: `char_code_to_glyph_id` treats the byte as a Unicode scalar and looks it up in the font's cmap, and if that fails, code == GID. The font's `/Encoding` and `/Differences` are not used ([Font encodings](font-encodings.md)).
-- CID fonts use `/CIDToGIDMap` but not `/W` — [Font resolution paths](../invariant/font-resolution.md).
+- CID fonts use `/CIDToGIDMap` but not `/W` — [Font resolution](../invariant/font-resolution.md).
 - Text is not filled with patterns (`fill_color_rgba` only — inferred).
 - The cache key is the font's FNV hash + GID, with a default capacity of 4096.
 
@@ -22,7 +22,7 @@ Turns the character codes of text-showing operators into glyph IDs, takes outlin
 **None.** Clauses to compare against: ISO 32000-2 §9.6.6 (glyph selection in simple fonts), §9.7.4.
 
 ## Cross-cutting invariants
-- [Font resolution paths](../invariant/font-resolution.md)
+- [Font resolution](../invariant/font-resolution.md)
 
 ## Blast radius
 - [Font loading](font-loading.md), [CID fonts](cid-fonts.md), [Font encodings](font-encodings.md) — inputs (partly bypassed).
