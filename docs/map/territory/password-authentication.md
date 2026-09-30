@@ -18,7 +18,7 @@ Verifies the user and owner passwords according to `/R` and obtains the file key
 - `justpdf-core/src/parser.rs` — `authenticate`, `detect_encryption`
 
 ## Reference behaviour
-2026-09-23, read the original source directly (#30):
+2026-09-23, read the source code directly (#30):
 - **pdf.js** `src/core/crypto.js` — `_hash` in `PDF17` (R5) is a single SHA-256; `PDF20` (R6) is Algorithm 2.B. `checkUserPassword`/`checkOwnerPassword` compare the hash with the first 32 bytes of `/U` and `/O`, and append the 48 bytes of `/U` to the owner hash input. The owner attempt happens only when the password is not empty.
 - **MuPDF** `source/pdf/pdf-crypt.c` — `pdf_compute_encryption_key_r5` (ExtensionLevel 3 algorithm 3.2a) makes the validation hash from the same input, and `pdf_authenticate_user_password`/`pdf_authenticate_owner_password` compare it with the first 32 bytes of `/U` and `/O`.
 - `/Perms`: pdf.js passes it to `#createEncryptionKey20` but does not use it in the body, and MuPDF computes it only when writing R6 — neither implementation verifies it when reading. justpdf verifies it only for R6.
