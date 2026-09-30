@@ -1,36 +1,36 @@
-# xref와 증분 업데이트 체인
+# Xref and the incremental update chain
 
 ## What it is
-`startxref`를 찾아 `/Prev` 체인을 따라가며, 각 구간(고전 xref 테이블 또는 xref 스트림)을 하나의 `Xref { entries, trailer }`로 병합한다. 객체 번호 → 파일 오프셋(또는 object stream 안 위치)의 유일한 출처다.
+Finds `startxref`, follows the `/Prev` chain, and merges every section (classic xref table or xref stream) into one `Xref { entries, trailer }`. The only source of object number → file offset (or position inside an object stream).
 
 ## Governing decisions
 **None.**
 
 ## Design model
-코드에서 읽어낸 규칙이다.
-- **최신 구간이 이긴다**: 이전 구간의 엔트리는 이미 있는 번호를 덮어쓰지 않는다(`or_insert`).
-- **trailer는 최신 것 하나만 남는다.** 이전 구간 trailer의 키는 병합되지 않는다 — pdf.js·MuPDF와 같고, 병합하지 않는 것은 #26의 메인테이너 판단이다. 그래서 증분 쓰기가 키를 옮겨 적는다 — [증분 trailer](../invariant/incremental-trailer.md).
-- `/Prev` 순환은 `visited`로 끊는다. `startxref`는 파일 끝 1024바이트에서만 찾는다.
-- xref 스트림: `/W[0] == 0`이면 타입 1, 모르는 타입은 건너뜀. 쓰기 쪽 `write_xref_stream`이 내는 레이아웃(`/W [1 w2 w3]`, `/Index` 없음)을 이 코드가 읽는다.
-- EOF 너머 오프셋은 하드 에러이고, 자동으로 [repair](repair.md)로 떨어지지 않는다.
+Rules read from the code.
+- **The newest section wins**: an entry from an earlier section does not overwrite a number already present (`or_insert`).
+- **Only the newest trailer is kept.** Keys from earlier sections' trailers are not merged — the same as pdf.js and MuPDF, and not merging is the maintainer decision of #26. So incremental writes carry the keys over — [Incremental trailer](../invariant/incremental-trailer.md).
+- A `/Prev` cycle is cut with `visited`. `startxref` is searched for only in the last 1024 bytes of the file.
+- Xref streams: `/W[0] == 0` means type 1, and unknown types are skipped. This code reads the layout the writing side's `write_xref_stream` produces (`/W [1 w2 w3]`, no `/Index`).
+- An offset past EOF is a hard error and does not fall back to [repair](repair.md) automatically.
 
 ## Code
 - `justpdf-core/src/xref/mod.rs` — `find_startxref`, `load_xref`, `load_xref_at`, `parse_xref_stream`, `read_field`
 - `justpdf-core/src/xref/table.rs` — `Xref`, `XrefEntry`, `parse_xref_table`, `read_ascii_number`
 
 ## Reference behaviour
-**None.** 비교 대상 조항: ISO 32000-2 §7.5.4(xref 테이블), §7.5.5(trailer), §7.5.6(증분 업데이트), §7.5.8(xref 스트림, hybrid `/XRefStm` 포함) — 기억에 의한 포인터.
+**None.** Clauses to compare against: ISO 32000-2 §7.5.4 (xref table), §7.5.5 (trailer), §7.5.6 (incremental updates), §7.5.8 (xref streams, including hybrid `/XRefStm`) — pointers from memory.
 
 ## Cross-cutting invariants
-- [증분 trailer](../invariant/incremental-trailer.md) — 읽기 쪽 절반이 여기다.
+- [Incremental trailer](../invariant/incremental-trailer.md) — the reading-side half is here.
 
 ## Blast radius
-- [문서 접근](document-access.md) — 모든 객체 조회가 `Xref::get`을 지난다.
-- [object streams](object-streams.md) — 타입 2 엔트리가 압축 객체 로드로 이어진다.
-- [파일 직렬화](file-serialization.md) — xref 테이블/스트림의 쓰기 쪽. 레이아웃을 바꾸면 양쪽을 같이 본다.
-- [증분 저장](incremental-save.md), [서명](signing.md) — 둘 다 `find_startxref`로 `/Prev`를 쓰고 새 trailer를 만든다.
-- [repair](repair.md) — xref가 깨졌을 때의 대체 경로(현재는 수동 호출만).
+- [Document access](document-access.md) — every object lookup goes through `Xref::get`.
+- [object streams](object-streams.md) — type 2 entries lead to loading a compressed object.
+- [File serialization](file-serialization.md) — the writing side of xref tables/streams. When changing the layout, look at both sides.
+- [Incremental save](incremental-save.md), [Signing](signing.md) — both use `find_startxref` to write `/Prev` and build a new trailer.
+- [repair](repair.md) — the fallback path when the xref is broken (currently only by an explicit call).
 
 ## Known holes / open
-- hybrid 파일(`/XRefStm`)을 처리하지 않는다: `rg XRefStm justpdf-core/src` 결과가 비어 있다.
+- Hybrid files (`/XRefStm`) are not handled: `rg XRefStm justpdf-core/src` finds nothing.
 - Tracked: #53 (/XRefStm)
