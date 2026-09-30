@@ -1,38 +1,38 @@
-# 텍스트 추출
+# Text extraction
 
 ## What it is
-페이지 콘텐츠를 해석해 글리프 위치를 계산하고(텍스트 상태, 폰트 폭), 문자를 유니코드로 바꾸고(ToUnicode → 인코딩), 단어·줄로 묶은 뒤 [읽기 순서](reading-order.md)로 재배열한다. CLI `text`, 파사드 `Page::text`, 모든 바인딩의 `extract_*_text`가 이 파이프라인이다.
+Interprets page content to compute glyph positions (text state, font widths), turns characters into Unicode (ToUnicode → encoding), groups them into words and lines, then reorders them by [Reading order](reading-order.md). CLI `text`, the facade's `Page::text` and every binding's `extract_*_text` are this pipeline.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- 텍스트 상태와 글리프 전진은 스펙 §9.3 공식을 따른다(코드 주석 인용).
-- 폰트 해석을 렌더러와 **따로** 한다: 이쪽은 `/W`를 읽고 ToUnicode·인코딩으로 유니코드를 만든다 — [폰트 해석 경로](../invariant/font-resolution.md).
-- ExtGState(`gs`)의 `/Font`를 해석하지 않는다("We don't resolve ExtGState for now" — 문서 접근이 없음).
-- **`Do`를 처리하지 않는다**: Form XObject 안의 텍스트는 추출되지 않는다. 렌더러는 재귀한다.
-- BDC/OC(optional content)를 보지 않는다 — 숨긴 레이어의 텍스트도 추출된다.
-- 페이지 콘텐츠를 자체 private 함수로 이어 붙인다 — [페이지 콘텐츠 조립](../invariant/page-content-assembly.md).
-- 페이지는 빈 줄(`"\n\n"`)로 잇는다(`extract_all_text_string`).
+- Text state and glyph advance follow the formulas of spec §9.3 (cited in code comments).
+- Does font resolution **separately** from the renderer: this side reads `/W` and builds Unicode from ToUnicode and the encoding — [Font resolution](../invariant/font-resolution.md).
+- Does not resolve `/Font` in ExtGState (`gs`) ("We don't resolve ExtGState for now" — it has no document access).
+- **Does not handle `Do`**: text inside Form XObjects is not extracted. The renderer recurses.
+- Does not look at BDC/OC (optional content) — text in hidden layers is extracted too.
+- Concatenates page content with its own private function — [Page content assembly](../invariant/page-content-assembly.md).
+- Joins pages with a blank line (`"\n\n"`) (`extract_all_text_string`).
 
 ## Code
 - `justpdf-core/src/text/mod.rs` — `extract_page_text`, `extract_all_text`, `extract_page_text_string`, `extract_all_text_string`, `resolve_fonts`, `resolve_to_unicode`, `get_page_content_data`, `TextInterpreter`, `show_string`, `show_tj_array`, `group_into_words`, `group_into_lines`, `PageText`
 
 ## Reference behaviour
-**None.** 비교 대상 조항: ISO 32000-2 §9.3, §9.10. MuPDF(example)와 추출 결과를 비교한 기록 없음 — `justpdf-core/examples/compare_mupdf.rs`는 성능 비교다.
+**None.** Clauses to compare against: ISO 32000-2 §9.3, §9.10. No record of comparing extraction results with MuPDF (example) — `justpdf-core/examples/compare_mupdf.rs` is a performance comparison.
 
 ## Cross-cutting invariants
-- [폰트 해석 경로](../invariant/font-resolution.md)
-- [페이지 콘텐츠 조립](../invariant/page-content-assembly.md)
+- [Font resolution](../invariant/font-resolution.md)
+- [Page content assembly](../invariant/page-content-assembly.md)
 
 ## Blast radius
-- [폰트 로딩](font-loading.md), [폰트 인코딩](font-encodings.md), [ToUnicode](tounicode.md), [CID 폰트](cid-fonts.md) — 입력.
-- [콘텐츠 스트림 파싱](content-stream-parsing.md) — 연산자 입력.
-- [읽기 순서](reading-order.md), [출력 형식](text-output-formats.md), [검색](text-search.md) — 이 출력(`PageText`)의 소비처. 구조체를 바꾸면 셋 다 본다.
-- [폰트 서브세팅](font-subsetting.md) — 압축 테스트의 판정자로 쓰인다.
-- [optional content](optional-content.md) — 숨김 레이어 무시.
-- [CLI](cli.md), [파사드](facade.md), [언어 바인딩](language-bindings.md) — 공개 추출 API 소비처.
+- [Font loading](font-loading.md), [Font encodings](font-encodings.md), [ToUnicode](tounicode.md), [CID fonts](cid-fonts.md) — input.
+- [Content stream parsing](content-stream-parsing.md) — operator input.
+- [Reading order](reading-order.md), [Text output formats](text-output-formats.md), [Text search](text-search.md) — consumers of this output (`PageText`). When changing the struct, check all three.
+- [Font subsetting](font-subsetting.md) — used as the judge in compress tests.
+- [Optional content](optional-content.md) — hidden layers ignored.
+- [CLI](cli.md), [Facade](facade.md), [Language bindings](language-bindings.md) — consumers of the public extraction API.
 
 ## Known holes / open
-- Form XObject 안의 텍스트 미추출.
-- Tracked: #48 (Form XObject 텍스트)
+- Text inside Form XObjects is not extracted.
+- Tracked: #48 (Form XObject text)
