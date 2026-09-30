@@ -1,7 +1,10 @@
 use std::path::Path;
 
-use justpdf_core::PdfDocument;
-use justpdf_render::{OutputFormat, RenderOptions, render_page, render_page_to_svg};
+use justpdf_core::{JustPdfError, PdfDocument};
+use justpdf_render::error::RenderError;
+use justpdf_render::{
+    OutputFormat, RenderOptions, render_page, render_page_to_pixmap, render_page_to_svg,
+};
 
 #[test]
 fn test_render_page_produces_png() {
@@ -51,8 +54,23 @@ fn test_render_page_out_of_range() {
     let mut doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
     let options = RenderOptions::default();
 
-    let result = render_page(&mut doc, 999, &options);
-    assert!(result.is_err());
+    let count = justpdf_core::page::collect_pages(&doc).unwrap().len();
+    let is_out_of_range = |e: &RenderError| {
+        matches!(
+            e,
+            RenderError::Core(JustPdfError::PageOutOfRange { index: 999, count: c })
+                if *c == count
+        )
+    };
+
+    let err = render_page(&mut doc, 999, &options).unwrap_err();
+    assert!(is_out_of_range(&err), "render_page: {err:?}");
+    let Err(err) = render_page_to_pixmap(&doc, 999, &options) else {
+        panic!("render_page_to_pixmap: expected an error");
+    };
+    assert!(is_out_of_range(&err), "render_page_to_pixmap: {err:?}");
+    let err = render_page_to_svg(&doc, 999).unwrap_err();
+    assert!(is_out_of_range(&err), "render_page_to_svg: {err:?}");
 }
 
 #[test]
