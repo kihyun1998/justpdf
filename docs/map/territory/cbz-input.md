@@ -19,7 +19,8 @@ Turns the images in a comic-book ZIP archive into pages, in natural sort order.
 **None.**
 
 ## Blast radius
-- [Document builder](document-builder.md) — `embed_rgb`, `draw_image`. [Render images](render-images.md) — the image XObject path.
+- [Document builder](document-builder.md) — `embed_rgb`, `draw_image`. [Render images](render-images.md) — the image XObject path, which draws nothing for Flate images: see [SVG input](svg-input.md) (inferred for CBZ — same `embed_rgb` output, not rendered).
 
 ## Known holes / open
 - `test_cbz_to_pdf` only checks that the output starts with `%PDF`.
+- Tracked: #42 (render: Flate image XObjects are decoded twice)
