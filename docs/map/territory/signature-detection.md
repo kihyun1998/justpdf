@@ -1,36 +1,36 @@
-# 서명 필드 감지
+# Signature detection
 
 ## What it is
-AcroForm 필드 트리를 재귀로 걸어 `/FT /Sig`이고 `/V`가 있는 필드를 서명으로 수집하고, 서명 사전의 이름·사유·위치·ByteRange·Contents를 꺼낸다. 파사드 `Document::signatures`가 부르는 유일한 서명 기능이다.
+Walks the AcroForm field tree recursively, collects fields that are `/FT /Sig` and have a `/V` as signatures, and pulls the name, reason, location, ByteRange and Contents out of the signature dictionary. It is the only signature feature the facade's `Document::signatures` calls.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- `/Name`·`/Reason`·`/T` 등은 `from_utf8_lossy`로 디코드한다 — PDFDocEncoding·UTF-16BE BOM을 이해하지 못한다([텍스트 문자열 인코딩](../invariant/text-string-encoding.md)).
-- 필드가 자기 조상을 kid로 가지면 `CircularReference`, 공유 필드로 방문 예산을 넘기면 `LimitExceeded`다 — [트리 순회 순환](../invariant/tree-traversal-cycles.md).
-- `/Kids`가 있으면 조기 반환하므로, 위젯만 자식으로 가진 필드는 검사되지 않는다(추론).
-- 암호화 문서에서는 `/Contents`가 `resolve`를 지나며 복호화된다(추론: 스펙상 서명 값은 암호화 대상이 아님).
+- `/Name`, `/Reason`, `/T` and the like are decoded with `from_utf8_lossy` — it does not understand PDFDocEncoding or a UTF-16BE BOM ([Text string encoding](../invariant/text-string-encoding.md)).
+- A field that has its own ancestor as a kid is `CircularReference`, and exceeding the visit budget through shared fields is `LimitExceeded` — [Tree traversal cycles](../invariant/tree-traversal-cycles.md).
+- It returns early when there are `/Kids`, so a field whose only children are widgets is not checked (inferred).
+- In an encrypted document `/Contents` is decrypted on its way through `resolve` (inferred: by the spec, the signature value is not subject to encryption).
 
 ## Code
 - `justpdf-core/src/sign/detect.rs` — `detect_signatures`, `collect_sig_fields`
 
 ## Reference behaviour
-**None.** 비교 대상 조항: ISO 32000-2 §12.8.
+**None.** Clause to compare against: ISO 32000-2 §12.8.
 
 ## Cross-cutting invariants
-- [텍스트 문자열 인코딩](../invariant/text-string-encoding.md)
-- [트리 순회 순환](../invariant/tree-traversal-cycles.md)
+- [Text string encoding](../invariant/text-string-encoding.md)
+- [Tree traversal cycles](../invariant/tree-traversal-cycles.md)
 
 ## Blast radius
-- [AcroForm](acroform.md) — 같은 필드 트리를 각자 걷는다.
-- [서명](signing.md) — 여기서 찾을 수 있어야 할 서명을 만드는 쪽(현재는 못 찾는다 — 서명 쪽이 AcroForm에 필드를 등록하지 않는다).
-- [서명 검증](signature-verification.md) — 감지 결과의 소비처.
-- [객체 복호화](object-decryption.md) — `/Contents` 복호화.
-- [파사드](facade.md) — `signatures`.
+- [AcroForm](acroform.md) — each walks the same field tree on its own.
+- [Signing](signing.md) — the side that makes the signatures this should be able to find (it currently cannot — the signing side does not register the field in AcroForm).
+- [Signature verification](signature-verification.md) — consumer of the detection result.
+- [Object decryption](object-decryption.md) — decryption of `/Contents`.
+- [Facade](facade.md) — `signatures`.
 
 ## Known holes / open
-- justpdf가 방금 서명한 파일에서 서명을 찾지 못한다(추론; 서명 → 감지 테스트 없음).
-- 깊이 제한이 없다 — 순환 없는 극단적 깊이는 스택을 넘길 수 있다(추론).
-- 공유 `/V`를 가진 필드마다 `/V`를 통째로 복제하고 `contents_raw`를 복사한다 — 방문 예산이 닿지 않는다.
-- Tracked: #33 (텍스트 문자열 인코딩), #37 (서명 연결·CLI sign), #122 (깊이 제한), #135 (예산 밖 비용)
+- It does not find the signature in a file justpdf has just signed (inferred; no sign → detect test).
+- There is no depth limit — extreme depth without a cycle can overflow the stack (inferred).
+- For every field with a shared `/V`, it clones the whole `/V` and copies `contents_raw` — the visit budget does not reach this.
+- Tracked: #33 (text string encoding), #37 (signature wiring, CLI sign), #122 (depth limit), #135 (cost outside the budget)

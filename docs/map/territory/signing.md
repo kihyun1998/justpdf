@@ -1,42 +1,42 @@
-# 디지털 서명 (CMS·ByteRange)
+# Digital signing (CMS, ByteRange)
 
 ## What it is
-원본 바이트를 그대로 둔 채 서명 사전·위젯이 들어간 증분 구간을 덧붙이고, `/Contents` 자리표시자를 남겨 ByteRange를 계산한 뒤, 그 범위의 다이제스트로 CMS SignedData(`adbe.pkcs7.detached`)를 만들어 자리표시자에 hex로 채운다. DER은 손으로 만든다.
+Leaves the original bytes untouched and appends an incremental section holding the signature dictionary and widget, leaves a `/Contents` placeholder to compute the ByteRange, then builds a CMS SignedData (`adbe.pkcs7.detached`) from the digest of that range and fills it into the placeholder as hex. The DER is built by hand.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- 서명 키는 RSA PKCS#8만 받는다. `/Contents` 자리표시자는 `PLACEHOLDER_SIZE` 바이트.
-- `contents_offset`을 `<` 바로 뒤로 잡아 `<`·`>` 구분자가 서명 범위에 들어간다(추론: 구분자까지 제외하는 관행과 다름).
-- `fix_byte_range`는 파일 전체에서 자리표시자 텍스트의 첫 일치를 패치한다.
-- **증분 구간이 문서에 연결되지 않는다**: 필드를 `/AcroForm /Fields`에 넣지 않고, Catalog를 갱신하지 않고, 위젯을 페이지 `/Annots`에 넣지 않는다. 모듈 주석의 "3. Updated AcroForm 4. Updated Catalog"는 구현되지 않았다. `/M`을 쓰지 않고 `contact_info`는 버려진다.
-- 새 trailer는 `incremental_trailer`로 만든다 — [증분 trailer](../invariant/incremental-trailer.md). 암호화된 입력은 `UnsupportedEncryption`으로 거부한다(비밀번호를 받지 않아 덧붙일 객체를 암호화할 키가 없다 — #26 메인테이너 판단).
-- 서명 사전과 위젯은 `write!`로 손으로 조립하되, 값은 공유 함수로 쓴다: `/Name`·`/Reason`·`/Location`은 `string_syntax`(Rust `&str`의 UTF-8 바이트 — 비 ASCII면 hex), `/Rect`는 `real_syntax`(NaN → `0.0`, ±Inf → ±`f32::MAX`), 외관 스트림 사전은 `serialize_dict`. 되읽으면 같다(`test_placeholder_values_read_back_unchanged`, #29) — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md), [텍스트 문자열 인코딩](../invariant/text-string-encoding.md).
+- The signing key is accepted only as RSA PKCS#8. The `/Contents` placeholder is `PLACEHOLDER_SIZE` bytes.
+- `contents_offset` is taken right after `<`, so the `<` and `>` delimiters fall inside the signed range (inferred: differs from the practice of excluding the delimiters as well).
+- `fix_byte_range` patches the first match of the placeholder text in the whole file.
+- **The incremental section is not wired into the document**: the field is not added to `/AcroForm /Fields`, the Catalog is not updated, and the widget is not added to the page's `/Annots`. "3. Updated AcroForm 4. Updated Catalog" in the module comment is not implemented. `/M` is not written and `contact_info` is dropped.
+- The new trailer is built with `incremental_trailer` — [Incremental trailer](../invariant/incremental-trailer.md). Encrypted input is rejected with `UnsupportedEncryption` (it takes no password, so there is no key to encrypt the appended objects with — #26 maintainer decision).
+- The signature dictionary and widget are assembled by hand with `write!`, but values are written with shared functions: `/Name`, `/Reason` and `/Location` with `string_syntax` (the UTF-8 bytes of a Rust `&str` — hex if non-ASCII), `/Rect` with `real_syntax` (NaN → `0.0`, ±Inf → ±`f32::MAX`), and the appearance stream dictionary with `serialize_dict`. They read back the same (`test_placeholder_values_read_back_unchanged`, #29) — [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md), [Text string encoding](../invariant/text-string-encoding.md).
 
 ## Code
 - `justpdf-core/src/sign/sign_pdf.rs` — `sign_pdf`, `build_pdf_with_placeholder`, `create_cms_signed_data`, `build_signer_info`, `build_utctime_now`, `fix_byte_range`, `PLACEHOLDER_SIZE`
 - `justpdf-core/src/sign/byterange.rs` — `compute_byterange_digest`, `detect_modification_after_signing`
 
 ## Reference behaviour
-**None.** 비교 대상 조항: ISO 32000-2 §12.8.1(ByteRange·Contents), §12.8.3. 제3자 검증기(Acrobat 등)로 확인한 기록 없음.
+**None.** Clauses to compare against: ISO 32000-2 §12.8.1 (ByteRange, Contents), §12.8.3. No record of checking with a third-party validator (Acrobat or others).
 
 ## Cross-cutting invariants
-- [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — `string_syntax`, `real_syntax`, `serialize_dict`.
-- [텍스트 문자열 인코딩](../invariant/text-string-encoding.md) — `/Name`·`/Reason`·`/Location`.
-- [증분 trailer](../invariant/incremental-trailer.md) — 쓰기 쪽 사이트.
-- [xref 항목 형식](../invariant/xref-entry-format.md) — 덧붙인 구간의 xref 테이블.
+- [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md) — `string_syntax`, `real_syntax`, `serialize_dict`.
+- [Text string encoding](../invariant/text-string-encoding.md) — `/Name`, `/Reason`, `/Location`.
+- [Incremental trailer](../invariant/incremental-trailer.md) — a write-side site.
+- [Xref entry format](../invariant/xref-entry-format.md) — the xref table of the appended section.
 
 ## Blast radius
-- [증분 저장](incremental-save.md) — 같은 방식의 다른 구현. 한쪽에서 발견한 결함을 다른 쪽에서 찾는다.
-- [xref](xref.md) — 덧붙인 구간을 읽는 쪽.
-- [서명 외관](signature-appearance.md) — `build_pdf_with_placeholder`가 부른다.
-- [타임스탬프](timestamps.md) — `build_signer_info`가 토큰을 서명되지 않은 속성으로 넣는다.
-- [서명 감지](signature-detection.md), [서명 검증](signature-verification.md) — 결과를 읽는 쪽.
-- [CLI](cli.md) — `sign` 서브커맨드는 이 모듈을 부르지 않는다(스텁).
+- [Incremental save](incremental-save.md) — another implementation of the same approach. A defect found on one side is looked for on the other.
+- [Xref](xref.md) — the side that reads the appended section.
+- [Signature appearance](signature-appearance.md) — called by `build_pdf_with_placeholder`.
+- [Timestamps](timestamps.md) — `build_signer_info` puts the token in as an unsigned attribute.
+- [Signature detection](signature-detection.md), [Signature verification](signature-verification.md) — the sides that read the result.
+- [CLI](cli.md) — the `sign` subcommand does not call this module (a stub).
 
 ## Known holes / open
-- 서명 → 검증 왕복 테스트가 없다.
-- CLI `sign`은 "not yet fully implemented"를 출력하고 성공 코드로 끝난다. CLI는 `--cert`를 받지만 core에 PKCS#12 파서가 없다.
-- 암호화 문서는 서명할 수 없다(위).
-- Tracked: #33 (텍스트 문자열 인코딩), #37 (서명 연결·CLI sign)
+- There is no sign → verify round-trip test.
+- CLI `sign` prints "not yet fully implemented" and exits with a success code. The CLI takes `--cert`, but core has no PKCS#12 parser.
+- Encrypted documents cannot be signed (above).
+- Tracked: #33 (text string encoding), #37 (signature wiring, CLI sign)
