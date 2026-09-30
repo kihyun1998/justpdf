@@ -158,11 +158,58 @@ pub struct PdfDocument {
     objects: RwLock<LruCache<IndirectRef, PdfObject>>,
     /// Encryption/security state (None if document is not encrypted).
     security: Option<SecurityState>,
-    /// Cache of decoded object stream data (interior-mutable).
-    /// Each entry holds `(first, n, decoded_bytes)` where `first` is the byte
-    /// offset where actual object data starts (from the ObjStm dict's /First),
-    /// and `n` is the declared object count (/N).
-    decoded_obj_streams: RwLock<HashMap<u32, (usize, usize, Vec<u8>)>>,
+    /// Cache of decoded object streams by object stream number
+    /// (interior-mutable).
+    decoded_obj_streams: RwLock<HashMap<u32, ObjStm>>,
+}
+
+/// A decoded object stream and the offset of each object in it.
+struct ObjStm {
+    /// Decoded stream data.
+    decoded: Vec<u8>,
+    /// Absolute byte offset in `decoded` of each object, by index within the
+    /// stream; `None` for a pair whose offset is outside `decoded`.
+    offsets: Vec<Option<usize>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Number of times [`parse_obj_stream_offsets`] ran on this thread.
+    static OBJ_STREAM_OFFSET_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Number of indices within an object stream that an xref entry can address
+/// (`XrefEntry::Compressed::index_within` is a `u16`).
+const OBJ_STREAM_ADDRESSABLE_INDICES: u64 = u16::MAX as u64 + 1;
+
+/// Parse up to `n` `(object number, offset)` pairs, and at most
+/// [`OBJ_STREAM_ADDRESSABLE_INDICES`], from the head of an object stream's
+/// decoded data into absolute offsets (`first + offset`). Stops at the first
+/// pair that is not two integers, including one that fails to tokenize.
+fn parse_obj_stream_offsets(decoded: &[u8], first: i64, n: u64) -> Vec<Option<usize>> {
+    #[cfg(test)]
+    OBJ_STREAM_OFFSET_PARSES.with(|c| c.set(c.get() + 1));
+
+    use crate::tokenizer::token::Token;
+    let mut tokenizer = Tokenizer::new(decoded);
+    let mut offsets = Vec::new();
+    for _ in 0..n.min(OBJ_STREAM_ADDRESSABLE_INDICES) {
+        let Ok(Some(Token::Integer(_obj_num))) = tokenizer.next_token() else {
+            break;
+        };
+        let Ok(Some(Token::Integer(offset))) = tokenizer.next_token() else {
+            break;
+        };
+        let abs_offset = u64::try_from(first)
+            .ok()
+            .zip(u64::try_from(offset).ok())
+            .and_then(|(first, offset)| first.checked_add(offset))
+            .and_then(|abs| usize::try_from(abs).ok())
+            .filter(|&abs| abs < decoded.len());
+        offsets.push(abs_offset);
+    }
+    offsets.shrink_to_fit();
+    offsets
 }
 
 impl std::fmt::Debug for PdfDocument {
@@ -588,58 +635,46 @@ impl PdfDocument {
                 // object content begins. Inferring it from tokenizer position
                 // after the index pairs is off-by-N because of whitespace
                 // padding between the last index integer and the data section.
-                let first = dict.get_i64(b"First").ok_or_else(|| {
-                    JustPdfError::InvalidObject {
+                let first = dict
+                    .get_i64(b"First")
+                    .ok_or_else(|| JustPdfError::InvalidObject {
                         offset: 0,
-                        detail: format!(
-                            "object stream {obj_stream_num} missing /First"
-                        ),
-                    }
-                })? as usize;
-                let n = dict.get_i64(b"N").unwrap_or(0).max(0) as usize;
+                        detail: format!("object stream {obj_stream_num} missing /First"),
+                    })?;
+                let n = dict.get_i64(b"N").unwrap_or(0).max(0) as u64;
 
                 let decoded = stream::decode_stream(raw_data, dict)?;
+                let offsets = parse_obj_stream_offsets(&decoded, first, n);
                 self.decoded_obj_streams
                     .write()
                     .unwrap()
-                    .insert(obj_stream_num, (first, n, decoded));
+                    .insert(obj_stream_num, ObjStm { decoded, offsets });
             }
         }
 
         let cache = self.decoded_obj_streams.read().unwrap();
-        let (first, n, decoded) = cache.get(&obj_stream_num).unwrap();
-        let first = *first;
-        let n = *n;
-
-        // Parse the N index pairs from the head of the decoded data. The
-        // index region is always 0..first; data follows at byte `first`.
-        let mut tokenizer = Tokenizer::new(decoded);
-
-        let mut obj_offsets = Vec::with_capacity(n);
-        for _ in 0..n {
-            let obj_num = match tokenizer.next_token()? {
-                Some(crate::tokenizer::token::Token::Integer(v)) => v as u32,
-                _ => break,
-            };
-            let offset = match tokenizer.next_token()? {
-                Some(crate::tokenizer::token::Token::Integer(v)) => v as usize,
-                _ => break,
-            };
-            obj_offsets.push((obj_num, offset));
-        }
+        let obj_stm = cache.get(&obj_stream_num).unwrap();
 
         let idx = index_within as usize;
-        if idx >= obj_offsets.len() {
-            return Err(JustPdfError::ObjectNotFound {
-                obj_num: 0,
-                gen_num: 0,
-            });
-        }
+        let abs_offset = match obj_stm.offsets.get(idx) {
+            Some(Some(abs_offset)) => *abs_offset,
+            Some(None) => {
+                return Err(JustPdfError::InvalidObject {
+                    offset: 0,
+                    detail: format!(
+                        "object stream {obj_stream_num} index {idx} has an offset outside its data"
+                    ),
+                });
+            }
+            None => {
+                return Err(JustPdfError::ObjectNotFound {
+                    obj_num: 0,
+                    gen_num: 0,
+                });
+            }
+        };
 
-        let (_obj_num, obj_offset) = obj_offsets[idx];
-        let abs_offset = first + obj_offset;
-
-        let mut tokenizer = Tokenizer::new_at(decoded, abs_offset);
+        let mut tokenizer = Tokenizer::new_at(&obj_stm.decoded, abs_offset);
         object::parse_object(&mut tokenizer)
     }
 
@@ -760,6 +795,14 @@ mod tests {
     /// `index_within = 1` of the ObjStm so the off-by-one would route the
     /// parser into the previous object's bytes.
     fn build_objstm_pdf_with_first_padding() -> Vec<u8> {
+        build_objstm_pdf("2", None, None)
+    }
+
+    /// The ObjStm PDF of [`build_objstm_pdf_with_first_padding`] with the
+    /// ObjStm's `/N` value, index text and `/First` value given as the literal
+    /// text written to the file. `None` keeps the well-formed index
+    /// `"2 0 1 <len(obj2)> "` and a `/First` equal to its length.
+    fn build_objstm_pdf(n: &str, index_text: Option<&str>, first: Option<&str>) -> Vec<u8> {
         let mut pdf = Vec::new();
         pdf.extend_from_slice(b"%PDF-1.5\n%\xE2\xE3\xCF\xD3\n");
 
@@ -773,10 +816,17 @@ mod tests {
         let obj2_data: &[u8] = b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
         let obj1_data: &[u8] = b"<< /Type /Catalog /Pages 2 0 R >>";
 
-        // Trailing space after the last index integer is the padding that
-        // makes /First one byte beyond where the tokenizer naturally stops.
-        let index_text = format!("2 0 1 {} ", obj2_data.len());
-        let first = index_text.len();
+        // In the default index, the trailing space after the last integer is
+        // the padding that makes /First one byte beyond where the tokenizer
+        // naturally stops.
+        let index_text = match index_text {
+            Some(text) => text.to_string(),
+            None => format!("2 0 1 {} ", obj2_data.len()),
+        };
+        let first = match first {
+            Some(text) => text.to_string(),
+            None => index_text.len().to_string(),
+        };
 
         let mut objstm_data = Vec::new();
         objstm_data.extend_from_slice(index_text.as_bytes());
@@ -786,7 +836,8 @@ mod tests {
         let obj4_offset = pdf.len();
         pdf.extend_from_slice(
             format!(
-                "4 0 obj\n<< /Type /ObjStm /N 2 /First {} /Length {} >>\nstream\n",
+                "4 0 obj\n<< /Type /ObjStm /N {} /First {} /Length {} >>\nstream\n",
+                n,
                 first,
                 objstm_data.len()
             )
@@ -879,6 +930,148 @@ mod tests {
             }
             other => panic!("expected /Catalog dict, got {other:?}"),
         }
+    }
+
+    /// `/Type` of object `obj_num` (generation 0) in `doc`.
+    fn resolved_type(doc: &PdfDocument, obj_num: u32) -> Result<Option<Vec<u8>>> {
+        let obj = doc.resolve(&IndirectRef {
+            obj_num,
+            gen_num: 0,
+        })?;
+        Ok(obj
+            .as_dict()
+            .and_then(|d| d.get_name(b"Type"))
+            .map(<[u8]>::to_vec))
+    }
+
+    #[test]
+    fn test_objstm_huge_n_resolves_the_pairs_present() {
+        let data = build_objstm_pdf("1099511627776", None, None);
+        let doc = PdfDocument::from_bytes(data).unwrap();
+
+        assert_eq!(
+            resolved_type(&doc, 2).unwrap().as_deref(),
+            Some(b"Pages".as_slice())
+        );
+        assert_eq!(
+            resolved_type(&doc, 1).unwrap().as_deref(),
+            Some(b"Catalog".as_slice())
+        );
+    }
+
+    #[test]
+    fn test_objstm_offsets_are_parsed_once_per_stream() {
+        OBJ_STREAM_OFFSET_PARSES.with(|c| c.set(0));
+        let doc = PdfDocument::from_bytes(build_objstm_pdf_with_first_padding()).unwrap();
+
+        assert_eq!(
+            resolved_type(&doc, 2).unwrap().as_deref(),
+            Some(b"Pages".as_slice())
+        );
+        assert_eq!(
+            resolved_type(&doc, 1).unwrap().as_deref(),
+            Some(b"Catalog".as_slice())
+        );
+        assert_eq!(OBJ_STREAM_OFFSET_PARSES.with(|c| c.get()), 1);
+    }
+
+    #[test]
+    fn test_obj_stream_offsets_stop_at_the_indices_an_xref_entry_can_address() {
+        let decoded = "1 2 ".repeat(70_000).into_bytes();
+
+        let offsets = parse_obj_stream_offsets(&decoded, 0, u64::MAX);
+
+        assert_eq!(offsets.len(), 65_536);
+        assert_eq!(offsets[65_535], Some(2));
+    }
+
+    #[test]
+    fn test_objstm_index_that_fails_to_tokenize_keeps_the_pairs_before_it() {
+        OBJ_STREAM_OFFSET_PARSES.with(|c| c.set(0));
+        let doc = PdfDocument::from_bytes(build_objstm_pdf("3", Some("2 0 1 41 > "), Some("11")))
+            .unwrap();
+
+        assert_eq!(
+            resolved_type(&doc, 2).unwrap().as_deref(),
+            Some(b"Pages".as_slice())
+        );
+        assert_eq!(
+            resolved_type(&doc, 1).unwrap().as_deref(),
+            Some(b"Catalog".as_slice())
+        );
+        assert_eq!(OBJ_STREAM_OFFSET_PARSES.with(|c| c.get()), 1);
+    }
+
+    #[test]
+    fn test_objstm_n_above_the_pairs_present_resolves_them() {
+        let doc = PdfDocument::from_bytes(build_objstm_pdf("5", None, None)).unwrap();
+
+        assert_eq!(
+            resolved_type(&doc, 2).unwrap().as_deref(),
+            Some(b"Pages".as_slice())
+        );
+        assert_eq!(
+            resolved_type(&doc, 1).unwrap().as_deref(),
+            Some(b"Catalog".as_slice())
+        );
+    }
+
+    #[test]
+    fn test_objstm_n_below_the_pairs_present_leaves_later_indices_unfound() {
+        let doc = PdfDocument::from_bytes(build_objstm_pdf("1", None, None)).unwrap();
+
+        assert_eq!(
+            resolved_type(&doc, 2).unwrap().as_deref(),
+            Some(b"Pages".as_slice())
+        );
+        assert!(matches!(
+            resolved_type(&doc, 1),
+            Err(JustPdfError::ObjectNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn test_objstm_negative_offset_is_an_error() {
+        let doc =
+            PdfDocument::from_bytes(build_objstm_pdf("2", Some("2 0 1 -1 "), Some("9"))).unwrap();
+
+        assert_eq!(
+            resolved_type(&doc, 2).unwrap().as_deref(),
+            Some(b"Pages".as_slice())
+        );
+        assert!(matches!(
+            resolved_type(&doc, 1),
+            Err(JustPdfError::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn test_objstm_offset_past_the_data_is_an_error() {
+        let doc = PdfDocument::from_bytes(build_objstm_pdf("2", Some("2 0 1 5000 "), Some("11")))
+            .unwrap();
+
+        assert_eq!(
+            resolved_type(&doc, 2).unwrap().as_deref(),
+            Some(b"Pages".as_slice())
+        );
+        assert!(matches!(
+            resolved_type(&doc, 1),
+            Err(JustPdfError::InvalidObject { .. })
+        ));
+    }
+
+    #[test]
+    fn test_objstm_negative_first_is_an_error() {
+        let doc = PdfDocument::from_bytes(build_objstm_pdf("2", None, Some("-1"))).unwrap();
+
+        assert!(matches!(
+            resolved_type(&doc, 2),
+            Err(JustPdfError::InvalidObject { .. })
+        ));
+        assert!(matches!(
+            resolved_type(&doc, 1),
+            Err(JustPdfError::InvalidObject { .. })
+        ));
     }
 
     #[test]
@@ -1064,21 +1257,32 @@ mod tests {
         assert_eq!(doc.decoded_obj_streams.read().unwrap().len(), 0);
 
         // Verify the cache exists and is functional by inserting directly.
-        doc.decoded_obj_streams
-            .write()
-            .unwrap()
-            .insert(42, (0, 0, vec![1, 2, 3]));
+        doc.decoded_obj_streams.write().unwrap().insert(
+            42,
+            ObjStm {
+                decoded: vec![1, 2, 3],
+                offsets: Vec::new(),
+            },
+        );
         assert!(doc.decoded_obj_streams.read().unwrap().contains_key(&42));
         assert_eq!(
-            &doc.decoded_obj_streams.read().unwrap().get(&42).unwrap().2,
+            &doc.decoded_obj_streams
+                .read()
+                .unwrap()
+                .get(&42)
+                .unwrap()
+                .decoded,
             &[1, 2, 3]
         );
 
         // Authentication clear should also clear the stream cache.
-        doc.decoded_obj_streams
-            .write()
-            .unwrap()
-            .insert(99, (0, 0, vec![4, 5, 6]));
+        doc.decoded_obj_streams.write().unwrap().insert(
+            99,
+            ObjStm {
+                decoded: vec![4, 5, 6],
+                offsets: Vec::new(),
+            },
+        );
         // Simulate what authenticate() does:
         doc.objects.write().unwrap().clear();
         doc.decoded_obj_streams.write().unwrap().clear();

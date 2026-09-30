@@ -36,5 +36,4 @@
 
 ## Known holes / open
 - 객체 헤더의 번호가 xref와 달라도(오프셋이 다른 객체를 가리켜도) 그 객체를 돌려준다. object stream의 인덱스 번호도 같다. Tracked: #109
-- `load_compressed_object`는 object stream 안 객체를 처음 불러올 때마다 `/N`개 인덱스 쌍을 다시 토큰화하고(한 stream에 페이지 1만6천 개면 `collect_pages` 25초), 파일의 `/N`으로 `Vec::with_capacity`를 잡아 거대한 `/N`에서 프로세스가 abort한다. Tracked: #132
 - 캐시 적중도 쓰기 락을 잡으므로 여러 스레드의 `resolve`가 직렬화된다(추론: 병렬 렌더의 병목 후보).
