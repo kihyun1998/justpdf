@@ -9,7 +9,7 @@ Each consumer has its own assembly function: the render interpreter, the SVG ren
 ## Territories it holds in
 - [Render interpreter](../territory/render-interpreter.md) — `get_page_content`, `concat_content_streams`.
 - [SVG renderer](../territory/svg-renderer.md) — `get_page_content`, `concat_content_streams`.
-- [Bbox device](../territory/bbox-device.md) — `get_page_content` ("simplified version"), `concat_streams`.
+- [BBox device](../territory/bbox-device.md) — `get_page_content` ("simplified version"), `concat_streams`.
 - [Text extraction](../territory/text-extraction.md) — `get_page_content_data` (private).
 - [Redaction](../territory/redaction.md) — `get_page_content_data`.
 - [Content stream parsing](../territory/content-stream-parsing.md) — the side that receives the assembled bytes.
