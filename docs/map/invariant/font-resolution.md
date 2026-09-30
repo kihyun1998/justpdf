@@ -1,37 +1,37 @@
-# 폰트 해석 경로
+# Font resolution paths
 
 ## The fact
-같은 폰트는 텍스트 추출과 렌더링에서 **같은 방식으로 해석되어야** 한다: 문자 코드 분할(1/2바이트), 코드 → 글리프 매핑, 코드 → 유니코드 매핑, 글리프 폭. 두 경로가 폭을 다르게 계산하면 추출한 텍스트의 위치와 렌더된 글리프 위치가 어긋나고, 검색 하이라이트·리댁션 영역·레이아웃 분석이 화면과 맞지 않는다.
+The same font **must be interpreted the same way** by text extraction and by rendering: splitting character codes (1/2 bytes), code → glyph mapping, code → Unicode mapping, glyph widths. If the two paths compute widths differently, the positions of extracted text and of rendered glyphs drift apart, and search highlights, redaction areas and layout analysis stop matching the screen.
 
 ## Why it is cross-cutting
-두 소비처가 core `parse_font_info`에서 출발하지만 그 위를 **각자** 보강하고, 서로 호출하지 않는다:
-- 텍스트는 `/W`·`/DW`를 읽고(렌더는 안 읽음), 인코딩 표로 디코드한다(렌더는 안 씀).
-- 렌더는 `/CIDToGIDMap`을 읽고(텍스트는 필요 없음), 바이트를 유니코드 스칼라로 보고 폰트 cmap을 찾는다.
-- ToUnicode 해석 코드가 두 벌이다.
-- core에는 두 경로 어느 쪽도 쓰지 않는 폰트 모듈이 여럿 있다(CFF, Type3, recovery, OpenType 레이아웃).
+Both consumers start from core `parse_font_info`, but each builds on top of it **on its own**, and neither calls the other:
+- Text reads `/W` and `/DW` (render does not) and decodes with the encoding tables (render does not use them).
+- Render reads `/CIDToGIDMap` (text does not need it) and treats the byte as a Unicode scalar to look up the font's cmap.
+- There are two copies of the ToUnicode interpretation code.
+- Core has several font modules that neither path uses (CFF, Type3, recovery, OpenType layout).
 
 ## Territories it holds in
-- [폰트 로딩](../territory/font-loading.md) — 공통 출발점(CID 폭을 채우지 않음).
-- [폰트 인코딩](../territory/font-encodings.md) — 텍스트만 쓰는 인코딩 표.
-- [ToUnicode](../territory/tounicode.md) — 두 벌의 해석.
-- [CID 폰트](../territory/cid-fonts.md) — 폭은 텍스트에만, GID 매핑은 렌더에만.
-- [텍스트 추출](../territory/text-extraction.md) — `resolve_fonts`, `resolve_to_unicode`.
-- [렌더 인터프리터](../territory/render-interpreter.md) — `resolve_font`.
-- [글리프 렌더링](../territory/glyph-rendering.md) — `char_code_to_glyph_id`.
-- [SVG 렌더러](../territory/svg-renderer.md) — the third `resolve_font`.
-- [폰트 서브세팅](../territory/font-subsetting.md) — 서브셋 결과를 두 경로가 다르게 읽는다(렌더는 폰트 cmap, 텍스트는 ToUnicode). 서브세팅 자신도 코드 → GID를 따로 푼다(`simple_font_glyph_ids`·`cid_font_glyph_ids`) — 세 번째 해석이지만, GID를 유지하고 모든 경로의 합집합을 남기므로 다른 두 경로와 어긋나도 글리프를 잃지 않는다.
+- [Font loading](../territory/font-loading.md) — the common starting point (does not fill in CID widths).
+- [Font encodings](../territory/font-encodings.md) — encoding tables only text uses.
+- [ToUnicode](../territory/tounicode.md) — two copies of the interpretation.
+- [CID fonts](../territory/cid-fonts.md) — widths only in text, GID mapping only in render.
+- [Text extraction](../territory/text-extraction.md) — `resolve_fonts`, `resolve_to_unicode`.
+- [Render interpreter](../territory/render-interpreter.md) — `resolve_font`.
+- [Glyph rendering](../territory/glyph-rendering.md) — `char_code_to_glyph_id`.
+- [SVG renderer](../territory/svg-renderer.md) — the third `resolve_font`.
+- [Font subsetting](../territory/font-subsetting.md) — the two paths read the subset result differently (render through the font cmap, text through ToUnicode). Subsetting also resolves code → GID on its own (`simple_font_glyph_ids`, `cid_font_glyph_ids`) — a third interpretation, but because it keeps GIDs and keeps the union of every path, it loses no glyphs even where it disagrees with the other two.
 
 ## What a violation looks like
-- Type0(CJK) 폰트 페이지에서 렌더된 글자 간격과 추출된 텍스트 좌표가 다르다(렌더는 1000 고정 폭 — 추론).
-- 서브셋된 폰트가 렌더에서 글리프를 잃거나 엉뚱한 글리프를 그리는데 추출 텍스트는 멀쩡하다 — 추출만 보는 압축 테스트는 통과한다.
-- `/Differences` 폰트에서 추출과 렌더가 서로 다른 방식으로 틀린다.
+- On a page with a Type0 (CJK) font, the rendered character spacing and the extracted text coordinates differ (render uses a fixed width of 1000 — inferred).
+- A subset font loses glyphs or draws the wrong ones in render while extracted text is fine — compress tests that only look at extraction pass.
+- In a `/Differences` font, extraction and render are wrong in different ways.
 
 ## Discovery history
-기록된 사고가 없다. 2026-09-23 맵 작성 중 폰트/텍스트·렌더 연구 에이전트가 보고했다. 모두 코드 읽기에 의한 추론이었다.
+No incident recorded. Reported on 2026-09-23 by the font/text and render research agents while the map was being written. All of it was inferred from reading code.
 
-- 2026-09-23 #9 작업 중 서브셋 사례가 **실행으로 재현됐다**(단순 TrueType): 서브셋 폰트의 `cmap`이 옛 GID를 가리켜 그려질 글자 다섯 개가 모두 아웃라인을 잃었고, 같은 출력에서 텍스트 추출은 원문 그대로였다 — [폰트 서브세팅](../territory/font-subsetting.md#design-model).
+- 2026-09-23, while working on #9, the subset case was **reproduced by running it** (simple TrueType): the subset font's `cmap` pointed at old GIDs so all five characters to be drawn lost their outlines, while text extraction on the same output was unchanged — [Font subsetting](../territory/font-subsetting.md#design-model).
 
-- Tracked: #45 (/Differences·CID 폭·CFF)
+- Tracked: #45 (/Differences, CID widths, CFF)
 
 ## Where it will recur
-**폰트 사전에서 코드·글리프·폭·유니코드 중 하나를 얻는 함수를 텍스트나 렌더 한쪽에 추가하면 이 불변식의 대상이다.** 확인할 것: 다른 쪽에도 같은 정보가 필요한가? 공유 폰트 해석 타입이 core에 생기기 전까지, 한쪽 수정은 다른 쪽 수정 여부를 명시적으로 판단해야 한다.
+**Adding, on either the text or the render side, a function that gets a code, glyph, width or Unicode value from a font dictionary is subject to this invariant.** Check: does the other side need the same information? Until core has a shared font interpretation type, a fix on one side has to explicitly decide whether the other side needs the same fix.
