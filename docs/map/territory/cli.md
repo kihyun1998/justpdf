@@ -1,18 +1,18 @@
-# CLI (`justpdf` 바이너리)
+# CLI (the `justpdf` binary)
 
 ## What it is
-단 하나의 공식 PDF CLI. `info`·`text`·`render`·`merge`·`split`·`encrypt`·`decrypt`·`clean`·`compress`·`convert`·`sign` 서브커맨드가 core·render·formats를 직접 부른다. 태그 릴리스로 OS별 바이너리가 배포되는 유일한 제품이다.
+The one official PDF CLI. The `info`, `text`, `render`, `merge`, `split`, `encrypt`, `decrypt`, `clean`, `compress`, `convert` and `sign` subcommands call core, render and formats directly. It is the only product released as per-OS binaries from a tagged release.
 
 ## Governing decisions
-- [ADR-0003](../../adr/0003-cli-is-end-product-not-a-dependency-layer.md) — CLI는 완제품이다. 새 기능은 별도 도구가 아니라 서브커맨드로 더하고, core+render+formats를 통째로 의존하며, 바이너리 크기 최소화를 추구하지 않는다.
+- [ADR-0003](../../adr/0003-cli-is-end-product-not-a-dependency-layer.md) — the CLI is a finished product. New features are added as subcommands, not separate tools; it depends on core+render+formats wholesale and does not aim to minimize binary size.
 
 ## Design model
-- 암호화 입력은 `open_doc`이 `--password`로 인증한다.
-- `encrypt`는 항상 AES-128이고 `--no-print`·`--no-copy`만 노출한다. `DocumentModifier::set_encryption` 후 `build`만 부른다 — `/Info`·`/ID`·`/Encrypt`는 [문서 수정기](document-modifier.md)가 쓴다([객체 암호화](object-encryption.md)).
-- `clean`은 재빌드만 한다([정리(clean)](clean.md) 모듈을 부르지 않는다).
-- `convert`에는 MOBI·FB2 분기가 없다 — CLI가 formats `all`을 켜지만 두 형식은 "unsupported input format"이 된다.
-- `sign`은 "not yet fully implemented"를 출력하고 **성공 코드로 끝난다**.
-- `compress`는 `--preset` 위에 노브별 오버라이드(`resolve_options`: 플래그가 이기고 미지정은 프리셋 유지, `--x`/`--no-x` 동시 지정은 에러), `--analyze`(아무것도 쓰지 않음), `--verbose`(stderr 상세), `--password`(복호화 후 재직렬화해서 압축, 출력은 **암호화 없음**)를 가진다. `remove_unused_resources`만 플래그가 없다.
+- Encrypted input is authenticated by `open_doc` with `--password`.
+- `encrypt` is always AES-128 and exposes only `--no-print` and `--no-copy`. It calls only `build` after `DocumentModifier::set_encryption` — `/Info`, `/ID` and `/Encrypt` are written by [Document modifier](document-modifier.md) ([Object encryption](object-encryption.md)).
+- `clean` only rebuilds (it does not call the [Clean](clean.md) module).
+- `convert` has no MOBI or FB2 branch — the CLI turns on formats `all`, but the two formats end up as "unsupported input format".
+- `sign` prints "not yet fully implemented" and **exits with a success code**.
+- `compress` has per-knob overrides on top of `--preset` (`resolve_options`: a flag wins, an unspecified knob keeps the preset, giving both `--x`/`--no-x` is an error), `--analyze` (writes nothing), `--verbose` (details on stderr) and `--password` (decrypts, reserializes and compresses; the output is **not encrypted**). Only `remove_unused_resources` has no flag.
 
 ## Code
 - `justpdf-cli/src/main.rs` — `Commands`, `CompressArgs`, `resolve_options`, `open_doc`, `cmd_info`, `cmd_text`, `cmd_render`, `cmd_merge`, `cmd_split`, `cmd_encrypt`, `cmd_decrypt`, `cmd_clean`, `cmd_compress`, `cmd_convert`
@@ -21,21 +21,21 @@
 - `justpdf-cli/tests/encrypt.rs` — `encrypt_keeps_the_source_permanent_id`, `encrypt_without_source_id_gets_a_fresh_one`, `encrypt_with_empty_source_id_gets_a_fresh_one`
 
 ## Reference behaviour
-**None.** 기능 범위의 example 참조는 MuPDF `mutool`이다(`docs/mupdf-feature-analysis.md`). 명령별 동작을 `mutool`과 비교한 기록은 없다.
+**None.** The example reference for the feature scope is MuPDF `mutool` (`docs/mupdf-feature-analysis.md`). There is no record comparing each command's behaviour with `mutool`.
 
 ## Cross-cutting invariants
 **None.**
 
 ## Blast radius
-- [compress-presets](compress-presets.md), [압축 파이프라인](compress-pipeline.md) — `compress`의 이름·출력.
-- [텍스트 출력 형식](text-output-formats.md), [렌더 API](render-api.md), [SVG 렌더러](svg-renderer.md) — `text`·`render`.
-- [포맷 감지](format-detection.md), [포맷 변환 계약](format-document.md) — `convert`.
-- [문서 수정기](document-modifier.md), [파일 직렬화](file-serialization.md), [객체 암호화](object-encryption.md), [권한](permissions.md) — split/encrypt/decrypt/merge.
-- [서명](signing.md) — `sign`이 연결되어야 할 곳.
-- [릴리스](release.md) — 이 크레이트만 바이너리로 배포된다.
-- [게시 문서](published-docs.md) — README·mdBook(`docs/src/cli.md`)·크레이트 README의 CLI 예제. 플래그를 바꾸면 세 곳을 본다.
+- [Compress presets](compress-presets.md), [Compress pipeline](compress-pipeline.md) — `compress`'s names and output.
+- [Text output formats](text-output-formats.md), [Render API](render-api.md), [SVG renderer](svg-renderer.md) — `text` and `render`.
+- [Format detection](format-detection.md), [Format document](format-document.md) — `convert`.
+- [Document modifier](document-modifier.md), [File serialization](file-serialization.md), [Object encryption](object-encryption.md), [Permissions](permissions.md) — split/encrypt/decrypt/merge.
+- [Signing](signing.md) — where `sign` should be connected.
+- [Release](release.md) — only this crate is released as a binary.
+- [Published docs](published-docs.md) — the CLI examples in the README, the mdBook (`docs/src/cli.md`) and the crate README. When changing a flag, check all three.
 
 ## Known holes / open
-- `--structural` 도움말이 "GC + dedup + object streams"라고 하지만 object stream 패킹은 꺼져 있다.
-- "비암호화 PDF에 `--password`" 경로에 테스트가 없다(수동 실행으로는 정상).
-- Tracked: #37 (서명 연결·CLI sign), #49 (convert MOBI·FB2), #149 (`text --page`: 0-based message, `--page 0` panics)
+- The `--structural` help says "GC + dedup + object streams", but object stream packing is off.
+- The "`--password` on an unencrypted PDF" path has no test (it works when run by hand).
+- Tracked: #37 (connect signing, CLI sign), #49 (convert MOBI and FB2), #149 (`text --page`: 0-based message, `--page 0` panics)
