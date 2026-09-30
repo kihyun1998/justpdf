@@ -28,7 +28,7 @@ Parses the content of pages, Form XObjects and appearance streams into an operat
 - [Page content assembly](../invariant/page-content-assembly.md) — each consumer has its own way of building the parser's input.
 
 ## Blast radius
-- [Render interpreter](render-interpreter.md), [SVG renderer](svg-renderer.md), [Bbox device](bbox-device.md) — consumers of `ContentOp`.
+- [Render interpreter](render-interpreter.md), [SVG renderer](svg-renderer.md), [BBox device](bbox-device.md) — consumers of `ContentOp`.
 - [Text extraction](text-extraction.md) — the same operator stream.
 - [Redaction](redaction.md) — parses, then writes back with `write_content`.
 - [Compress grayscale](compress-grayscale.md) — parses, then writes back with `ContentOp::write_to`.

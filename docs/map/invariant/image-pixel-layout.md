@@ -11,8 +11,8 @@ Decoding is in one place, but **interpretation lives in several places, each its
 - [Render images](../territory/render-images.md) — `image_to_rgba`, 1-bit mask unpacking (mismatched with the CCITT and JBIG2 output).
 - [SVG renderer](../territory/svg-renderer.md) — a copy of `image_to_rgba`, a copy of `cs_from_name`.
 - [Render shading](../territory/render-shading.md) — `components_to_color` (a color conversion copy).
-- [compress-images](../territory/compress-images.md) — `to_rgb_pixels` (a CMYK copy, f32).
-- [compress-grayscale](../territory/compress-grayscale.md) — the luminosity formula (Rec.601; the renderer's masks use Rec.709).
+- [Compress images](../territory/compress-images.md) — `to_rgb_pixels` (a CMYK copy, f32).
+- [Compress grayscale](../territory/compress-grayscale.md) — the luminosity formula (Rec.601; the renderer's masks use Rec.709).
 - [Color spaces](../territory/color-spaces.md) — the original `cmyk_to_rgb` and the unused array color space model.
 
 Command to find them again: `rg -n 'fn image_to_rgba|fn to_rgb_pixels|fn components_to_color|fn cs_from_name|fn cmyk_to_rgb' --glob '*.rs' --glob '!target' .`

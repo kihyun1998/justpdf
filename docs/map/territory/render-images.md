@@ -27,7 +27,7 @@ Draws image XObjects, image masks, SMasks, explicit masks and inline images onto
 - [Image decoding](image-decoding.md) — input. If its output shape changes, look at `image_to_rgba` and the mask unpacking.
 - [Stream filters](stream-filters.md) — the cause of the double decode (the pass-through rule).
 - [Render transparency](render-transparency.md) — applying SMasks.
-- [SVG renderer](svg-renderer.md), [compress-images](compress-images.md) — other interpreters of the same decoded output.
+- [SVG renderer](svg-renderer.md), [Compress images](compress-images.md) — other interpreters of the same decoded output.
 - [Document builder](document-builder.md) — PDFs whose page raster went in through `embed_rgb` (CBZ/SVG input, since #88) are Flate image XObjects and are not drawn here (above).
 
 ## Known holes / open

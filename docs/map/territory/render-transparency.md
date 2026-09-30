@@ -12,7 +12,7 @@ Applies the alpha, blend mode and soft mask from an ExtGState (`gs`), and draws 
 - The `/G` form is drawn in its own `/Resources` scope, else the scope at the `gs` — [resource name scope](../invariant/resource-scope.md).
 - `/BC` (backdrop color) is ignored and black is used.
 - The body of `restore_clip_after_soft_mask` is empty ("we'll just leave the combined mask in place").
-- Luminosity weights are Rec.709. [compress-grayscale](compress-grayscale.md) uses Rec.601.
+- Luminosity weights are Rec.709. [Compress grayscale](compress-grayscale.md) uses Rec.601.
 - The ExtGState's `/Font` is ignored (text extraction does the same).
 
 ## Code
