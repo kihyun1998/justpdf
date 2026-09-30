@@ -1,7 +1,7 @@
 # General-purpose WASM binding
 
 ## What it is
-Exposes `WasmDocument` (constructor, authenticate, text, PNG render, size, Info) through wasm-bindgen. A different crate from the compression-only [compress-wasm](compress-wasm.md).
+Exposes `WasmDocument` (constructor, authenticate, text, PNG render, size, Info) through wasm-bindgen. A different crate from the compression-only [Compress WASM](compress-wasm.md).
 
 ## Governing decisions
 - [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md) — it should be outside the workspace, but it has no `[workspace]` block, so cargo currently cannot resolve its manifest ([aggregate](language-bindings.md#where-adr-0002-and-the-repository-disagree)).
