@@ -13,7 +13,7 @@
 | Stream deduplication (dict and data both equal) | [Compress dedup](compress-dedup.md) |
 | Removing unused resources | [Compress unused resources](compress-unused-resources.md) |
 | Stripping metadata, structure and auxiliary data | [Compress stripping](compress-stripping.md) |
-| Browser product / CLI subcommand | [Compress wasm](compress-wasm.md), [CLI](cli.md) |
+| Browser product / CLI subcommand | [Compress WASM](compress-wasm.md), [CLI](cli.md) |
 
 ## Why they sit together
 Every technique rewrites one `DocumentModifier` state, in order, inside a single `compress_pdf` call. The techniques do not call each other, but **each stage's output is the next stage's input**: dedup runs after image replacement, and GC runs after resource removal. So changing one technique's output shape (for example, the shape of a replaced image dict) means checking the later stages — the order is owned by [Compress pipeline](compress-pipeline.md).

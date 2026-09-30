@@ -26,7 +26,7 @@
 - [Compress presets](compress-presets.md) — knob → stage wiring.
 - [Document modifier](document-modifier.md) — `from_document`/`garbage_collect`/`build`.
 - [Document access](document-access.md) — the `is_encrypted` check.
-- [Compress wasm](compress-wasm.md), [CLI](cli.md) — expose the `CompressStats` and `AnalyzeResult` fields as they are. Adding or removing a field reaches the getters/output of both surfaces.
+- [Compress WASM](compress-wasm.md), [CLI](cli.md) — expose the `CompressStats` and `AnalyzeResult` fields as they are. Adding or removing a field reaches the getters/output of both surfaces.
 
 ## Known holes / open
 - core still refuses encrypted input. CLI `--password` authenticates, then passes bytes re-serialized through `DocumentModifier`, so the reported original size is the decrypted, re-serialized size, not the file size (inferred).
