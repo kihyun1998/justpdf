@@ -1,15 +1,15 @@
-# 액션
+# Actions
 
 ## What it is
-액션 사전(GoTo, URI, Launch, Named, JavaScript 등)을 모델로 파싱하고 체인을 따라가며, 모델에서 액션 사전을 만든다.
+Parses action dictionaries (GoTo, URI, Launch, Named, JavaScript and so on) into a model and follows the chain, and builds action dictionaries from the model.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- 문서 없이 `&PdfDict`만 받으므로 간접 참조를 해석할 수 없다. `/Next` 참조를 따라가지 못한다. `/F` 파일 스펙 사전은 무시한다.
-- JavaScript `/JS` 스트림을 디코드 없이 원 `data`로 읽는다(추론).
-- 목적지 타입은 [아웃라인](outlines.md)의 `Destination`을 재수출한다.
+- It takes only a `&PdfDict`, with no document, so it cannot resolve indirect references. It cannot follow a `/Next` reference. It ignores `/F` file specification dictionaries.
+- It reads a JavaScript `/JS` stream as its raw `data`, without decoding (inferred).
+- The destination type re-exports `Destination` from [Outlines](outlines.md).
 
 ## Code
 - `justpdf-core/src/action/types.rs` — `PdfAction`, `NamedAction`
@@ -17,15 +17,15 @@
 - `justpdf-core/src/action/builder.rs` — `build_action`
 
 ## Reference behaviour
-**None.** 비교 대상 조항: ISO 32000-2 §12.6.
+**None.** Clause to compare against: ISO 32000-2 §12.6.
 
 ## Cross-cutting invariants
-- [텍스트 문자열 인코딩](../invariant/text-string-encoding.md) — 빌더가 URI·JS 등 Rust 문자열을 BOM 없는 문자열로 쓴다.
+- [Text string encoding](../invariant/text-string-encoding.md) — the builder writes Rust strings such as URI and JS as strings without a BOM.
 
 ## Blast radius
-- [주석](annotations.md), [아웃라인](outlines.md) — `/A`를 이 모듈 없이 손으로 파싱한다. 액션 해석을 고치려면 세 곳을 본다.
-- [압축 제거](compress-stripping.md) — JavaScript 제거가 이 모델을 쓰지 않는다.
+- [Annotations](annotations.md), [Outlines](outlines.md) — parse `/A` by hand, without this module. Fixing action parsing means looking at three places.
+- [Compress stripping](compress-stripping.md) — JavaScript removal does not use this model.
 
 ## Known holes / open
-- 모듈 밖 소비처가 없다.
-- Tracked: #33 (텍스트 문자열 인코딩)
+- Nothing outside the module consumes it.
+- Tracked: #33 (text string encoding)
