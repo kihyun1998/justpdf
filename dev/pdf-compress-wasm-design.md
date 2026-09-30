@@ -1,360 +1,360 @@
-# PDF 압축 WASM 설계 문서
+# PDF compression WASM design document
 
-> 목표: 브라우저 확장 프로그램에서 사용할 PDF 압축 전용 WASM 모듈 구현
-> Ghostscript급 압축률을 pure Rust/WASM으로 달성
-
----
-
-## 1. 제품 개요
-
-### 사용 시나리오
-1. 사용자가 브라우저에서 PDF 파일을 선택 (또는 드래그 앤 드롭)
-2. WASM 모듈이 클라이언트 사이드에서 PDF를 압축
-3. 압축된 PDF를 다운로드
-
-### 핵심 요구사항
-- **서버 불필요** — 모든 처리가 브라우저 내에서 완료
-- **개인정보 보호** — PDF가 외부로 전송되지 않음
-- **합리적 속도** — 10MB PDF 기준 수 초 이내
-- **유의미한 압축률** — 이미지 PDF 50~80%, 텍스트 PDF 20~50% 크기 감소 목표
+> Goal: implement a compression-only PDF WASM module for use in a browser extension
+> Reach Ghostscript-level compression ratios in pure Rust/WASM
 
 ---
 
-## 2. 크레이트 구조
+## 1. Product overview
+
+### Usage scenario
+1. The user selects a PDF file in the browser (or drags and drops it)
+2. The WASM module compresses the PDF on the client side
+3. The compressed PDF is downloaded
+
+### Core requirements
+- **No server needed** — all processing is done inside the browser
+- **Privacy** — the PDF is never sent anywhere
+- **Reasonable speed** — within a few seconds for a 10MB PDF
+- **Meaningful compression ratio** — target size reduction of 50–80% for image PDFs, 20–50% for text PDFs
+
+---
+
+## 2. Crate structure
 
 ```
 justpdf/
-├── justpdf-core/                    # 기존 — 파싱, 수정, 직렬화
+├── justpdf-core/                    # existing — parsing, modification, serialization
 │   └── src/writer/
-│       ├── compress.rs              # 압축 엔진 (모든 기법 통합)
-│       ├── clean.rs                 # 기존 — dedup
-│       ├── modify.rs                # 기존 — DocumentModifier
-│       └── encode.rs                # 기존 — FlateDecode
+│       ├── compress.rs              # compression engine (all techniques combined)
+│       ├── clean.rs                 # existing — dedup
+│       ├── modify.rs                # existing — DocumentModifier
+│       └── encode.rs                # existing — FlateDecode
 │
-├── justpdf-wasm/                    # 기존 — 범용 WASM (변경 없음)
+├── justpdf-wasm/                    # existing — general-purpose WASM (unchanged)
 │
-└── justpdf-compress-wasm/           # 압축 전용 WASM (렌더러 없음, 번들 작음)
+└── justpdf-compress-wasm/           # compression-only WASM (no renderer, small bundle)
     ├── Cargo.toml
-    └── src/lib.rs                   # compress(), analyze() 만 노출
+    └── src/lib.rs                   # exposes only compress(), analyze()
 ```
 
 ---
 
-## 3. 업계 표준 비교
+## 3. Industry standard comparison
 
-> iLovePDF, SmallPDF 등 온라인 도구는 내부적으로 Ghostscript 계열 엔진 사용.
+> Online tools such as iLovePDF and SmallPDF use Ghostscript-family engines internally.
 
-| 기법 | Ghostscript | qpdf | 우리 (현재) | 우리 (목표) |
+| Technique | Ghostscript | qpdf | Ours (current) | Ours (target) |
 |------|:-----------:|:----:|:----------:|:----------:|
-| 이미지 JPEG 재인코딩 | ✓ | ✓ | ✓ | ✓ |
-| 이미지 다운샘플링 | ✓ | — | ✓ | ✓ |
-| 폰트 서브세팅 | ✓ | — | ✓ (TrueType만) | ✓ |
-| 폰트 스트림 재압축 | ✓ | — | ✓ | ✓ |
-| Flate 재압축 (최고 레벨) | ✓ | ✓ | ✓ | ✓ |
-| 중복 스트림 dedup | ✓ | — | ✓ | ✓ |
-| 미사용 리소스 제거 | ✓ | — | ✓ | ✓ |
-| 메타데이터/구조 제거 | ✓ | — | ✓ | ✓ |
-| Object Stream 압축 | — | ✓ | — (구현됨, 비활성) | ✓ |
-| 색상 → Grayscale | ✓ | — | ✓ (옵션) | ✓ |
-| GC (미사용 객체) | ✓ | ✓ | ✓ | ✓ |
-| 비압축 → FlateDecode | ✓ | ✓ | ✓ | ✓ |
+| Image JPEG re-encoding | ✓ | ✓ | ✓ | ✓ |
+| Image downsampling | ✓ | — | ✓ | ✓ |
+| Font subsetting | ✓ | — | ✓ (TrueType only) | ✓ |
+| Font stream recompression | ✓ | — | ✓ | ✓ |
+| Flate recompression (highest level) | ✓ | ✓ | ✓ | ✓ |
+| Duplicate stream dedup | ✓ | — | ✓ | ✓ |
+| Unused resource removal | ✓ | — | ✓ | ✓ |
+| Metadata/structure removal | ✓ | — | ✓ | ✓ |
+| Object Stream compression | — | ✓ | — (implemented, disabled) | ✓ |
+| Color → Grayscale | ✓ | — | ✓ (option) | ✓ |
+| GC (unused objects) | ✓ | ✓ | ✓ | ✓ |
+| Uncompressed → FlateDecode | ✓ | ✓ | ✓ | ✓ |
 
 ---
 
-## 4. 프리셋별 적용 기법
+## 4. Techniques applied per preset
 
-| 기법 | low | medium | high | extreme |
+| Technique | low | medium | high | extreme |
 |------|:---:|:------:|:----:|:-------:|
-| **이미지** | | | | |
-| JPEG 재인코딩 | — | q75 | q65 | q40 |
-| 이미지 다운스케일 | — | — | 150dpi | 96dpi |
-| RGB → Grayscale | — | — | — | — (`grayscale` 옵션으로만, 어떤 프리셋도 켜지 않음) |
-| **폰트** | | | | |
-| 폰트 서브세팅 | — | ✓ | ✓ | ✓ |
-| **스트림** | | | | |
-| 비압축 → FlateDecode | ✓ | ✓ | ✓ | ✓ |
-| Flate 재압축 (best) | ✓ | ✓ | ✓ | ✓ |
-| **구조** | | | | |
-| GC (미사용 객체) | ✓ | ✓ | ✓ | ✓ |
-| 중복 스트림 dedup | ✓ | ✓ | ✓ | ✓ |
-| 미사용 리소스 제거 | — | ✓ | ✓ | ✓ |
-| **제거** | | | | |
-| 메타데이터 (XMP 등) | — | — | ✓ | ✓ |
-| 구조 트리/썸네일 | — | — | ✓ | ✓ |
-| 임베디드 파일 | — | — | — | ✓ |
-| JavaScript/액션 | — | — | — | ✓ |
+| **Images** | | | | |
+| JPEG re-encoding | — | q75 | q65 | q40 |
+| Image downscaling | — | — | 150dpi | 96dpi |
+| RGB → Grayscale | — | — | — | — (only through the `grayscale` option; no preset turns it on) |
+| **Fonts** | | | | |
+| Font subsetting | — | ✓ | ✓ | ✓ |
+| **Streams** | | | | |
+| Uncompressed → FlateDecode | ✓ | ✓ | ✓ | ✓ |
+| Flate recompression (best) | ✓ | ✓ | ✓ | ✓ |
+| **Structure** | | | | |
+| GC (unused objects) | ✓ | ✓ | ✓ | ✓ |
+| Duplicate stream dedup | ✓ | ✓ | ✓ | ✓ |
+| Unused resource removal | — | ✓ | ✓ | ✓ |
+| **Removal** | | | | |
+| Metadata (XMP etc.) | — | — | ✓ | ✓ |
+| Structure tree/thumbnails | — | — | ✓ | ✓ |
+| Embedded files | — | — | — | ✓ |
+| JavaScript/actions | — | — | — | ✓ |
 | Output Intent/ICC | — | — | ✓ | ✓ |
-| **정보 손실** | 없음 | 최소 | 보통 | 큼 |
+| **Information loss** | None | Minimal | Moderate | Large |
 
 ---
 
-## 5. 구현 로드맵
+## 5. Implementation roadmap
 
-### Phase A: 핵심 압축 엔진 — ✅ 완료
+### Phase A: core compression engine — ✅ done
 
 ```
-[v0.1 — 커밋 fa3bfd1]
-  ✅ A-1. 이미지 JPEG 재인코딩 (quality 조절)
-  ✅ A-2. 비-JPEG → JPEG 변환 (PNG, Raw 등)
-  ✅ A-3. 이미지 다운스케일 (max DPI, Lanczos3)
-  ✅ A-4. 비압축 스트림 FlateDecode 자동 적용
-  ✅ A-5. GC — 미사용 객체 제거
-  ✅ A-6. 프리셋 4개 (low/medium/high/extreme) + custom
+[v0.1 — commit fa3bfd1]
+  ✅ A-1. Image JPEG re-encoding (quality control)
+  ✅ A-2. Non-JPEG → JPEG conversion (PNG, Raw, etc.)
+  ✅ A-3. Image downscaling (max DPI, Lanczos3)
+  ✅ A-4. Automatic FlateDecode for uncompressed streams
+  ✅ A-5. GC — unused object removal
+  ✅ A-6. 4 presets (low/medium/high/extreme) + custom
   ✅ A-7. compress_pdf(), analyze_pdf() API
-  ✅ A-8. justpdf-compress-wasm WASM 바인딩
-  ✅ A-9. compress_pdf CLI 예제
-  ✅ A-10. 단위 테스트 13개
+  ✅ A-8. justpdf-compress-wasm WASM binding
+  ✅ A-9. compress_pdf CLI example
+  ✅ A-10. 13 unit tests
 ```
 
 ---
 
-### Phase B: 스트림 최적화 — ✅ 완료
+### Phase B: stream optimization — ✅ done
 
-모든 스트림(폰트, 컨텐츠, 이미지 등)을 최고 압축 레벨로 재압축.
-
-```
-구현:
-  ✅ B-1. Flate 재압축 — FlateDecode 스트림을 디코딩 → Compression::best()로 재인코딩
-  ✅ B-2. 비압축 스트림 감지 강화 — /Length만 있고 /Filter 없는 스트림 모두 처리
-
-테스트:
-  ✅ B-T1. FlateDecode 스트림 재압축 → 출력 크기 ≤ 원본 (무손실)
-  ✅ B-T2. 재압축 왕복 → 디코딩 결과 원본과 동일
-  ✅ B-T3. 이미 best 레벨인 스트림 → 크기 변화 없거나 미미
-  ✅ B-T4. 텍스트 PDF 20페이지 → 재압축 후 개선 확인
-```
-
----
-
-### Phase C: 중복 스트림 dedup — ✅ 완료
-
-SHA-256 해시로 동일 스트림 데이터를 감지하고 참조를 통합.
+Recompress every stream (fonts, content, images, etc.) at the highest compression level.
 
 ```
-구현:
-  ✅ C-1. 스트림 데이터 SHA-256 해시 계산
-  ✅ C-2. 동일 해시 객체 → 첫 번째만 유지, 나머지 참조 리맵
-  ✅ C-3. 리맵 후 GC로 고아 객체 제거
+Implementation:
+  ✅ B-1. Flate recompression — decode FlateDecode streams → re-encode with Compression::best()
+  ✅ B-2. Stronger uncompressed stream detection — handle every stream with /Length and no /Filter
 
-테스트:
-  ✅ C-T1. 동일 이미지 2개 임베딩 → dedup 후 1개로 통합, 참조 정상
-  ✅ C-T2. 사전·데이터가 같은 스트림 2개 → dedup 후 1개로 통합, 참조 정상 (#27에서 교체 — 이전 테스트는 폰트 스트림 없는 입력으로 아무것도 확인하지 않았다)
-  ✅ C-T3. 서로 다른 스트림 → dedup 안 됨 (오탐 없음)
-  ✅ C-T4. dedup 후 PDF re-parse → 페이지 수, 텍스트 추출 정상
+Tests:
+  ✅ B-T1. Recompress a FlateDecode stream → output size ≤ original (lossless)
+  ✅ B-T2. Recompression round trip → decoded result identical to the original
+  ✅ B-T3. Stream already at best level → no or negligible size change
+  ✅ B-T4. 20-page text PDF → improvement confirmed after recompression
 ```
 
 ---
 
-### Phase D: 폰트 서브세팅 — ✅ 완료
+### Phase C: duplicate stream dedup — ✅ done
 
-사용 글리프만 남겨 폰트 크기 50~90% 감소. `font/subset.rs` 코드 활용.
+Detect identical stream data by SHA-256 hash and merge the references.
 
 ```
-구현:
-  ✅ D-1. 페이지별 사용 글리프 수집 (컨텐츠 스트림 파싱 Tf/Tj/TJ)
-  ✅ D-2. subset_font()로 FontFile2 스트림 서브셋 생성
-  ✅ D-3. FontDescriptor의 FontFile2 스트림 교체
-  ✅ D-4. Widths 배열 업데이트 (gid_map 기반 리매핑) — #51에서 제거: GID를 유지하므로 폰트 사전은 그대로 둔다
-  ✅ D-5. CID 폰트 지원 (Type0 → CIDFontType2 → FontFile2)
-  ✅ D-6. CIDToGIDMap 업데이트 (서브셋 후 GID 리매핑) — #51에서 제거: GID를 유지하므로 폰트 사전은 그대로 둔다
-  ✅ D-7. 2-byte CID 문자 코드 추출
+Implementation:
+  ✅ C-1. Compute SHA-256 hashes of stream data
+  ✅ C-2. Objects with the same hash → keep only the first, remap the other references
+  ✅ C-3. After remapping, remove orphaned objects with GC
 
-주의:
-  ✅ CFF 폰트 미지원 (TrueType/glyf만) → 자동 스킵
-  ✅ CID 폰트 (CIDFontType2) 처리 완료
-  ✅ 서브세팅 실패 시 원본 유지 (안전장치)
-
-테스트:
-  ✅ D-T1. Standard 폰트 → 서브세팅 안전하게 스킵
-  ✅ D-T2. 서브세팅 비활성 → 처리 안 됨
-  ✅ D-T3. 프리셋별 설정 확인 (low=off, medium+=on)
-  ✅ D-T4. 이미지 PDF + 서브세팅 파이프라인 크래시 없음
-  ✅ D-T5. 비-TrueType 폰트 → 스킵
+Tests:
+  ✅ C-T1. Embed 2 identical images → merged into 1 after dedup, references intact
+  ✅ C-T2. 2 streams with the same dictionary and data → merged into 1 after dedup, references intact (replaced in #27 — the old test checked nothing, since its input had no font stream)
+  ✅ C-T3. Different streams → not deduplicated (no false positives)
+  ✅ C-T4. Re-parse the PDF after dedup → page count and text extraction correct
 ```
 
 ---
 
-### Phase E: 미사용 리소스 제거 — ✅ 완료
+### Phase D: font subsetting — ✅ done
 
-페이지에서 실제 참조되지 않는 폰트/이미지/ExtGState를 Resources에서 제거.
-
-```
-구현:
-  ✅ E-1. 페이지 컨텐츠 스트림 파싱 → 사용된 리소스 이름 수집
-         (Tf의 폰트 이름, Do의 XObject 이름, gs의 ExtGState 이름)
-  ✅ E-2. Resources dict에서 미사용 항목 제거
-  ✅ E-3. GC로 고아 객체 자동 수거
-
-테스트:
-  ✅ E-T1. 미사용 리소스 제거 후 PDF 유효
-  ✅ E-T2. 제거 후 텍스트 추출 정상
-  ✅ E-T3. low 프리셋 → 제거 비활성
-  ✅ E-T4. 이미지 PDF → 사용 중인 이미지 보존
-```
-
----
-
-### Phase F: 불필요 데이터 제거 — ✅ 완료
-
-메타데이터, 구조 트리, 썸네일, 임베디드 파일 등 제거.
+Keep only the glyphs used, cutting font size by 50–90%. Uses the `font/subset.rs` code.
 
 ```
-구현:
-  ✅ F-1. XMP 메타데이터 스트림 제거 (Catalog /Metadata)
-  ✅ F-2. 구조 트리 제거 (Catalog /StructTreeRoot)
-  ✅ F-3. 페이지 썸네일 제거 (Page /Thumb)
-  ✅ F-4. Output Intent 제거 (Catalog /OutputIntents)
-  ✅ F-5. 임베디드 파일 제거 (Catalog /Names → /EmbeddedFiles)
-  ✅ F-6. JavaScript 제거 (Catalog /Names → /JavaScript, 페이지 /AA)
-  ✅ F-7. /PieceInfo, /LastModified, /MarkInfo 등 앱 전용 데이터 제거
-  ✅ F-8. 프리셋별 제거 범위 적용 (high: strip_metadata / extreme: +strip_extras)
+Implementation:
+  ✅ D-1. Collect the glyphs used per page (content stream parsing Tf/Tj/TJ)
+  ✅ D-2. Build a FontFile2 stream subset with subset_font()
+  ✅ D-3. Replace the FontFile2 stream in the FontDescriptor
+  ✅ D-4. Update the Widths array (remapping based on gid_map) — removed in #51: GIDs are kept, so the font dictionary is left as is
+  ✅ D-5. CID font support (Type0 → CIDFontType2 → FontFile2)
+  ✅ D-6. Update CIDToGIDMap (GID remapping after subsetting) — removed in #51: GIDs are kept, so the font dictionary is left as is
+  ✅ D-7. Extract 2-byte CID character codes
 
-테스트:
-  ✅ F-T1. low 프리셋 → 메타데이터 제거 안 됨
-  ✅ F-T2. high 프리셋 → 메타데이터 제거, PDF 유효
-  ✅ F-T3. extreme 프리셋 → extras 포함 제거, PDF 유효
-  ✅ F-T4. 제거 후 텍스트 추출 정상
-  ✅ F-T5. 프리셋별 strip 설정 확인
-  ✅ F-T6. 이미지 PDF → 이미지 보존
+Notes:
+  ✅ CFF fonts not supported (TrueType/glyf only) → skipped automatically
+  ✅ CID fonts (CIDFontType2) handled
+  ✅ Keep the original when subsetting fails (safeguard)
+
+Tests:
+  ✅ D-T1. Standard font → subsetting safely skipped
+  ✅ D-T2. Subsetting disabled → not processed
+  ✅ D-T3. Per-preset settings confirmed (low=off, medium+=on)
+  ✅ D-T4. Image PDF + subsetting pipeline does not crash
+  ✅ D-T5. Non-TrueType font → skipped
 ```
 
 ---
 
-### Phase G: 색상 변환 (Grayscale) — ✅ 완료
+### Phase E: unused resource removal — ✅ done
 
-RGB/CMYK 이미지를 Grayscale로 변환하여 대폭 크기 감소.
+Remove fonts/images/ExtGState that a page does not actually reference from its Resources.
 
 ```
-구현:
-  ✅ G-1. RGB → Grayscale 변환 (luminance: 0.299R + 0.587G + 0.114B)
-  ✅ G-2. CMYK → Grayscale 변환
-  ✅ G-3. CompressOptions.grayscale: bool 옵션 (기본 false, 명시적 opt-in)
-  ✅ G-4. 컨텐츠 스트림 색상 연산자 업데이트 (rg→g, RG→G, k→g, K→G)
+Implementation:
+  ✅ E-1. Parse page content streams → collect the resource names used
+         (font names in Tf, XObject names in Do, ExtGState names in gs)
+  ✅ E-2. Remove unused entries from the Resources dict
+  ✅ E-3. Collect orphaned objects automatically with GC
 
-테스트:
-  ✅ G-T1. RGB 이미지 → Grayscale 변환 후 크기 감소
-  ✅ G-T2. Grayscale 변환 후 re-parse 정상
-  ✅ G-T3. grayscale=false → 색상 변환 안 됨
-  ✅ G-T4. 텍스트 전용 PDF + grayscale=true → 크래시 없음
+Tests:
+  ✅ E-T1. PDF valid after unused resources are removed
+  ✅ E-T2. Text extraction correct after removal
+  ✅ E-T3. low preset → removal disabled
+  ✅ E-T4. Image PDF → images in use preserved
 ```
 
 ---
 
-### Phase H: Object Stream 압축 — ⚠️ 구현됨, 파이프라인에서 비활성
+### Phase F: unnecessary data removal — ✅ done
 
-작은 딕셔너리 객체를 Object Stream으로 묶어 PDF 1.5+ 최적화.
+Remove metadata, structure trees, thumbnails, embedded files, etc.
 
 ```
-구현:
-  ✅ H-1. catalog_ref 무효화 문제 해결 (catalog obj_num 추적)
-  ✅ H-2. pack_object_streams() → PackResult (compressed info 포함)
-  ✅ H-3. xref stream 생성 — write_xref_stream() (type 0/1/2 entries)
+Implementation:
+  ✅ F-1. Remove the XMP metadata stream (Catalog /Metadata)
+  ✅ F-2. Remove the structure tree (Catalog /StructTreeRoot)
+  ✅ F-3. Remove page thumbnails (Page /Thumb)
+  ✅ F-4. Remove Output Intents (Catalog /OutputIntents)
+  ✅ F-5. Remove embedded files (Catalog /Names → /EmbeddedFiles)
+  ✅ F-6. Remove JavaScript (Catalog /Names → /JavaScript, page /AA)
+  ✅ F-7. Remove app-specific data such as /PieceInfo, /LastModified, /MarkInfo
+  ✅ F-8. Apply the removal scope per preset (high: strip_metadata / extreme: +strip_extras)
+
+Tests:
+  ✅ F-T1. low preset → metadata not removed
+  ✅ F-T2. high preset → metadata removed, PDF valid
+  ✅ F-T3. extreme preset → removal including extras, PDF valid
+  ✅ F-T4. Text extraction correct after removal
+  ✅ F-T5. Per-preset strip settings confirmed
+  ✅ F-T6. Image PDF → images preserved
+```
+
+---
+
+### Phase G: color conversion (Grayscale) — ✅ done
+
+Convert RGB/CMYK images to Grayscale for a large size reduction.
+
+```
+Implementation:
+  ✅ G-1. RGB → Grayscale conversion (luminance: 0.299R + 0.587G + 0.114B)
+  ✅ G-2. CMYK → Grayscale conversion
+  ✅ G-3. CompressOptions.grayscale: bool option (default false, explicit opt-in)
+  ✅ G-4. Update color operators in content streams (rg→g, RG→G, k→g, K→G)
+
+Tests:
+  ✅ G-T1. RGB image → size reduced after Grayscale conversion
+  ✅ G-T2. Re-parse correct after Grayscale conversion
+  ✅ G-T3. grayscale=false → no color conversion
+  ✅ G-T4. Text-only PDF + grayscale=true → no crash
+```
+
+---
+
+### Phase H: Object Stream compression — ⚠️ implemented, disabled in the pipeline
+
+Pack small dictionary objects into Object Streams as a PDF 1.5+ optimization.
+
+```
+Implementation:
+  ✅ H-1. Fixed the catalog_ref invalidation problem (track the catalog obj_num)
+  ✅ H-2. pack_object_streams() → PackResult (including compressed info)
+  ✅ H-3. xref stream generation — write_xref_stream() (type 0/1/2 entries)
   ✅ H-4. serialize_pdf_with_xref_stream() + build_with_xref_stream()
-  ⚠️ H-5. compress_pdf 연동 — 코드 경로(`pack_into_object_streams`)는 있으나 비활성.
-         일부 뷰어의 xref stream 호환성 문제 때문 (`compress_pdf` Step 5 주석)
+  ⚠️ H-5. compress_pdf integration — the code path (`pack_into_object_streams`) exists but is disabled.
+         Because of xref stream compatibility problems in some viewers (the `compress_pdf` Step 5 comment)
 
-테스트:
-  ✅ H-T1. eligible 객체 패킹 → 객체 수 감소
-  ✅ H-T2. ObjStm 메타데이터 (Type, N, First) 정상
-  ✅ H-T3. catalog, pages root, Stream → object stream에 포함 안 됨
+Tests:
+  ✅ H-T1. Packing eligible objects → object count reduced
+  ✅ H-T2. ObjStm metadata (Type, N, First) correct
+  ✅ H-T3. catalog, pages root, Stream → not included in an object stream
 ```
 
 ---
 
-### Phase I: WASM 고급 기능 — ✅ 완료
+### Phase I: advanced WASM features — ✅ done
 
 ```
-구현:
-  ✅ I-1. CompressOptions 전체 WASM 노출 — compress_advanced() 함수
+Implementation:
+  ✅ I-1. Expose all of CompressOptions to WASM — compress_advanced() function
          (jpeg_quality, max_dpi, font_subsetting, remove_unused_resources,
           strip_metadata, strip_extras, grayscale)
-  ✅ I-2. CompressStats 전체 필드 노출 — 14개 getter
+  ✅ I-2. Expose every CompressStats field — 14 getters
          (original_size, compressed_size, images_found, images_recompressed,
           images_downscaled, images_skipped, duplicates_removed, objects_removed_gc,
           streams_recompressed, fonts_subsetted, unused_resources_removed,
           metadata_items_stripped, images_grayscaled, ratio)
-  ✅ I-3. wasm-pack build --target web 검증 (697KB, getrandom js feature 추가)
-  ✅ I-4. npm 패키지 배포 — @kihyun1998/justpdf-compress-wasm (현재 버전은 npm 참조)
+  ✅ I-3. Verified wasm-pack build --target web (697KB, added the getrandom js feature)
+  ✅ I-4. npm package release — @kihyun1998/justpdf-compress-wasm (see npm for the current version)
 ```
 
 ---
 
-### Phase J: DPI 정밀 계산 — ✅ 완료
+### Phase J: precise DPI calculation — ✅ done
 
 ```
-구현:
-  ✅ J-1. 컨텐츠 스트림에서 cm/q/Q 연산자 추적 → Do 직전 CTM 추출
+Implementation:
+  ✅ J-1. Track cm/q/Q operators in content streams → extract the CTM right before Do
   ✅ J-2. effective DPI = image_px / (ctm_scale / 72)
-  ✅ J-3. CTM 기반 접근법 우선 사용, CTM 없으면 픽셀 기반 폴백
-  ✅ J-4. 여러 페이지에서 같은 이미지 사용 시 최대 display size 기준
+  ✅ J-3. Prefer the CTM-based approach; without a CTM, fall back to pixel-based
+  ✅ J-4. When the same image is used on several pages, use the largest display size
 
-테스트:
-  ✅ J-T1. 200x200pt에 4000x4000px 이미지 → DPI 1440 감지, 150으로 다운스케일
-  ✅ J-T2. 전체 페이지 이미지 (300 DPI) → 150 DPI로 다운스케일
-  ✅ J-T3. 이미 DPI 예산 내 → 다운스케일 안 함
-  ✅ J-T4. CTM 없으면 픽셀 기반 폴백 → 기존 동작과 동일
-  ✅ J-T5. 행렬 곱셈 정확성 검증
+Tests:
+  ✅ J-T1. 4000x4000px image in 200x200pt → DPI 1440 detected, downscaled to 150
+  ✅ J-T2. Full-page image (300 DPI) → downscaled to 150 DPI
+  ✅ J-T3. Already within the DPI budget → not downscaled
+  ✅ J-T4. No CTM → pixel-based fallback, same as the previous behaviour
+  ✅ J-T5. Matrix multiplication correctness verified
 ```
 
 ---
 
-## 6. 실물 테스트 결과
+## 6. Real-world test results
 
-### v0.1 (Phase A) 기준
+### As of v0.1 (Phase A)
 
-**interest_free_loans_brochure.pdf** (0.51 MB, 이미지 위주)
+**interest_free_loans_brochure.pdf** (0.51 MB, mostly images)
 
-| 프리셋 | 출력 크기 | 감소율 | 재인코딩 | 다운스케일 |
+| Preset | Output size | Reduction | Re-encoded | Downscaled |
 |--------|----------|--------|---------|-----------|
 | low | 0.51 MB | 0.3% | 0 | 0 |
 | medium | 0.50 MB | 4.1% | 2 | 0 |
 | high | 0.45 MB | 12.8% | 4 | 1 |
 | extreme | 0.29 MB | **43.7%** | 4 | 1 |
 
-**translated_33_45.pdf** (69.4 MB, 텍스트/폰트 위주)
+**translated_33_45.pdf** (69.4 MB, mostly text/fonts)
 
-| 프리셋 | 출력 크기 | 감소율 | 비고 |
+| Preset | Output size | Reduction | Notes |
 |--------|----------|--------|------|
-| high | 69.26 MB | 0.2% | 이미지 9.3MB(13%)뿐, 나머지 폰트/텍스트 |
-| extreme | 69.05 MB | 0.6% | Phase B~D 적용 시 대폭 개선 예상 |
+| high | 69.26 MB | 0.2% | Images are only 9.3MB (13%); the rest is fonts/text |
+| extreme | 69.05 MB | 0.6% | Large improvement expected once Phases B–D apply |
 
-### Phase 완료 시 기대 효과
+### Expected effect as Phases complete
 
-| Phase | interest_free (이미지) | translated (텍스트) |
+| Phase | interest_free (images) | translated (text) |
 |-------|:---------------------:|:-------------------:|
-| A (현재) | 43.7% | 0.6% |
-| + B (Flate 재압축) | ~45% | ~5% |
+| A (current) | 43.7% | 0.6% |
+| + B (Flate recompression) | ~45% | ~5% |
 | + C (dedup) | ~45% | ~10% |
-| + D (폰트 서브세팅) | ~45% | ~30~50% |
-| + E (미사용 리소스) | ~46% | ~35~55% |
-| + F (데이터 제거) | ~48% | ~40~60% |
+| + D (font subsetting) | ~45% | ~30~50% |
+| + E (unused resources) | ~46% | ~35~55% |
+| + F (data removal) | ~48% | ~40~60% |
 
 ---
 
-## 7. 리스크 & 결정 사항
+## 7. Risks & decisions
 
-| 항목 | 결정 |
+| Item | Decision |
 |------|------|
-| CMYK JPEG | 스킵 — 색상 변환 손실 위험 |
-| SMask(투명도) 있는 이미지 | 스킵 — JPEG은 알파 미지원 |
-| 인라인 이미지 (BI/ID/EI) | XObject만 처리, 인라인은 후순위 |
-| 암호화된 PDF | 에러 반환 |
-| 재인코딩 후 원본보다 커지면 | 교체 취소 (안전장치) |
-| 폰트 서브세팅 실패 | 원본 유지 (안전장치) |
-| CFF 폰트 서브세팅 | 미지원 → TrueType만 |
-| Grayscale 변환 | 옵션 플래그로만 (프리셋은 켜지 않음) |
-| 구조 트리 제거 | 접근성 손실 — high/extreme만 |
-| clean_objects renumbering | catalog_ref 무효화 → GC만 사용 |
+| CMYK JPEG | Skip — risk of loss in color conversion |
+| Images with an SMask (transparency) | Skip — JPEG does not support alpha |
+| Inline images (BI/ID/EI) | Only XObjects are handled; inline images are lower priority |
+| Encrypted PDF | Return an error |
+| Larger than the original after re-encoding | Cancel the replacement (safeguard) |
+| Font subsetting fails | Keep the original (safeguard) |
+| CFF font subsetting | Not supported → TrueType only |
+| Grayscale conversion | Only through an option flag (presets do not turn it on) |
+| Structure tree removal | Loses accessibility — high/extreme only |
+| clean_objects renumbering | Invalidates catalog_ref → use GC only |
 
 ---
 
-## 8. WASM 제약사항
+## 8. WASM constraints
 
-| 제약 | 대응 |
+| Constraint | Response |
 |------|------|
-| 싱글 스레드 | Web Worker로 UI 블록 방지 |
-| 메모리 ~2GB | 100MB+ PDF는 경고 |
-| 파일 시스템 없음 | `&[u8]` ↔ `Vec<u8>` |
-| 번들 크기 | 렌더러 제외, ~1-1.5MB 예상 |
+| Single thread | Use a Web Worker to avoid blocking the UI |
+| Memory ~2GB | Warn for PDFs of 100MB+ |
+| No file system | `&[u8]` ↔ `Vec<u8>` |
+| Bundle size | Renderer excluded, ~1-1.5MB expected |
 
-모든 의존성 pure Rust → WASM 블로커 없음.
+All dependencies are pure Rust → no WASM blockers.
