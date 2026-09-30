@@ -1,13 +1,13 @@
-# Python 바인딩
+# Python binding
 
 ## What it is
-PyO3 모듈(maturin 빌드). `Document`(열기·인증·텍스트·렌더·Info)와 크기·회전만 가진 `Page`.
+A PyO3 module (built with maturin). `Document` (open, authenticate, text, render, Info) and a `Page` that has only size and rotation.
 
 ## Governing decisions
-- [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md) — 빈 `[workspace]`와 자체 `Cargo.lock`으로 ADR대로 분리되어 있다.
+- [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md) — split off as the ADR says, with an empty `[workspace]` and its own `Cargo.lock`.
 
 ## Design model
-- `Page`에는 텍스트 메서드가 없다(텍스트는 `Document.page_text`).
+- `Page` has no text method (text is `Document.page_text`).
 - Only core `PageOutOfRange` (from rendering, `RenderError::Core(PageOutOfRange)`) becomes `IndexError`; every other error becomes `RuntimeError(str(e))` (`page_error`, `render_error`, #134; measured by building the module with cargo and calling it from Python — no test in the repo runs it). `__getitem__` resolves a negative index against `page_count` first, so a document whose `page_count` fails reads as length 0 there and raises `IndexError` (measured on an unauthenticated encrypted document, 2026-09-30; Tracked: #147).
 
 ## Code
@@ -21,9 +21,9 @@ PyO3 모듈(maturin 빌드). `Document`(열기·인증·텍스트·렌더·Info)
 **None.**
 
 ## Blast radius
-- [문서 접근](document-access.md), [텍스트 추출](text-extraction.md), [렌더 API](render-api.md).
-- [게시 문서](published-docs.md) — 루트 README·mdBook의 Python 예제.
-- [CI](ci.md) — 빌드되지 않는다.
+- [Document access](document-access.md), [Text extraction](text-extraction.md), [Render API](render-api.md).
+- [Published docs](published-docs.md) — the Python examples in the root README and mdBook.
+- [CI](ci.md) — not built.
 
 ## Known holes / open
-- 자체 `Cargo.lock`이 루트와 따로 움직인다 — core 의존성 업데이트가 여기엔 반영되지 않는다.
+- Its own `Cargo.lock` moves separately from the root's — core dependency updates are not reflected here.
