@@ -23,5 +23,5 @@ Finds ZUGFeRD/Factur-X XML among a PDF's attachments, detects the profile and pa
 - [Compress stripping](compress-stripping.md) — the extreme preset deletes the attachments name tree, which makes a ZUGFeRD file no longer an invoice.
 
 ## Known holes / open
-- No test finds the invoice in a real ZUGFeRD file.
+- No test runs the lookup against a real ZUGFeRD file.
 - Tracked: #58 (extreme removes attachments)
