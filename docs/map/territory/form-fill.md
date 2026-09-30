@@ -1,14 +1,14 @@
-# 폼 채우기
+# Form fill
 
 ## What it is
-필드에 값을 설정한다(`/V`, 버튼은 `/AS`). 읽기 전용 필드는 거부한다.
+Sets a value on a field (`/V`; `/AS` for buttons). Refuses read-only fields.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- **외관을 다시 만들지 않고 `NeedAppearances`도 세우지 않는다**: 값을 바꿔도 뷰어는 옛 외관을 보여준다(추론). 외관 생성기 `generate_field_appearance`는 제품 코드 호출처가 없다.
-- 체크박스 켜짐 상태 이름을 `/Yes`로 하드코딩한다(실제 파일은 다른 이름을 쓸 수 있다).
+- **It does not regenerate the appearance and does not set `NeedAppearances`**: after the value changes, a viewer still shows the old appearance (inferred). The appearance generator `generate_field_appearance` has no caller in product code.
+- The checkbox on-state name is hard-coded as `/Yes` (real files can use a different name).
 
 ## Code
 - `justpdf-core/src/form/fill.rs` — `set_field_value`, `toggle_checkbox`
@@ -20,10 +20,10 @@
 **None.**
 
 ## Blast radius
-- [폼 외관](form-appearance.md) — 연결되어야 할 쪽.
-- [AcroForm](acroform.md) — 필드 모델.
-- [문서 수정기](document-modifier.md) — 저장 경로.
+- [Form appearance](form-appearance.md) — the side it should be wired to.
+- [AcroForm](acroform.md) — the field model.
+- [Document modifier](document-modifier.md) — the save path.
 
 ## Known holes / open
-- 채운 값이 화면에 보이지 않는다(위, 추론; 렌더로 확인하는 테스트 없음).
-- Tracked: #40 (폼 채우기·평탄화)
+- A filled value does not show on screen (above, inferred; no test checks it by rendering).
+- Tracked: #40 (form fill and flatten)
