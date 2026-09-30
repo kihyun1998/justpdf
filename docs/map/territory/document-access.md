@@ -1,19 +1,19 @@
-# 문서 열기·resolve·캐시
+# Document opening, resolve and cache
 
 ## What it is
-`PdfDocument`가 원본 바이트(`Vec` 또는 mmap), 병합된 xref, 객체 LRU 캐시, 암호화 상태를 소유하고 `resolve(&self)`로 참조를 객체로 바꾼다. 모든 읽기 기능과 모든 바인딩이 이 한 타입을 지난다.
+`PdfDocument` owns the source bytes (`Vec` or mmap), the merged xref, the object LRU cache and the encryption state, and turns references into objects with `resolve(&self)`. Every reading feature and every binding goes through this one type.
 
 ## Governing decisions
-결정 기록(ADR)은 없다. 유지보수자의 판단(2026-09-29, #98): 참조의 세대가 xref 항목이 정의하는 세대와 다르면 `resolve`는 `Null`을 돌려준다 — ISO 32000-1 §7.3.10 "An indirect reference to an undefined object shall not be considered an error... it shall be treated as a reference to the null object". 보여 준 것: 세 선택지의 결과 열거(원문 코드 대조: MuPDF `pdf-xref.c`는 번호로만 찾고 키를 xref 세대로 만든다, pdf.js `xref.js`는 불일치를 에러로 던지고 복구 모드에서 재색인한다, qpdf `QPDF_objects.cc`는 (번호, 세대)로 찾고 없으면 조용히 null), 이 컴퓨터의 PDF 121개(참조 420,709개)에서 세대 불일치 0건·세대 ≠ 0 객체 0건이라는 측정(선택지를 가르지 못함), 그리고 #72에서 이 관용이 쓰기 쪽 세대 결함을 테스트에서 가렸다는 사실. 대안: (b) MuPDF처럼 xref 세대로 키를 만들고 참조 세대는 무시, (c) pdf.js처럼 에러. 헤더의 **객체 번호** 검사는 이 판단이 다루지 않았다(따로 등록). xref에 없는 번호도 `Null`(#108)인 것은 유지보수자의 판단이 아니라 같은 조항과 이 판단에서 이어지는 도출이다 — 더 나은 도출이 뒤집을 수 있다.
+There is no decision record (ADR). Maintainer decision (2026-09-29, #98): when a reference's generation differs from the generation its xref entry defines, `resolve` returns `Null` — ISO 32000-1 §7.3.10 "An indirect reference to an undefined object shall not be considered an error... it shall be treated as a reference to the null object". Shown: the outcomes of three options laid out (checked against the source code: MuPDF `pdf-xref.c` looks up by number only and builds the key from the xref generation, pdf.js `xref.js` throws the mismatch as an error and reindexes in recovery mode, qpdf `QPDF_objects.cc` looks up by (number, generation) and silently gives null when absent), a measurement over 121 PDFs on this computer (420,709 references) finding 0 generation mismatches and 0 objects at a generation ≠ 0 (which did not decide between the options), and the fact that in #72 this leniency hid a writing-side generation defect from the tests. Alternatives: (b) like MuPDF, build the key from the xref generation and ignore the reference's generation, (c) like pdf.js, an error. Checking the **object number** in the header was not covered by this decision (filed separately). That a number missing from the xref is also `Null` (#108) is not a maintainer decision but a derivation that follows from the same clause and this decision — a better derivation can overturn it.
 
 ## Design model
-- **내부 가변성**: `resolve`가 `&self`만 요구하도록 `RwLock`을 쓴다(`Sync`). I/O 중에는 락을 잡지 않는다.
-- 캐시 적중 경로도 LRU 순서 갱신 때문에 `write()` 락을 잡는다.
-- **암호화 훅 세 지점**: `/Encrypt` 사전은 `load_object_raw`(복호화 안 함), 일반 객체는 인증 후 `load_object`에서 자기 번호로 복호화(object stream 안 객체는 ObjStm과 함께 `load_compressed_object`에서 복호화되고 여기서 건너뛴다 — [객체 복호화](object-decryption.md)), 미인증이면 `EncryptedDocument` 에러. 열 때 빈 비밀번호를 자동 시도하고, `authenticate`는 두 캐시를 비운다. 보안 핸들러는 `Standard`만 받는다.
-- **정의 검사**: `resolve`는 캐시에 없고 인증을 통과한 참조가 xref에 정의되어 있는지(`defines` — 항목이 사용 중이고, 참조의 세대가 그 항목이 정의하는 세대 `XrefEntry::defined_generation`와 같다: 사용 중 항목은 그 세대, object stream 안 객체는 0) 확인하고, 아니면 `Null`을 돌려준다(캐시하지 않는다). free 항목, xref에 없는 번호, 다른 세대가 모두 이 한 규칙으로 `Null`이다. 그래서 성공하는 `resolve`의 복호화 키는 언제나 xref 세대로 만든다 — #98 전에는 참조의 세대로 만들어, 세대가 틀린 참조가 RC4에서는 쓰레기, AES-128에서는 패딩 에러가 됐다(R6은 키가 세대와 무관). #108 전에는 없는 번호가 `ObjectNotFound` 에러였다.
-- 검사는 `resolve`에만 있다. `load_object_raw`에는 없다 — `/Encrypt` 사전(trailer 참조로 `detect_encryption`이 직접 읽음)과 object stream 컨테이너(세대 0으로 읽음)는 이 검사를 거치지 않는다.
-- 파싱한 객체 헤더(`N g obj`)의 번호·세대는 xref와 대조하지 않는다 — `load_object_raw`가 버린다.
-- 순환 참조는 `resolve` 호출 단위의 `visited`로 끊는다.
+- **Interior mutability**: `RwLock` is used so `resolve` needs only `&self` (`Sync`). No lock is held during I/O.
+- The cache hit path also takes the `write()` lock, because it updates the LRU order.
+- **Three encryption hooks**: the `/Encrypt` dictionary goes through `load_object_raw` (no decryption); ordinary objects are decrypted with their own number in `load_object` after authentication (an object inside an object stream is decrypted together with the ObjStm in `load_compressed_object` and skipped here — [Object decryption](object-decryption.md)); unauthenticated, it is an `EncryptedDocument` error. Opening tries the empty password automatically, and `authenticate` clears both caches. Only the `Standard` security handler is accepted.
+- **Definition check**: for a reference not in the cache that passed authentication, `resolve` checks that the xref defines it (`defines` — the entry is in use, and the reference's generation equals the generation the entry defines, `XrefEntry::defined_generation`: that generation for an in-use entry, 0 for an object inside an object stream), and otherwise returns `Null` (not cached). Free entries, numbers missing from the xref and other generations are all `Null` by this one rule. So the decryption key of a `resolve` that succeeds is always built from the xref generation — before #98 it was built from the reference's generation, so a reference at the wrong generation became garbage under RC4 and a padding error under AES-128 (for R6 the key does not depend on the generation). Before #108 a missing number was an `ObjectNotFound` error.
+- The check is only in `resolve`, not in `load_object_raw` — the `/Encrypt` dictionary (read directly by `detect_encryption` through the trailer reference) and object stream containers (read at generation 0) do not go through it.
+- The number and generation in a parsed object header (`N g obj`) are not compared against the xref — `load_object_raw` discards them.
+- Reference cycles are cut with a `visited` set per `resolve` call.
 
 ## Code
 - `justpdf-core/src/parser.rs` — `PdfDocument`, `open`, `from_bytes`, `open_mmap`, `resolve`, `authenticate`, `is_encrypted`, `load_object`, `load_object_raw`, `detect_encryption`, `LruCache`, `DEFAULT_CACHE_CAPACITY`, `defines`, `object_refs`
@@ -28,12 +28,12 @@
 **None.**
 
 ## Blast radius
-- [xref](xref.md), [객체 모델](object-model.md), [object streams](object-streams.md) — 로드 경로의 하위 단계.
-- [객체 복호화](object-decryption.md), [비밀번호 인증](password-authentication.md) — 암호화 훅 세 지점. 훅 위치를 옮기면 두 노트를 함께 본다.
-- [repair](repair.md) — `from_raw_parts`로 문서를 만들며 암호화 감지를 건너뛴다.
-- [파사드](facade.md), [CLI](cli.md), [언어 바인딩](language-bindings.md) — `open`/`from_bytes`/`authenticate`의 시그니처 변경이 모두 닿는다.
-- [압축 파이프라인](compress-pipeline.md) — 암호화 문서를 거부하는 판단이 `is_encrypted`에 기댄다.
+- [xref](xref.md), [Object model](object-model.md), [object streams](object-streams.md) — the lower stages of the load path.
+- [Object decryption](object-decryption.md), [Password authentication](password-authentication.md) — the three encryption hooks. When moving a hook, look at both notes.
+- [repair](repair.md) — builds a document with `from_raw_parts` and skips encryption detection.
+- [Facade](facade.md), [CLI](cli.md), [Language bindings](language-bindings.md) — a signature change to `open`/`from_bytes`/`authenticate` reaches all of them.
+- [Compress pipeline](compress-pipeline.md) — the decision to refuse encrypted documents relies on `is_encrypted`.
 
 ## Known holes / open
-- 객체 헤더의 번호가 xref와 달라도(오프셋이 다른 객체를 가리켜도) 그 객체를 돌려준다. object stream의 인덱스 번호도 같다. Tracked: #109
-- 캐시 적중도 쓰기 락을 잡으므로 여러 스레드의 `resolve`가 직렬화된다(추론: 병렬 렌더의 병목 후보).
+- When the number in an object header differs from the xref (the offset points at a different object), that object is returned anyway. The same goes for an object stream's index numbers. Tracked: #109
+- A cache hit also takes the write lock, so `resolve` calls from several threads are serialized (inferred: a candidate bottleneck for parallel rendering).
