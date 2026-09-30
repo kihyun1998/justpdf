@@ -1,13 +1,13 @@
-# MOBI 입력
+# MOBI input
 
 ## What it is
-Mobipocket 파일(PalmDOC 압축 또는 무압축)에서 텍스트를 읽는다.
+Reads text from Mobipocket files (PalmDOC-compressed or uncompressed).
 
 ## Governing decisions
-- [ADR-0001](../../adr/0001-crates-split-by-dependency-layer.md) — `mobi` 기능은 미리보기 때문에 render를 끌어온다(#2).
+- [ADR-0001](../../adr/0001-crates-split-by-dependency-layer.md) — the `mobi` feature pulls in render for its preview (#2).
 
 ## Design model
-- 다른 압축 방식은 에러.
+- Any other compression is an error.
 
 ## Code
 - `justpdf-formats/src/mobi/mod.rs` — `MobiDocument`, `to_pdf`, `render_page`
@@ -16,12 +16,12 @@ Mobipocket 파일(PalmDOC 압축 또는 무압축)에서 텍스트를 읽는다.
 **None.**
 
 ## Cross-cutting invariants
-- [콘텐츠 텍스트 인코딩](../invariant/content-text-encoding.md)
+- [Content text encoding](../invariant/content-text-encoding.md)
 
 ## Blast radius
-- [CLI](cli.md) — `convert`에 MOBI 분기가 없다.
-- [렌더 API](render-api.md) — 미리보기.
+- [CLI](cli.md) — `convert` has no MOBI branch.
+- [Render API](render-api.md) — preview.
 
 ## Known holes / open
-- CLI에서 도달 불가(위).
-- Tracked: #49 (convert MOBI·FB2)
+- Unreachable from the CLI (above).
+- Tracked: #49 (convert MOBI and FB2)

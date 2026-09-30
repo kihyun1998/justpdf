@@ -1,14 +1,14 @@
-# EPUB 입력
+# EPUB input
 
 ## What it is
-EPUB의 OPF·XHTML에서 텍스트를 읽어 PDF로 바꾼다. DRM 파일은 거부한다.
+Reads text from an EPUB's OPF and XHTML and turns it into a PDF. Rejects DRM files.
 
 ## Governing decisions
-- [ADR-0001](../../adr/0001-crates-split-by-dependency-layer.md) — `epub`은 render 없이 빌드된다고 간주되는 기능이다.
+- [ADR-0001](../../adr/0001-crates-split-by-dependency-layer.md) — `epub` is a feature assumed to build without render.
 
 ## Design model
-- **`epub` 기능 단독으로는 컴파일되지 않는다**: `render_page`·`render_page_png`가 `crate::plaintext`를 부르는데 `plaintext` 모듈은 `plaintext` 기능 뒤에 있다. `cargo check -p justpdf-formats --no-default-features --features epub`가 `E0433: cannot find plaintext in crate`로 실패한다(2026-09-23 재현). 워크스페이스 빌드에서는 CLI가 켜는 `all`이 기능 통합으로 이를 가린다.
-- 텍스트만 옮긴다.
+- **The `epub` feature does not compile on its own**: `render_page` and `render_page_png` call `crate::plaintext`, but the `plaintext` module sits behind the `plaintext` feature. `cargo check -p justpdf-formats --no-default-features --features epub` fails with `E0433: cannot find plaintext in crate` (reproduced 2026-09-23). In a workspace build, the `all` feature the CLI turns on hides this through feature unification.
+- Carries text only.
 
 ## Code
 - `justpdf-formats/src/epub/mod.rs` — `EpubDocument`, `to_pdf`, `render_page`, `render_page_png`
@@ -17,13 +17,13 @@ EPUB의 OPF·XHTML에서 텍스트를 읽어 PDF로 바꾼다. DRM 파일은 거
 **None.**
 
 ## Cross-cutting invariants
-- [콘텐츠 텍스트 인코딩](../invariant/content-text-encoding.md)
+- [Content text encoding](../invariant/content-text-encoding.md)
 
 ## Blast radius
-- [plaintext 입력](plaintext-input.md) — 미리보기를 빌려 쓰는 대상. 숨은 의존이다.
-- [크레이트 레이어링](crate-layering.md) — 격리 스크립트는 epub을 `cargo tree`로만 확인하고 단독 빌드는 하지 않는다.
-- [포맷 변환 계약](format-document.md).
+- [Plaintext input](plaintext-input.md) — whose preview it borrows. A hidden dependency.
+- [Crate layering](crate-layering.md) — the isolation script checks epub only with `cargo tree` and does not build it on its own.
+- [Format document](format-document.md).
 
 ## Known holes / open
-- 단독 빌드 실패(위). #2의 수락 기준은 기능별 단독 빌드를 요구했지만 스크립트가 그것을 검사하지 않는다.
-- Tracked: #35 (epub·office 단독 빌드)
+- Fails to build on its own (above). The acceptance criteria of #2 required each feature to build on its own, but the script does not check that.
+- Tracked: #35 (epub and office standalone builds)
