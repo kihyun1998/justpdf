@@ -1,17 +1,17 @@
 # CI
 
 ## What it is
-push·PR마다 도는 GitHub Actions 작업: 워크스페이스 check, test, 전체 기능 test, 기능 격리 스크립트, clippy, fmt.
+GitHub Actions jobs that run on every push and PR: workspace check, test, all-features test, the feature isolation script, clippy, fmt.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- master CI는 2026-05부터 기능 격리 작업이 실패 상태였다(트리 문자 문제, #62에서 수정). 그 사이 병합된 PR들은 빨간 CI로 병합됐다 — 실패가 상시 상태가 되면 게이트가 아니다.
-- **clippy(`-D warnings`)와 fmt는 `continue-on-error: true`** — 실패해도 빌드가 깨지지 않는다. 사실상 게이트가 아니다.
-- 모든 cargo 작업이 `--workspace` 범위다. 워크스페이스 밖 크레이트(python·wasm·node)와 wasm32·maturin·napi 빌드는 없다 — "통과"가 이 크레이트들을 검사했다는 뜻이 아니다.
-- 전체 기능 test는 `justpdf/mmap`을 포함하지 않는다.
-- mdBook(`docs/`)을 빌드하는 작업이 없다.
+- On master the feature isolation job had been failing since 2026-05 (the tree-character problem, fixed in #62). PRs merged in that window were merged on red CI — once failure is the standing state, it is not a gate.
+- **clippy (`-D warnings`) and fmt are `continue-on-error: true`** — a failure does not break the build. In practice they are not gates.
+- Every cargo job is scoped to `--workspace`. There are no builds for the crates outside the workspace (python, wasm, node) and none for wasm32, maturin or napi — "passing" does not mean these crates were checked.
+- The all-features test does not include `justpdf/mmap`.
+- No job builds the mdBook (`docs/`).
 
 ## Code
 - `.github/workflows/ci.yml` — `check`, `test`, `test-features`, `feature-isolation`, `clippy`, `fmt`
@@ -23,11 +23,11 @@ push·PR마다 도는 GitHub Actions 작업: 워크스페이스 check, test, 전
 **None.**
 
 ## Blast radius
-- [언어 바인딩](language-bindings.md) — 게이트 밖.
-- [크레이트 레이어링](crate-layering.md) — 격리 스크립트.
-- [게시 문서](published-docs.md) — 문서 예제가 컴파일·실행되는지 아무것도 보지 않는다.
-- [릴리스](release.md) — 릴리스 워크플로는 CI 통과를 전제하지 않는다(태그 push만).
+- [Language bindings](language-bindings.md) — outside the gate.
+- [Crate layering](crate-layering.md) — the isolation script.
+- [Published docs](published-docs.md) — nothing checks that the doc examples compile or run.
+- [Release](release.md) — the release workflow does not require CI to pass (only a tag push).
 
 ## Known holes / open
-- 게이트의 "전체"가 저장소 전체가 아니다(위).
-- Tracked: #59 (CI 게이트 공백)
+- The gate's "all" is not the whole repository (above).
+- Tracked: #59 (CI gate gaps)
