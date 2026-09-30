@@ -1,18 +1,18 @@
-# 압축 — 그레이스케일 변환
+# Compress grayscale
 
 ## What it is
-이미지를 회색조 JPEG(고정 품질 65)로 바꾸고, 페이지 콘텐츠 스트림의 색 연산자를 회색 연산자로 다시 쓴다.
+Turns images into grayscale JPEG (fixed quality 65) and rewrites the color operators in page content streams as gray operators.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- `rg`/`RG`/`k`/`K`만 재작성한다. `sc`/`SC`/`scn`/`SCN`은 그대로 둔다.
-- 페이지 `/Contents`만 다시 쓴다. Form XObject 안의 색은 그대로다.
-- 색 연산자가 아닌 연산자는 `ContentOp::write_to`로 다시 쓴다 — 되읽으면 같다(`test_grayscale_keeps_other_operators_unchanged`, #29). #29 전에는 자체 `write_operand`가 이름을 이스케이프하지 않고, 실수를 소수 4자리로 반올림하고, 인라인 이미지를 `"BI "`만 남겼다. 새 회색 값은 `write_gray`로 쓴다 — 소수 4자리로 반올림한 뒤 객체 직렬화의 `write_real`로(항상 소수점, NaN → `0.0`, ±Inf → ±`f32::MAX`). #29 전에는 정수에 가까우면 정수로, 아니면 `{:.4}`로 써서 inf 입력이 `inf g`가 되었다 — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md).
-- 이미지는 [이미지 디코드](image-decoding.md)가 보고한 성분 수(3 = RGB, 4 = CMYK)대로 픽셀을 묶어 회색으로 바꾼다. 그 성분 수는 `/ColorSpace`가 이름일 때만 맞다 — 참조·배열(Indexed, ICCBased 등)은 3으로 떨어진다(#46). 그래서 `encode_jpeg_gray`는 회색 픽셀 수가 폭×높이와 다르면 에러를 내고, 그 이미지는 그대로 둔다(`test_grayscale_leaves_images_with_referenced_color_space`: 참조된 Indexed는 모자라고, 참조된 `ICCBased /N 4`는 남는다). #89 전에는 `image` 크레이트의 JPEG 인코더가 길이 불일치에 패닉해서 `compress_pdf`가 호출자 프로세스를 죽였다(저장소 루트의 brochure·test_medium PDF, 참조된 `[/Indexed /DeviceRGB 255 …]` 337×204 이미지).
-- 회색 가중치는 Rec.601이고, 렌더러의 소프트 마스크는 Rec.709다 — 두 사이트가 서로 다른 휘도식을 쓴다.
-- 어떤 프리셋도 이 단계를 켜지 않는다([프리셋](compress-presets.md)).
+- Only `rg`/`RG`/`k`/`K` are rewritten. `sc`/`SC`/`scn`/`SCN` are left as they are.
+- Only the page's `/Contents` is rewritten. Colors inside form XObjects stay as they are.
+- Operators that are not color operators are rewritten with `ContentOp::write_to` — they read back the same (`test_grayscale_keeps_other_operators_unchanged`, #29). Before #29 its own `write_operand` did not escape names, rounded reals to 4 decimal places, and left only `"BI "` of an inline image. New gray values are written with `write_gray` — rounded to 4 decimal places, then through object serialization's `write_real` (always a decimal point, NaN → `0.0`, ±Inf → ±`f32::MAX`). Before #29 a value close to an integer was written as an integer and anything else with `{:.4}`, so an inf input became `inf g` — [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md).
+- Images are turned gray by grouping pixels by the component count [Image decoding](image-decoding.md) reports (3 = RGB, 4 = CMYK). That count is right only when `/ColorSpace` is a name — references and arrays (Indexed, ICCBased and so on) fall back to 3 (#46). So `encode_jpeg_gray` returns an error when the gray pixel count differs from width×height, and that image is left as it is (`test_grayscale_leaves_images_with_referenced_color_space`: a referenced Indexed comes up short, a referenced `ICCBased /N 4` has pixels left over). Before #89 the `image` crate's JPEG encoder panicked on the length mismatch, so `compress_pdf` killed the caller's process (the brochure and test_medium PDFs at the repo root, a 337×204 image with a referenced `[/Indexed /DeviceRGB 255 …]`).
+- The gray weights are Rec.601, while the renderer's soft mask uses Rec.709 — the two sites use different luminance formulas.
+- No preset turns this step on ([Compress presets](compress-presets.md)).
 
 ## Code
 - `justpdf-core/src/writer/compress.rs` — `convert_images_to_grayscale`, `encode_jpeg_gray`, `rewrite_color_operators_to_gray`, `rgb_to_gray_from_operands`, `cmyk_to_gray_from_operands`, `write_gray`
@@ -21,13 +21,13 @@
 **None.**
 
 ## Cross-cutting invariants
-- [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — `ContentOp::write_to`.
-- [이미지 픽셀 레이아웃](../invariant/image-pixel-layout.md) — 이미지 경로.
+- [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md) — `ContentOp::write_to`.
+- [Image pixel layout](../invariant/image-pixel-layout.md) — the image path.
 
 ## Blast radius
-- [콘텐츠 스트림 파싱](content-stream-parsing.md) — 파싱하고 그쪽의 `write_to`로 다시 쓴다.
-- [compress-images](compress-images.md) — 별도 이미지 인코딩 경로.
-- [렌더 투명도](render-transparency.md) — 휘도식 불일치의 다른 쪽.
+- [Content stream parsing](content-stream-parsing.md) — parses, then rewrites with that side's `write_to`.
+- [Compress images](compress-images.md) — a separate image encoding path.
+- [Render transparency](render-transparency.md) — the other side of the luminance formula mismatch.
 
 ## Known holes / open
-- `test_grayscale_conversion_reduces_size`는 `if stats.images_grayscaled > 0` 조건부 탈출이 있어 변환이 0건이어도 통과한다.
+- `test_grayscale_conversion_reduces_size` has a conditional exit, `if stats.images_grayscaled > 0`, so it passes even when nothing is converted.
