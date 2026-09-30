@@ -9,7 +9,7 @@ The common trait that non-PDF inputs (XPS, EPUB, Office, SVG, CBZ, MOBI, FB2, te
 ## Design model
 - **All PDF generation goes through core [Document builder](document-builder.md).** Format code does not write PDF syntax by hand.
 - Text formats (xps, epub, office, plaintext, mobi, fb2) use `add_standard_font("Courier")` at 10pt with a `show_text` per line — non-ASCII and CJK break (inferred) — [Content text encoding](../invariant/content-text-encoding.md).
-- Image formats (cbz, svg) rasterize and then `draw_inline_image` — no `cm` is written, so the image lands at about 1pt×1pt (inferred).
+- Image formats (cbz, svg) rasterize, embed the raster as a Flate image XObject with `embed_rgb` and draw it over the whole page with `draw_image` (#88 — before it they used `draw_inline_image` with no `cm`, so the image landed at 1pt×1pt). justpdf's own renderer draws those pages blank: see [Render images](render-images.md), #42.
 - The preview render (`render_page`) splits into formats that build a one-page PDF and draw it with the render crate (plaintext, mobi, fb2, and epub and office, which borrow plaintext), formats with their own raster (svg, cbz), and a blank page (xps).
 - Modules are compiled only behind feature flags (`lib.rs`).
 
