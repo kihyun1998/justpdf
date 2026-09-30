@@ -1,14 +1,14 @@
-# 압축 — 메타데이터·부가 데이터 제거
+# Compress stripping (metadata and extras)
 
 ## What it is
-두 노브. `strip_metadata`는 문서 카탈로그의 XMP·구조 트리·출력 의도·PieceInfo·MarkInfo와 페이지 썸네일 등을 지운다. `strip_extras`는 첨부파일·JavaScript 이름 트리와 페이지 `/AA`를 지운다. 어떤 키를 지우는지는 `strip_non_essential` 본문이 소유한다.
+Two knobs. `strip_metadata` removes the document catalog's XMP, structure tree, output intents, PieceInfo and MarkInfo, page thumbnails and so on. `strip_extras` removes the embedded-files and JavaScript name trees and the page `/AA`. The body of `strip_non_essential` owns which keys are removed.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- 구조 트리(`StructTreeRoot`)와 `MarkInfo`를 지우므로 태그드 PDF의 접근성이 사라진다. 이 선택을 정한 기록은 없다.
-- `strip_extras`는 `/OpenAction`, 카탈로그 `/AA`, `/Annots`, `/AcroForm`, FileAttachment 주석, `/OCProperties`, `/Outlines`는 건드리지 않는다.
+- It removes the structure tree (`StructTreeRoot`) and `MarkInfo`, so a tagged PDF loses its accessibility. There is no record of this choice being made.
+- `strip_extras` does not touch `/OpenAction`, the catalog `/AA`, `/Annots`, `/AcroForm`, FileAttachment annotations, `/OCProperties` or `/Outlines`.
 
 ## Code
 - `justpdf-core/src/writer/compress.rs` — `strip_non_essential`
@@ -20,10 +20,10 @@
 **None.**
 
 ## Blast radius
-- [첨부파일](embedded-files.md) — `EmbeddedFiles` 이름 트리 제거. ZUGFeRD 인보이스의 XML이 첨부파일이므로 [ZUGFeRD](zugferd.md) 파일은 이 노브로 망가진다.
-- [액션](actions.md) — JavaScript 이름 트리와 `/AA`.
-- [프리셋](compress-presets.md) — 어느 프리셋이 어느 노브를 켜는지.
+- [Embedded files](embedded-files.md) — removes the `EmbeddedFiles` name tree. A ZUGFeRD invoice's XML is an embedded file, so this knob breaks [ZUGFeRD](zugferd.md) files.
+- [Actions](actions.md) — the JavaScript name tree and `/AA`.
+- [Compress presets](compress-presets.md) — which preset turns on which knob.
 
 ## Known holes / open
-- JavaScript를 "지운다"는 약속이 `/OpenAction`·카탈로그 `/AA`·주석 액션의 JS를 포함하지 않는다.
-- Tracked: #58 (extreme의 첨부파일 제거)
+- The promise to "remove" JavaScript does not cover JS in `/OpenAction`, the catalog `/AA` or annotation actions.
+- Tracked: #58 (extreme removes embedded files)
