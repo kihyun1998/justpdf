@@ -27,7 +27,7 @@ The one official PDF CLI. The `info`, `text`, `render`, `merge`, `split`, `encry
 **None.**
 
 ## Blast radius
-- [compress-presets](compress-presets.md), [Compress pipeline](compress-pipeline.md) — `compress`'s names and output.
+- [Compress presets](compress-presets.md), [Compress pipeline](compress-pipeline.md) — `compress`'s names and output.
 - [Text output formats](text-output-formats.md), [Render API](render-api.md), [SVG renderer](svg-renderer.md) — `text` and `render`.
 - [Format detection](format-detection.md), [Format document](format-document.md) — `convert`.
 - [Document modifier](document-modifier.md), [File serialization](file-serialization.md), [Object encryption](object-encryption.md), [Permissions](permissions.md) — split/encrypt/decrypt/merge.
