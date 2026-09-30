@@ -1,13 +1,13 @@
-# 범용 WASM 바인딩
+# General-purpose WASM binding
 
 ## What it is
-wasm-bindgen으로 `WasmDocument`(생성자·인증·텍스트·PNG 렌더·크기·Info)를 노출한다. 압축 전용 [compress-wasm](compress-wasm.md)과 다른 크레이트다.
+Exposes `WasmDocument` (constructor, authenticate, text, PNG render, size, Info) through wasm-bindgen. A different crate from the compression-only [compress-wasm](compress-wasm.md).
 
 ## Governing decisions
-- [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md) — 워크스페이스 밖이어야 하지만 `[workspace]` 블록이 없어 현재 cargo가 매니페스트를 해석하지 못한다([aggregate](language-bindings.md#adr-0002와-저장소가-어긋나는-지점)).
+- [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md) — it should be outside the workspace, but it has no `[workspace]` block, so cargo currently cannot resolve its manifest ([aggregate](language-bindings.md#where-adr-0002-and-the-repository-disagree)).
 
 ## Design model
-- `js_name` 변경이 없어 JS 쪽 클래스 이름이 `WasmDocument`다.
+- There is no `js_name` rename, so the class name on the JS side is `WasmDocument`.
 
 ## Code
 - `justpdf-wasm/src/lib.rs` — `WasmDocument`, `new`, `authenticate`, `text`, `page_text`, `render_page_png`, `page_width`, `page_height`
@@ -19,10 +19,10 @@ wasm-bindgen으로 `WasmDocument`(생성자·인증·텍스트·PNG 렌더·크�
 **None.**
 
 ## Blast radius
-- [문서 접근](document-access.md), [텍스트 추출](text-extraction.md), [렌더 API](render-api.md).
-- [게시 문서](published-docs.md) — README·mdBook 예제가 `WasmDocument`와 snake_case 메서드 이름을 쓴다(`js_name` 변경 시 함께 고친다).
-- [CI](ci.md) — 빌드되지 않는다.
+- [Document access](document-access.md), [Text extraction](text-extraction.md), [Render API](render-api.md).
+- [Published docs](published-docs.md) — the README and mdBook examples use `WasmDocument` and snake_case method names (fix them together if `js_name` changes).
+- [CI](ci.md) — not built.
 
 ## Known holes / open
-- 단독 빌드 불가(위).
-- Tracked: #36 (justpdf-wasm 매니페스트·ADR-0002)
+- Cannot be built on its own (above).
+- Tracked: #36 (justpdf-wasm manifest, ADR-0002)
