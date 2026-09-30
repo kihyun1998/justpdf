@@ -1,33 +1,33 @@
-# 색공간과 ICC
+# Color spaces
 
 ## What it is
-PDF 색공간 모델(Device*, CalGray/CalRGB, Lab, Indexed, Separation, DeviceN, ICCBased)과 색 값을 RGB로 바꾸는 변환, ICC 프로파일 파서와 sRGB 변환, OutputIntent·오버프린트 파서.
+The PDF color space model (Device*, CalGray/CalRGB, Lab, Indexed, Separation, DeviceN, ICCBased) and conversion of color values to RGB, an ICC profile parser and sRGB conversion, and OutputIntent and overprint parsers.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- `from_array`는 ICCBased를 항상 `num_components: 3`, `profile: None`으로 만든다(주석: "actual value requires reading the stream").
-- `Color::to_rgb`는 Lab·Indexed·Separation·DeviceN·프로파일 없는 ICCBased에 대해 검정을 돌려준다. CalGray/CalRGB는 Device로 취급한다.
-- **ICC·OutputIntent·오버프린트는 제품 경로에서 도달 불가**다: `parse_icc_profile`, `read_output_intents`, `parse_overprint`의 호출처는 테스트뿐이고, `icc_to_srgb`는 프로파일이 세팅된 `to_rgb`로만 도달하는데 프로파일은 세팅되지 않는다.
-- CMYK→RGB 변환이 이 모듈(`cmyk_to_rgb`) 외에 렌더러·SVG·셰이딩·압축에 각자 사본으로 있다 — [이미지 픽셀 레이아웃](../invariant/image-pixel-layout.md).
+- `from_array` always builds ICCBased with `num_components: 3`, `profile: None` (comment: "actual value requires reading the stream").
+- `Color::to_rgb` returns black for Lab, Indexed, Separation, DeviceN and ICCBased without a profile. CalGray/CalRGB are treated as Device.
+- **ICC, OutputIntent and overprint are unreachable from product paths**: the only callers of `parse_icc_profile`, `read_output_intents` and `parse_overprint` are tests, and `icc_to_srgb` is reached only through `to_rgb` with a profile set, which is never set.
+- Besides this module (`cmyk_to_rgb`), the renderer, SVG, shading and compression each keep their own copy of CMYK→RGB conversion — [Image pixel layout](../invariant/image-pixel-layout.md).
 
 ## Code
 - `justpdf-core/src/color/mod.rs` — `ColorSpace`, `from_pdf_object`, `from_array`, `num_components`, `Color`, `to_rgb`, `cmyk_to_rgb`, `rgb_to_cmyk`, `OutputIntent`, `read_output_intents`, `parse_overprint`
 - `justpdf-core/src/color/icc.rs` — `IccProfile`, `parse_icc_profile`, `icc_to_srgb`, `RenderingIntent`
 
 ## Reference behaviour
-**None.** 코드는 ICC.1:2004 / ISO 15076-1, OutputIntent §14.11.5, Overprint §8.6.7을 인용한다(비교 기록 아님). 비교 대상 조항: ISO 32000-2 §8.6.
+**None.** The code cites ICC.1:2004 / ISO 15076-1, OutputIntent §14.11.5, Overprint §8.6.7 (not a comparison record). Clause to compare against: ISO 32000-2 §8.6.
 
 ## Cross-cutting invariants
-- [이미지 픽셀 레이아웃](../invariant/image-pixel-layout.md) — 색 변환 사본의 원본.
+- [Image pixel layout](../invariant/image-pixel-layout.md) — the original of the color conversion copies.
 
 ## Blast radius
-- [렌더 인터프리터](render-interpreter.md) — `cs`/`CS`가 로컬 `cs_from_name`(이름만)을 써서 이 모듈의 배열 색공간을 우회한다. 색공간 지원을 늘리면 거기부터.
-- [SVG 렌더러](svg-renderer.md), [렌더 셰이딩](render-shading.md) — 각자의 이름 전용 사본.
-- [이미지 디코딩](image-decoding.md) — 이미지 색공간을 이름으로만 읽는다.
-- [compress-images](compress-images.md) — CMYK는 건너뛰고 `to_rgb_pixels`로 자체 변환.
+- [Render interpreter](render-interpreter.md) — `cs`/`CS` use a local `cs_from_name` (names only) and bypass this module's array color spaces. Extending color space support starts there.
+- [SVG renderer](svg-renderer.md), [Render shading](render-shading.md) — each has its own name-only copy.
+- [Image decoding](image-decoding.md) — reads an image's color space by name only.
+- [Compress images](compress-images.md) — skips CMYK and converts on its own with `to_rgb_pixels`.
 
 ## Known holes / open
-- `test_indexed`는 성분 수·base·hival만 확인한다. Indexed 팔레트에서 실제 색을 조회하는 코드가 없다.
-- Rendering Intent는 파싱만 되고 어디서도 적용되지 않는다.
+- `test_indexed` checks only the component count, base and hival. No code looks up an actual color in an Indexed palette.
+- Rendering Intent is only parsed and applied nowhere.

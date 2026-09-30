@@ -1,29 +1,29 @@
-# 키 유도와 /O /U /OE /UE /Perms 계산
+# Key derivation
 
 ## What it is
-비밀번호 패딩, 파일 암호화 키 계산, `/O`·`/U`(R2–R4), `/OE`·`/UE`·`/Perms`(R5–R6) 값 생성, 객체별 키 유도(Algorithm 1). 인증(읽기)과 암호화(쓰기)가 같은 함수를 공유한다.
+Password padding, file encryption key computation, generating the `/O` and `/U` values (R2–R4) and the `/OE`, `/UE` and `/Perms` values (R5–R6), and per-object key derivation (Algorithm 1). Authentication (reading) and encryption (writing) share the same functions.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- 쓰기가 지원하는 리비전은 R3·R4·R6뿐이다. R2·R5는 읽기만.
-- 비밀번호는 127바이트로 자른다. SASLprep 정규화는 없다.
-- `generate_values_r6`은 결정적이다: 파일 키·솔트 4개·`/Perms` 12–15바이트(`perms_random`)를 모두 호출자가 넘긴다. 난수는 [객체 암호화](object-encryption.md)의 `build_r6`이 만든다.
-- `compute_file_key_r5`의 문서 주석은 "validation_salt"라고 하지만 호출자는 key salt를 넘긴다.
+- The only revisions writing supports are R3, R4 and R6. R2 and R5 are read-only.
+- Passwords are truncated to 127 bytes. There is no SASLprep normalization.
+- `generate_values_r6` is deterministic: the caller passes the file key, the four salts and `/Perms` bytes 12–15 (`perms_random`). The random values are made by `build_r6` in [Object encryption](object-encryption.md).
+- The doc comment of `compute_file_key_r5` says "validation_salt", but the caller passes the key salt.
 
 ## Code
 - `justpdf-core/src/crypto/key.rs` — `pad_password`, `PADDING`, `compute_file_encryption_key_r234`, `compute_o_value_r234`, `compute_u_value_r234`, `recover_user_password_from_owner_r234`, `compute_file_key_r5`, `compute_hash_r6`, `compute_object_key`, `generate_o_u_values_r234`, `generate_values_r6`
 
 ## Reference behaviour
-**None.** 코드는 ISO 32000-1:2008 §7.6.3.3(Algorithm 2)와 PDF Reference 1.7 번호("Table 3.18")를 인용하고, R6 알고리즘 2.A/2.B는 인용 없이 구현한다(ISO 32000-2 출처). 스펙 원문과 대조하거나 제3자 도구로 만든 암호화 파일로 확인한 기록은 없다.
+**None.** The code cites ISO 32000-1:2008 §7.6.3.3 (Algorithm 2) and PDF Reference 1.7 numbering ("Table 3.18"), and implements the R6 algorithms 2.A/2.B without a citation (sourced from ISO 32000-2). There is no record of checking against the spec text or against encrypted files made by a third-party tool.
 
 ## Cross-cutting invariants
-- [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — 여기서 만든 `/O`·`/U` 바이너리 값이 파일에 그대로 남아야 인증이 된다. #20이 이 경계에서 났다: 원인은 키 유도가 아니라 직렬화였다.
+- [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md) — the binary `/O` and `/U` values made here must stay in the file unchanged for authentication to work. #20 happened at this boundary: the cause was serialization, not key derivation.
 
 ## Blast radius
-- [비밀번호 인증](password-authentication.md), [객체 암호화](object-encryption.md) — 같은 함수의 두 소비처.
-- [객체 직렬화](object-serialization.md) — 값이 hex로 나가야 한다.
+- [Password authentication](password-authentication.md), [Object encryption](object-encryption.md) — the two consumers of the same functions.
+- [Object serialization](object-serialization.md) — the values must be written as hex.
 
 ## Known holes / open
-- R3·R4·R6은 자기 출력으로만 검증한다(생성 → 인증). R5는 qpdf가 쓴 외부 픽스처로 검증한다([비밀번호 인증](password-authentication.md#known-holes--open)). R2 테스트는 없다.
+- R3, R4 and R6 are verified only against their own output (generate → authenticate). R5 is verified with external fixtures qpdf wrote ([Password authentication](password-authentication.md#known-holes--open)). There is no R2 test.

@@ -1,31 +1,31 @@
-# 암호화 모델 (보안 핸들러·암호화 사전)
+# Encryption model
 
 ## What it is
-`/Encrypt` 사전의 파싱·직렬화와, `/V`·`/CF`·`/StmF`·`/StrF`로부터 문자열·스트림에 쓸 암호 방식(RC4/AESV2/AESV3/None)을 정하는 상태(`SecurityState`). 읽기·쓰기 암호화 경로가 모두 이 모델을 공유한다.
+Parsing and serializing the `/Encrypt` dict, and the state (`SecurityState`) that decides, from `/V`, `/CF`, `/StmF` and `/StrF`, which cipher (RC4/AESV2/AESV3/None) applies to strings and streams. The read and write encryption paths both share this model.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- `/Filter /Standard`만 받는다(문서 열기에서 판정).
-- V=4면 이름 붙은 crypt filter를 쓰고, 모르는 V는 V2(RC4)로 떨어진다.
-- `to_pdf_dict`는 항상 `/AuthEvent /DocOpen`을 쓴다.
-- `/EncryptMetadata false`는 V 4·5에서만 뜻을 갖는다(`metadata_left_plain`) — 키 유도([키 유도](key-derivation.md))와, catalog `/Metadata` 스트림 데이터를 암호화하지 않는 규칙([객체 복호화](object-decryption.md), [객체 암호화](object-encryption.md))에 쓰인다.
+- Only `/Filter /Standard` is accepted (decided when the document is opened).
+- With V=4 it uses named crypt filters; an unknown V falls back to V2 (RC4).
+- `to_pdf_dict` always writes `/AuthEvent /DocOpen`.
+- `/EncryptMetadata false` means something only at V 4 and 5 (`metadata_left_plain`) — it is used by key derivation ([Key derivation](key-derivation.md)) and by the rule that leaves the catalog `/Metadata` stream data unencrypted ([Object decryption](object-decryption.md), [Object encryption](object-encryption.md)).
 
 ## Code
 - `justpdf-core/src/crypto/types.rs` — `EncryptionDict`, `from_dict`, `to_pdf_dict`, `key_length_bytes`, `CryptFilterMap`, `CryptFilter`, `CryptMethod`, `SecurityState`, `resolve_crypt_method`
 
 ## Reference behaviour
-**None.** 비교 대상 조항: ISO 32000-2 §7.6.2–7.6.3, §7.6.5(crypt filters).
+**None.** Clauses to compare against: ISO 32000-2 §7.6.2–7.6.3, §7.6.5 (crypt filters).
 
 ## Cross-cutting invariants
 **None.**
 
 ## Blast radius
-- [키 유도](key-derivation.md), [비밀번호 인증](password-authentication.md) — `/R`·`/O`·`/U` 등 사전 값의 소비처.
-- [객체 복호화](object-decryption.md), [객체 암호화](object-encryption.md) — 방식 선택의 소비처.
-- [문서 접근](document-access.md) — 핸들러 판정.
-- [권한](permissions.md) — `/P`.
+- [Key derivation](key-derivation.md), [Password authentication](password-authentication.md) — consumers of dict values such as `/R`, `/O`, `/U`.
+- [Object decryption](object-decryption.md), [Object encryption](object-encryption.md) — consumers of the cipher choice.
+- [Document access](document-access.md) — the handler check.
+- [Permissions](permissions.md) — `/P`.
 
 ## Known holes / open
-**None.** 알려진 구멍이 없다.
+**None.** No known holes.
