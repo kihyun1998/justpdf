@@ -16,9 +16,9 @@
 - [ToUnicode](../territory/tounicode.md) — 두 벌의 해석.
 - [CID 폰트](../territory/cid-fonts.md) — 폭은 텍스트에만, GID 매핑은 렌더에만.
 - [텍스트 추출](../territory/text-extraction.md) — `resolve_fonts`, `resolve_to_unicode`.
-- [렌더 인터프리터](../territory/render-interpreter.md) — `resolve_page_fonts`.
+- [렌더 인터프리터](../territory/render-interpreter.md) — `resolve_font`.
 - [글리프 렌더링](../territory/glyph-rendering.md) — `char_code_to_glyph_id`.
-- [SVG 렌더러](../territory/svg-renderer.md) — 세 번째 `resolve_page_fonts`.
+- [SVG 렌더러](../territory/svg-renderer.md) — the third `resolve_font`.
 - [폰트 서브세팅](../territory/font-subsetting.md) — 서브셋 결과를 두 경로가 다르게 읽는다(렌더는 폰트 cmap, 텍스트는 ToUnicode). 서브세팅 자신도 코드 → GID를 따로 푼다(`simple_font_glyph_ids`·`cid_font_glyph_ids`) — 세 번째 해석이지만, GID를 유지하고 모든 경로의 합집합을 남기므로 다른 두 경로와 어긋나도 글리프를 잃지 않는다.
 
 ## What a violation looks like

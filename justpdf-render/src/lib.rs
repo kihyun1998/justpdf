@@ -10,6 +10,7 @@ pub mod glyph_cache;
 pub mod graphics_state;
 pub mod interpreter;
 pub mod render;
+mod resources;
 pub mod shading;
 pub mod svg_device;
 

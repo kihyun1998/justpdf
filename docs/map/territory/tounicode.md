@@ -8,7 +8,7 @@
 
 ## Design model
 - 텍스트에서 `beginbfchar`/`beginbfrange`를 스캔한다. `codespacerange`는 파싱하지 않는다.
-- ToUnicode 해석이 두 곳에 중복된다: 텍스트 추출의 `resolve_to_unicode`와 렌더러의 `resolve_page_fonts`(SVG 포함). 렌더 쪽 결과는 SVG 장치만 쓴다.
+- ToUnicode 해석이 두 곳에 중복된다: 텍스트 추출의 `resolve_to_unicode`와 렌더러의 `resolve_font`(SVG 포함). 렌더 쪽 결과는 SVG 장치만 쓴다.
 
 ## Code
 - `justpdf-core/src/font/cmap.rs` — `ToUnicodeCMap`, `parse`, `lookup`, `parse_bfchar_section`, `parse_bfrange_section`, `hex_to_unicode_string`

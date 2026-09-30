@@ -9,7 +9,7 @@
 
 소프트 마스크 `/G`가 조상이면 **그 `gs`의 `/SMask` 적용 전체**를 건너뛴다(현재 마스크를 그대로 둔다). 마스크 픽스맵을 만든 뒤 내용 실행만 건너뛰면 빈 마스크(휘도 0)가 설치되어 마스크 폼의 그리기가 모두 가려진다 — `soft_mask_form_applying_its_own_gstate_renders`가 잡는다.
 
-근거(**도출**, 2026-09-29, #119): MuPDF `pdf-op-run.c` — `pdf_run_xobject`가 `pdf_cycle` 조상 목록으로 반복 진입에서 돌아가고, `begin_softmask`가 마스크 폼을 같은 `pdf_run_xobject`로 실행하며, `pdf_show_pattern`이 타일에 들어갈 때 소프트 마스크를 비운다. MuPDF는 컬러 패턴에 들어갈 때 칠하는 쪽의 패턴만 지운다(`pdf_unset_pattern(what)`) — 여기서는 조상 체인이 같은 일을 하므로 따로 지우지 않는다. **이 동치는 패턴 이름이 타일 안팎에서 같은 객체를 가리킬 때만 성립한다**: MuPDF는 패턴 객체를 들고, 여기서는 이름을 들고 페이지 리소스에서 다시 푼다. 폼·패턴이 자기 `/Resources`로 이름을 풀게 되면, 물려받은 이름이 타일 안에서 다른 패턴을 가리킬 수 있으므로 타일 진입 시 칠하는 쪽 패턴을 지우는 것을 다시 본다. MuPDF와 다른 점: MuPDF는 소프트 마스크를 칠할 때까지 미루므로, 순환하는 `/G`는 빈 마스크로 끝난다. 여기서는 `gs`에서 바로 실행하므로 적용 자체를 건너뛴다. MuPDF는 타일이 자기 패턴을 다시 고르는 경우를 조상 목록이 아니라 gstate 중첩 한도(4096)로 막는다.
+근거(**도출**, 2026-09-29, #119): MuPDF `pdf-op-run.c` — `pdf_run_xobject`가 `pdf_cycle` 조상 목록으로 반복 진입에서 돌아가고, `begin_softmask`가 마스크 폼을 같은 `pdf_run_xobject`로 실행하며, `pdf_show_pattern`이 타일에 들어갈 때 소프트 마스크를 비운다. MuPDF는 컬러 패턴에 들어갈 때 칠하는 쪽의 패턴만 지운다(`pdf_unset_pattern(what)`) — 여기서는 조상 체인이 같은 일을 하므로 따로 지우지 않는다. **This equivalence holds only while the pattern a tile inherits is the object selected outside it**: the selection is the object resolved at `scn`/`SCN` (`PatternSelection`), held in the graphics state as MuPDF holds it, so it is not resolved again by name inside the tile — [resource name scope](resource-scope.md) (2026-09-30, #127). MuPDF와 다른 점: MuPDF는 소프트 마스크를 칠할 때까지 미루므로, 순환하는 `/G`는 빈 마스크로 끝난다. 여기서는 `gs`에서 바로 실행하므로 적용 자체를 건너뛴다. MuPDF는 타일이 자기 패턴을 다시 고르는 경우를 조상 목록이 아니라 gstate 중첩 한도(4096)로 막는다.
 
 두 가지는 **메인테이너의 판단**이다(2026-09-29, #119): 타일 진입 시 패턴 이름을 지우지 않는 것(승인받은 범위에서 벗어난 것 — 보여준 것: MuPDF `pdf_unset_pattern(what)`, 그 지우기를 끄는 mutation이 어떤 테스트도 빨갛게 하지 못한다는 결과, 위의 리소스 조건), 순환하는 `/G`에서 `/SMask` 적용 전체를 건너뛰는 것(보여준 것: MuPDF의 빈 마스크 결과와의 차이, 지연 실행 전환이 범위 밖이라는 것). 이 둘은 메인테이너가 뒤집을 일이다.
 
@@ -18,7 +18,7 @@
 
 ## Territories it holds in
 - [렌더 인터프리터](../territory/render-interpreter.md) — `with_running_stream`이 조상 체인(`running_streams`)을 관리한다. `do_xobject`가 Form XObject를 이것으로 감싼다.
-- [타일링 패턴](../territory/render-tiling-patterns.md) — `resolve_and_render_pattern`이 타일을 감싸고, `render_tiling_pattern`이 소프트 마스크를 비운다. 장치 색 연산자가 패턴 선택을 지운다.
+- [타일링 패턴](../territory/render-tiling-patterns.md) — `render_pattern`이 타일을 감싸고, `render_tiling_pattern`이 소프트 마스크를 비운다. 장치 색 연산자가 패턴 선택을 지운다.
 - [투명도](../territory/render-transparency.md) — `apply_soft_mask`가 `render_soft_mask` 전체를 감싼다.
 - [SVG 렌더러](../territory/svg-renderer.md) — `do_xobject`가 `running_forms`로 같은 규칙을 따른다.
 
@@ -35,4 +35,4 @@
 ## Where it will recur
 **콘텐츠 스트림 연산자를 실행하면서 `Do`, 패턴 선택(`scn`/`SCN`), `gs`의 `/SMask`를 따라 다른 스트림을 실행하는 새 코드는 이 불변식의 대상이다.** 찾는 명령: `rg -n 'execute_ops\(|parse_content_stream\(' justpdf-*/src` 중 재귀 호출 안에 있는 것. 한 번에 모으고 끝나는 수집기(예: `writer/compress.rs`의 미사용 리소스 탐색)는 전역 `checked` 집합으로 반복하며, 그리는 것이 아니라 모으는 것이라 전역 집합이 맞다 — 대상이 아니다.
 
-이 불변식이 다루지 않는 것: 서로 다른 폼이 층마다 둘씩 부르는 fan-out(순환 없음, 깊이 10까지 2^10) — [트리 순회 순환](tree-traversal-cycles.md)의 공유 노드 재방문과 같은 모양이다. 폼·패턴이 자기 `/Resources`로 이름을 풀지 않고 페이지 리소스만 보는 것(별도 결함, Tracked: #127) — 조상 체인은 객체 참조로 비교하므로 리소스 조회가 고쳐져도 그대로 맞다. 중첩 스트림 경계의 **다른 상태**도 다루지 않는다(2026-09-29 검토에서 재현): 그래픽 상태 스택에 스트림별 바닥이 없어 짝이 맞지 않는 `q`/`Q`가 경계를 넘어 부모의 상태를 꺼내거나 남기고(MuPDF는 `gbot`으로 막는다), 채우고 남긴 경로(`B`, `b`)가 타일 안으로 들어가며, 소프트 마스크 `/G`·투명도 그룹 폼이 부르는 쪽의 `ca`/`CA`·블렌드·소프트 마스크를 물려받는다(MuPDF `begin_softmask`는 알파 1·Normal·마스크 없음으로 시작한다). Tracked: #128. 서로 다른 패턴·소프트 마스크가 순환 없이 깊게 이어지는 것에는 깊이 제한이 없다 — debug 66단계, release 177단계에서 스택 오버플로(2026-09-29 측정). Tracked: #122
+이 불변식이 다루지 않는 것: 서로 다른 폼이 층마다 둘씩 부르는 fan-out(순환 없음, 깊이 10까지 2^10) — [트리 순회 순환](tree-traversal-cycles.md)의 공유 노드 재방문과 같은 모양이다. Which `/Resources` a resource name resolves in — [resource name scope](resource-scope.md). The ancestor chain compares object references, so it is independent of that rule. 중첩 스트림 경계의 **다른 상태**도 다루지 않는다(2026-09-29 검토에서 재현): 그래픽 상태 스택에 스트림별 바닥이 없어 짝이 맞지 않는 `q`/`Q`가 경계를 넘어 부모의 상태를 꺼내거나 남기고(MuPDF는 `gbot`으로 막는다), 채우고 남긴 경로(`B`, `b`)가 타일 안으로 들어가며, 소프트 마스크 `/G`·투명도 그룹 폼이 부르는 쪽의 `ca`/`CA`·블렌드·소프트 마스크를 물려받는다(MuPDF `begin_softmask`는 알파 1·Normal·마스크 없음으로 시작한다). Tracked: #128. 서로 다른 패턴·소프트 마스크가 순환 없이 깊게 이어지는 것에는 깊이 제한이 없다 — debug 66단계, release 177단계에서 스택 오버플로(2026-09-29 측정). Tracked: #122
