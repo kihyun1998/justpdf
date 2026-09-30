@@ -12,6 +12,7 @@
 - **SMask·명시적 마스크는 두 번 디코드된다**: `self.doc.decode_stream`으로 푼 뒤 그 결과를 다시 `decode_image`에 같은 사전과 함께 넘긴다. Flate 마스크는 두 번째 디코드가 실패해 마스크가 조용히 빠진다(추론).
 - **인라인 이미지는 그리지 않는다**: `render_inline_image` 본문이 `// TODO`와 `Ok(())`뿐이다.
 - `resolve_xobject`는 DCTDecode를 원바이트로, 그 외는 `decode_stream`으로 넘긴다.
+- **The image XObject itself is decoded twice too**: `render_image` hands the bytes `resolve_xobject` already decoded to `decode_image` with the same dictionary. A Flate image fails the second decode and `do_xobject` drops the error, so nothing is drawn (measured 2026-09-30 with SVG `to_pdf` output — see [SVG input](svg-input.md)). Unfiltered images are unaffected; other filters not checked.
 
 ## Code
 - `justpdf-render/src/interpreter.rs` — `do_xobject`, `resolve_xobject`, `render_image`, `render_image_mask`, `apply_image_smask`, `apply_image_explicit_mask`, `render_inline_image`, `image_to_rgba`
@@ -27,7 +28,7 @@
 - [스트림 필터](stream-filters.md) — 이중 디코드의 원인(통과 규칙).
 - [투명도](render-transparency.md) — SMask 적용.
 - [SVG 렌더러](svg-renderer.md), [compress-images](compress-images.md) — 같은 디코드 출력의 다른 해석자.
-- [문서 빌더](document-builder.md) — `draw_inline_image`로 만든 PDF(cbz/svg 입력)가 여기서 그려지지 않는다.
+- [Document builder](document-builder.md) — PDFs whose page raster went in through `embed_rgb` (CBZ/SVG input, since #88) are Flate image XObjects and are not drawn here (above).
 
 ## Known holes / open
 - 인라인 이미지 미렌더(위). 인라인 이미지는 파싱만 된다.

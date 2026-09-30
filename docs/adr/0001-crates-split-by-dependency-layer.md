@@ -1,6 +1,6 @@
 # Split the workspace by external dependency layer
 
-The primary principle behind splitting the PDF engine into 8 crates is **layering by external dependency**. Users pull in only as far as the layer they need, which lets them control binary size and compile time.
+The primary principle behind splitting the PDF engine into crates is **layering by external dependency**. Users pull in only as far as the layer they need, which lets them control binary size and compile time.
 
 ## Layers
 
