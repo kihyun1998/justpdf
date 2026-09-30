@@ -1,16 +1,16 @@
-# 복구 (repair)
+# Repair
 
 ## What it is
-xref가 깨진 파일을 위해 파일 전체에서 `N M obj` 헤더를 스캔해 xref를 다시 만들고, trailer를 찾거나 `/Type /Catalog` 객체로 합성한다.
+For files with a broken xref, scans the whole file for `N M obj` headers to rebuild the xref, and finds the trailer or synthesizes one from the `/Type /Catalog` object.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- 같은 번호가 여러 번 나오면 **마지막 것이 이긴다**(증분 업데이트 의미론을 흉내 냄).
-- trailer 탐색은 마지막 4 KiB만 본다. 버전 헤더를 못 읽으면 1.4로 둔다.
-- 만드는 엔트리는 `InUse`뿐이다 — object stream 안의 객체는 복구되지 않는다(추론).
-- `from_raw_parts`는 `security: None`으로 문서를 만들고 암호화 감지를 하지 않는다.
+- When the same number appears more than once, **the last one wins** (imitating incremental update semantics).
+- The trailer search looks only at the last 4 KiB. If the version header cannot be read, it is set to 1.4.
+- The only entries it creates are `InUse` — objects inside object streams are not recovered (inferred).
+- `from_raw_parts` builds the document with `security: None` and does no encryption detection.
 
 ## Code
 - `justpdf-core/src/repair.rs` — `rebuild_xref`, `repair_document`, `from_bytes_with_repair`, `scan_object_headers`, `find_trailer_dict`, `synthesise_trailer`, `try_parse_dict_at`
@@ -22,10 +22,10 @@ xref가 깨진 파일을 위해 파일 전체에서 `N M obj` 헤더를 스캔�
 **None.**
 
 ## Blast radius
-- [xref](xref.md) — 같은 `Xref` 구조를 만든다.
-- [문서 접근](document-access.md) — `from_raw_parts`로 `PdfDocument`를 조립한다.
-- [토크나이저](tokenizer.md), [객체 모델](object-model.md) — 헤더·사전 스캔에 쓴다.
+- [Xref](xref.md) — builds the same `Xref` structure.
+- [Document access](document-access.md) — assembles a `PdfDocument` with `from_raw_parts`.
+- [Tokenizer](tokenizer.md), [Object model](object-model.md) — used to scan headers and dictionaries.
 
 ## Known holes / open
-- **어디서도 호출되지 않는다.** 소비처는 명령으로 확인한다: `rg -l 'from_bytes_with_repair|repair_document|rebuild_xref' --glob '*.rs' --glob '!target' .` — `repair.rs` 자신만 나온다. 일반 `open`은 실패 시 repair로 떨어지지 않는다.
-- 복구된 암호화 문서는 복호화되지 않는다(위 Design model).
+- **Nothing calls it.** Check consumers with a command: `rg -l 'from_bytes_with_repair|repair_document|rebuild_xref' --glob '*.rs' --glob '!target' .` — only `repair.rs` itself shows up. A plain `open` does not fall back to repair on failure.
+- A repaired encrypted document is not decrypted (Design model above).
