@@ -1,17 +1,17 @@
-# compress-wasm (브라우저 압축 제품)
+# Compress WASM (browser compression product)
 
 ## What it is
-브라우저에서 서버 없이 PDF를 압축하는 WASM 모듈. core의 압축 API만 노출하고 렌더러를 끌어오지 않는다. npm 패키지로 배포되며, 외부 저장소 Just-pdf-web이 워커에서 `analyze`와 `compress(bytes, preset)`를 부른다.
+A WASM module that compresses PDFs in the browser with no server. It exposes only core's compression API and does not pull in the renderer. It ships as an npm package, and the external repo Just-pdf-web calls `analyze` and `compress(bytes, preset)` from a worker.
 
 ## Governing decisions
-- [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md) — 일반 바인딩과 달리 "완성된 제품"이므로 워크스페이스 **안**에 두고 core와 CI·테스트·버전을 함께 끈다.
-- [ADR-0001](../../adr/0001-crates-split-by-dependency-layer.md) — render를 빼서 번들을 작게 한다.
+- [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md) — unlike the general bindings it is a "finished product", so it lives **inside** the workspace and carries CI, tests and versioning along with core.
+- [ADR-0001](../../adr/0001-crates-split-by-dependency-layer.md) — leaves out render to keep the bundle small.
 
 ## Design model
-- 표면: `compress`(프리셋), `compress_custom`(품질·DPI, 나머지 고정), `compress_advanced`(일부 노브), `analyze`. 결과 getter가 `CompressStats`·`AnalyzeResult` 필드를 1:1로 노출한다.
-- `compress_advanced`의 `jpeg_quality: i32`는 `as u8`로 잘린다.
-- `getrandom`의 `js` 기능은 compress-wasm 코드가 쓰지 않는다. core가 `getrandom`에 의존하므로(직접: 암호화 난수 — [객체 암호화](object-encryption.md); 전이: `rsa` → `rand_core`) wasm32에서 빌드되게 하려는 것이다(설계 문서 I-3).
-- `pkg/`(빌드 산출물)는 git에 추적되지 않는다.
+- Surface: `compress` (preset), `compress_custom` (quality and DPI, the rest fixed), `compress_advanced` (some knobs), `analyze`. The result getters expose the `CompressStats` and `AnalyzeResult` fields 1:1.
+- `jpeg_quality: i32` in `compress_advanced` is truncated with `as u8`.
+- The `js` feature of `getrandom` is not used by compress-wasm code. Core depends on `getrandom` (directly: crypto randomness — [Object encryption](object-encryption.md); transitively: `rsa` → `rand_core`), so it is there to make the build work on wasm32 (design doc I-3).
+- `pkg/` (the build output) is not tracked in git.
 
 ## Code
 - `justpdf-compress-wasm/src/lib.rs` — `compress`, `compress_custom`, `compress_advanced`, `analyze`, `CompressResult`, `AnalyzeResult`
@@ -24,11 +24,11 @@
 **None.**
 
 ## Blast radius
-- [compress-presets](compress-presets.md) — 프리셋 이름·의미.
-- [압축 파이프라인](compress-pipeline.md) — 통계 필드 추가·삭제가 getter에 닿는다.
-- [크레이트 배포](crate-publishing.md) — core에 `path`만 있고 `version`이 없는 의존성이라 crates.io 게시가 막힌다(추론, `cargo publish` 미실행). npm 게시 경로는 저장소 워크플로에 없다.
-- 외부 저장소 Just-pdf-web — getter 이름·프리셋 이름 변경이 그쪽 워커·타입을 깬다.
+- [Compress presets](compress-presets.md) — preset names and meanings.
+- [Compress pipeline](compress-pipeline.md) — adding or removing a stats field reaches the getters.
+- [Crate publishing](crate-publishing.md) — the dependency on core has only `path` and no `version`, which blocks publishing to crates.io (inferred, `cargo publish` not run). There is no npm publishing path in the repo's workflows.
+- The external repo Just-pdf-web — renaming a getter or a preset breaks its worker and types.
 
 ## Known holes / open
-- `compress_advanced`에서 `jpeg_quality`를 0으로 줘도 `max_dpi > 0`이면 q75로 재인코딩된다(README에 적혀 있음). 노브로 끌 수 있는 것은 DPI 쪽뿐이다.
-- Tracked: #57 (jpeg_quality 절단), #58 (extreme의 첨부파일 제거)
+- In `compress_advanced`, even with `jpeg_quality` set to 0, images are re-encoded at q75 when `max_dpi > 0` (documented in the README). Only the DPI side can be turned off with a knob.
+- Tracked: #57 (jpeg_quality truncation), #58 (extreme removes embedded files)
