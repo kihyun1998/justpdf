@@ -28,7 +28,7 @@ Reads the layers (OCG) and membership dictionaries (OCMD) of `/OCProperties`, de
 - [Render interpreter](render-interpreter.md) — the point where visibility is checked (where the `/Properties` lookup would go).
 - [SVG renderer](svg-renderer.md), [Text extraction](text-extraction.md) — ignore OC.
 - [Render annotations](render-annotations.md) — annotation `/OC` not checked.
-- [compress-unused-resources](compress-unused-resources.md) — `/Properties` is not a cleanup target.
+- [Compress unused resources](compress-unused-resources.md) — `/Properties` is not a cleanup target.
 
 ## Known holes / open
 - The `/Properties` name lookup is still a renderer TODO.
