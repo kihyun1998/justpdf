@@ -1,33 +1,33 @@
-# 렌더 — 주석 그리기
+# Render annotations
 
 ## What it is
-페이지 콘텐츠를 그린 뒤 각 주석의 `/AP /N` 외관 스트림을 그린다.
+After drawing the page content, draws each annotation's `/AP /N` appearance stream.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- Hidden(0x02)·NoView(0x20) 플래그를 존중한다.
-- `/N`이 상태 사전이면 건너뛴다. `/AS`를 보지 않는다.
-- `render_form_xobject`를 **Rect 매핑과 BBox 클립 없이** 부른다(추론: 외관이 잘못된 위치에 그려짐). 스펙은 BBox를 Matrix로 변환해 Rect에 맞추는 변환을 요구한다.
+- Respects the Hidden (0x02) and NoView (0x20) flags.
+- If `/N` is a state dictionary, it is skipped. `/AS` is not looked at.
+- Calls `render_form_xobject` **without the Rect mapping and without the BBox clip** (inferred: the appearance is drawn in the wrong place). The spec requires a transformation that maps the BBox, transformed by the Matrix, onto the Rect.
 - The appearance form is drawn in its own `/Resources` scope, else the page's — [resource name scope](../invariant/resource-scope.md).
-- 주석 `/OC`를 확인하지 않는다.
+- The annotation's `/OC` is not checked.
 
 ## Code
 - `justpdf-render/src/interpreter.rs` — `render_annotations`, `render_form_xobject`
 
 ## Reference behaviour
-**None.** 비교 대상 조항: ISO 32000-2 §12.5.5(외관 스트림 → 주석 사각형 매핑 알고리즘).
+**None.** Clause to compare against: ISO 32000-2 §12.5.5 (the algorithm mapping the appearance stream onto the annotation rectangle).
 
 ## Cross-cutting invariants
 - [resource name scope](../invariant/resource-scope.md)
 
 ## Blast radius
-- [주석 외관](annotation-appearance.md) — 여기서 그리는 XObject를 만드는 쪽. 좌표 규칙 양쪽을 함께 고친다.
-- [주석](annotations.md) — 입력.
-- [optional content](optional-content.md) — 주석 `/OC`.
-- [투명도](render-transparency.md) — Form XObject 경로 공유.
+- [Annotation appearance](annotation-appearance.md) — the side that builds the XObject drawn here. Fix the coordinate rules on both sides together.
+- [Annotations](annotations.md) — input.
+- [optional content](optional-content.md) — annotation `/OC`.
+- [Render transparency](render-transparency.md) — shares the Form XObject path.
 
 ## Known holes / open
-- 주석 렌더 테스트가 없다.
-- Tracked: #41 (주석 외관 좌표)
+- There is no annotation render test.
+- Tracked: #41 (annotation appearance coordinates)
