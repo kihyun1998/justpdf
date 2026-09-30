@@ -1,13 +1,13 @@
-# 포맷 감지
+# Format detection
 
 ## What it is
-입력 파일의 포맷을 판별한다. 확장자 기반(`detect_format`)과 바이트 기반(`detect_format_from_bytes`)이 있다.
+Decides the format of an input file. There is an extension-based path (`detect_format`) and a byte-based path (`detect_format_from_bytes`).
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- 바이트 기반 감지는 ZIP이면 무조건 `Unknown`을 돌려준다("simplified … let the caller try each format"). EPUB·Office·XPS·CBZ가 모두 ZIP이므로 사실상 확장자에 의존한다.
+- Byte-based detection returns `Unknown` for any ZIP ("simplified … let the caller try each format"). EPUB, Office, XPS and CBZ are all ZIPs, so in practice it relies on the extension.
 
 ## Code
 - `justpdf-formats/src/detect.rs` — `detect_format`, `detect_format_from_bytes`
@@ -19,8 +19,8 @@
 **None.**
 
 ## Blast radius
-- [CLI](cli.md) — `cmd_convert`가 감지 결과로 분기한다(MOBI·FB2 분기 누락).
-- [포맷 변환 계약](format-document.md) — 감지된 포맷의 구현 선택.
+- [CLI](cli.md) — `cmd_convert` branches on the detection result (the MOBI and FB2 branches are missing).
+- [Format document](format-document.md) — picks the implementation for the detected format.
 
 ## Known holes / open
-- 확장자가 틀린 ZIP 계열 파일은 판별되지 않는다.
+- A ZIP-based file with the wrong extension is not identified.

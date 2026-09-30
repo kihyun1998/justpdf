@@ -1,15 +1,15 @@
-# 크레이트 배포와 버전
+# Crate publishing
 
 ## What it is
-crates.io(각 크레이트), npm(compress-wasm), PyPI·npm(바인딩)으로의 게시와, 크레이트 간 버전 요구·CHANGELOG. 저장소 워크플로에 게시 자동화는 없고 손으로 한다.
+Publishing to crates.io (each crate), npm (compress-wasm), and PyPI and npm (bindings), plus the version requirements between crates and the CHANGELOG. The repo's workflows have no publishing automation; it is done by hand.
 
 ## Governing decisions
-**None.** [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md)가 바인딩은 각자 다른 레지스트리·파이프라인을 가진다고 적을 뿐, 버전 정책은 정하지 않는다.
+**None.** [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md) only says the bindings each have their own registry and pipeline; it sets no version policy.
 
 ## Design model
-- 크레이트들이 제각기 버전을 가진다. 하위 크레이트는 core에 캐럿 요구(`version = "…", path = …`)를 적는다 — core가 패치 버전을 올려도 요구 문자열은 옛 값에 머문다(캐럿이라 만족은 된다). 현재 값은 각 `Cargo.toml`이 소유한다: `grep -n 'justpdf-core' */Cargo.toml`.
-- `justpdf-compress-wasm`은 core를 `path`로만 의존하고 `version`이 없으며 `publish = false`도 없다 — `cargo publish`가 거부할 형태다(추론, 미실행).
-- CHANGELOG의 `[Unreleased]`가 0.1.4 이후 병합분을 모은다. 크레이트별 버전과 CHANGELOG 헤딩의 대응(어느 항목이 어느 크레이트 릴리스인지)은 헤딩의 괄호 주석에만 있다.
+- Each crate has its own version. Downstream crates declare a caret requirement on core (`version = "…", path = …`) — when core bumps its patch version the requirement string stays at the old value (it is still satisfied, being a caret). Each `Cargo.toml` owns its current value: `grep -n 'justpdf-core' */Cargo.toml`.
+- `justpdf-compress-wasm` depends on core by `path` only, with no `version` and no `publish = false` — a shape `cargo publish` would reject (inferred, not run).
+- The CHANGELOG's `[Unreleased]` collects what has merged since 0.1.4. Which crate version a CHANGELOG heading corresponds to (which entry belongs to which crate's release) lives only in the parenthetical note on the heading.
 
 ## Code
 - `CHANGELOG.md` — `Unreleased`
@@ -22,10 +22,10 @@ crates.io(각 크레이트), npm(compress-wasm), PyPI·npm(바인딩)으로의 �
 **None.**
 
 ## Blast radius
-- [compress-wasm](compress-wasm.md) — 게시 불가 의존성, npm 패키지.
-- [언어 바인딩](language-bindings.md) — 각자 레지스트리.
-- [릴리스](release.md) — 바이너리 버전.
-- [게시 문서](published-docs.md) — 크레이트 README가 crates.io 페이지가 된다.
+- [Compress WASM](compress-wasm.md) — the unpublishable dependency, the npm package.
+- [Language bindings](language-bindings.md) — each with its own registry.
+- [Release](release.md) — binary versions.
+- [Published docs](published-docs.md) — a crate's README becomes its crates.io page.
 
 ## Known holes / open
-- 게시 절차가 어디에도 기록되어 있지 않다.
+- The publishing procedure is not written down anywhere.
