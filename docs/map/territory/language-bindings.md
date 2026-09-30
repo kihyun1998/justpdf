@@ -1,29 +1,29 @@
-# Aggregate — 언어 바인딩
+# Aggregate — Language bindings
 
-**This note owns no detail.** 다른 언어에서 Rust API를 부르기 위한 얇은 어댑터 네 개의 관계.
+**This note owns no detail.** How the four thin adapters for calling the Rust API from other languages relate.
 
 | Concept | Note |
 |---|---|
-| C ABI + 손으로 쓴 헤더 | [ffi-binding](ffi-binding.md) |
+| C ABI + hand-written header | [ffi-binding](ffi-binding.md) |
 | PyO3 / maturin | [python-binding](python-binding.md) |
-| wasm-bindgen 범용 모듈 | [wasm-binding](wasm-binding.md) |
+| wasm-bindgen general-purpose module | [wasm-binding](wasm-binding.md) |
 | napi-rs | [node-binding](node-binding.md) |
 
 ## Why they sit together
-넷 다 **같은 좁은 core+render 부분집합**(열기·인증·페이지 수·텍스트 추출·PNG 렌더·몇몇 Info 문자열)을 각자 다시 감싼다. 서로 호출하지 않고 [파사드](facade.md)도 쓰지 않으므로, core·render 공개 API가 바뀌면 네 곳을 따로 고쳐야 한다. [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md)가 이 네 개를 "워크스페이스 밖 일반 바인딩"으로 묶는다.
+All four wrap **the same narrow core+render subset** (open, authenticate, page count, text extraction, PNG render, a few Info strings) each on their own. They do not call each other and do not use the [Facade](facade.md), so when the core or render public API changes, the four have to be fixed separately. [ADR-0002](../../adr/0002-language-bindings-outside-workspace.md) groups these four as "general bindings outside the workspace".
 
-## ADR-0002와 저장소가 어긋나는 지점
-ADR-0002는 네 바인딩 모두가 워크스페이스 멤버에서 제외되고 각자 빈 `[workspace]` 블록을 가진다고 적는다. 2026-09-23 저장소 상태:
-- `justpdf-ffi`는 루트 `Cargo.toml`의 `members`에 **들어 있다**(ADR보다 먼저 추가됨).
-- `justpdf-ffi`·`justpdf-wasm`에는 `[workspace]` 블록이 없다.
-- 그 결과 `cargo metadata --manifest-path justpdf-wasm/Cargo.toml`이 "current package believes it's in a workspace when it's not"로 실패한다 — wasm 바인딩은 현재 단독 빌드가 되지 않는다.
-- python·node만 ADR대로(빈 `[workspace]`, 자체 `Cargo.lock`) 분리되어 있다.
+## Where ADR-0002 and the repository disagree
+ADR-0002 states that all four bindings are excluded from the workspace members and each has an empty `[workspace]` block. State of the repository on 2026-09-23:
+- `justpdf-ffi` **is** in the root `Cargo.toml` `members` (added before the ADR).
+- `justpdf-ffi` and `justpdf-wasm` have no `[workspace]` block.
+- As a result `cargo metadata --manifest-path justpdf-wasm/Cargo.toml` fails with "current package believes it's in a workspace when it's not" — the wasm binding currently cannot be built on its own.
+- Only python and node are split off as the ADR says (empty `[workspace]`, their own `Cargo.lock`).
 
-확인 명령: `grep -n members Cargo.toml; grep -c '^\[workspace\]' justpdf-{ffi,python,wasm,node}/Cargo.toml`.
+Command to check: `grep -n members Cargo.toml; grep -c '^\[workspace\]' justpdf-{ffi,python,wasm,node}/Cargo.toml`.
 
-어느 쪽(ADR 또는 매니페스트)을 고칠지는 결정이 필요하다. 이 맵은 ADR을 고치지 않는다.
+Which side to fix (the ADR or the manifests) needs a decision. This map does not change the ADR.
 
-## CI가 보지 않는다
-CI는 `--workspace` 명령만 돌므로 ffi는 호스트 플랫폼에서만 컴파일되고, python·wasm·node는 **어떤 CI 작업도 빌드하지 않는다**(maturin·napi·wasm32 작업 없음). 조용히 깨지는 부류다 — [CI](ci.md).
+## CI does not look
+CI runs only `--workspace` commands, so ffi is compiled only on the host platform, and python, wasm and node are **built by no CI job** (no maturin, napi or wasm32 jobs). They belong to the class that breaks quietly — [CI](ci.md).
 
-Tracked: #36 (justpdf-wasm 매니페스트·ADR-0002)
+Tracked: #36 (justpdf-wasm manifest, ADR-0002)
