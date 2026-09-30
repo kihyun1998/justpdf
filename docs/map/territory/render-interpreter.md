@@ -16,17 +16,21 @@
 - 다른 콘텐츠 스트림(Form XObject, 타일, 소프트 마스크 `/G`)은 `with_running_stream`으로 들어간다: 실행 중인 스트림을 다시 만나면 건너뛴다 — [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md). Form XObject는 이와 별도로 깊이 10을 넘으면 건너뛴다.
 - 장치 색 연산자(`g`/`rg`/`k`, `G`/`RG`/`K`)는 그쪽 패턴 선택을 지운다.
 - 페이지 콘텐츠를 자체 함수로 조립한다 — [페이지 콘텐츠 조립](../invariant/page-content-assembly.md).
+- Resource names resolve in the `/Resources` of the streams being executed, innermost first. `Tf` and `scn`/`SCN` put the resolved object in the graphics state. A font is resolved when first selected and cached by `FontKey` — [resource name scope](../invariant/resource-scope.md).
+- `Tf` records the `FontKey` a name selected in the innermost scope (`ResourceScopes::select_font`) and reuses it until that scope is left. Measured 2026-09-30 on a local 392-page document at 72 dpi (minimum of 6 alternating runs): walking the scopes on every `Tf` rendered it in 9.64 s against 7.15 s before #127; with the per-scope record, 6.47 s against 6.49 s (10 runs).
 
 ## Code
-- `justpdf-render/src/interpreter.rs` — `RenderInterpreter`, `render_page`, `get_page_content`, `concat_content_streams`, `resolve_object`, `execute_ops`, `execute_op`, `with_running_stream`, `effective_transform`, `cs_from_name`
-- `justpdf-render/src/graphics_state.rs` — `GraphicsState`, `TextState`, `Matrix`, `PdfBlendMode`, `fill_color_rgba`
+- `justpdf-render/src/interpreter.rs` — `RenderInterpreter`, `render_page`, `get_page_content`, `concat_content_streams`, `execute_ops`, `execute_op`, `with_running_stream`, `with_stream_resources`, `select_font`, `resolve_font`, `resolve_xobject`, `effective_transform`, `cs_from_name`
+- `justpdf-render/src/resources.rs` — `ResourceScopes`, `Resource`, `FontSelection`, `select_font`, `select_pattern`, `entry`
+- `justpdf-render/src/graphics_state.rs` — `GraphicsState`, `TextState`, `FontKey`, `PatternSelection`, `Matrix`, `PdfBlendMode`, `fill_color_rgba`
 
 ## Reference behaviour
 **None.** 비교 대상 조항: ISO 32000-2 §8.4(그래픽 상태), Annex A. MuPDF(example)와 렌더 결과를 비교한 기록 없음.
 
 ## Cross-cutting invariants
 - [페이지 콘텐츠 조립](../invariant/page-content-assembly.md)
-- [폰트 해석 경로](../invariant/font-resolution.md) — `resolve_page_fonts`가 텍스트 추출과 별도로 폰트를 푼다.
+- [폰트 해석 경로](../invariant/font-resolution.md) — `resolve_font` resolves fonts apart from text extraction.
+- [resource name scope](../invariant/resource-scope.md)
 - [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md)
 
 ## Blast radius
@@ -38,6 +42,5 @@
 - [렌더 API](render-api.md) — 호출자.
 
 ## Known holes / open
-- `interpreter.rs`, `graphics_state.rs`에 단위 테스트가 없다. 픽셀 내용을 보는 렌더 테스트는 `tests/render_recursion.rs`(재귀 경로)뿐이고, 나머지 통합 테스트는 PNG 매직 바이트·길이만 확인한다.
-- 폼·패턴·소프트 마스크 `/G`의 이름을 자기 `/Resources`가 아니라 페이지 리소스에서 푼다(`resolve_xobject`, `resolve_pattern`, `apply_extgstate` 모두 `page.resources_ref`). Tracked: #127
+- `interpreter.rs`, `graphics_state.rs`에 단위 테스트가 없다. Render tests that read pixels are `tests/render_recursion.rs` (recursion paths) and `tests/render_resources.rs` (resource name scope); 나머지 통합 테스트는 PNG 매직 바이트·길이만 확인한다.
 - 중첩 스트림 경계에 그래픽 상태 스택의 바닥이 없어 짝이 맞지 않는 `q`/`Q`가 경계를 넘고, 채우고 남긴 경로가 타일로 들어간다. Tracked: #128

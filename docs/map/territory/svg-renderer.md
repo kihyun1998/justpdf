@@ -8,12 +8,13 @@
 
 ## Design model
 - 인라인 이미지(`BI`)는 건너뛰고, 셰이딩(`sh`)은 "skip for now", marked content는 전부 무시(OCG 없음), 패턴 이름은 기록만 하고 쓰지 않는다. 주석·소프트 마스크 없음. `defs` 주석은 "gradients"를 말하지만 그라디언트 코드가 없다.
+- Resource names resolve through the same scope stack as the raster side (`ResourceScopes`) — [resource name scope](../invariant/resource-scope.md).
 - Form XObject는 실행 중인 폼(`running_forms`)을 다시 만나면 건너뛰고, 깊이 10을 넘으면 건너뛴다 — [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md).
 - 텍스트는 ToUnicode로 `<text>`를 내고, 없으면 ASCII(<128)만, 윤곽이 없으면 "rectangle placeholder".
 - `image_to_rgba`·`cs_from_name`의 사본을 가진다 — [이미지 픽셀 레이아웃](../invariant/image-pixel-layout.md).
 
 ## Code
-- `justpdf-render/src/svg_device.rs` — `SvgRenderer`, `execute_op`, `resolve_page_fonts`, `get_page_content`, `concat_content_streams`, `do_xobject`, `render_image`, `render_form_xobject`, `apply_extgstate`, `image_to_rgba`, `cs_from_name`, `render_text_string`
+- `justpdf-render/src/svg_device.rs` — `SvgRenderer`, `execute_op`, `select_font`, `resolve_font`, `get_page_content`, `concat_content_streams`, `do_xobject`, `render_image`, `render_form_xobject`, `apply_extgstate`, `image_to_rgba`, `cs_from_name`, `render_text_string`
 
 ## Reference behaviour
 **None.**
@@ -23,6 +24,7 @@
 - [페이지 콘텐츠 조립](../invariant/page-content-assembly.md)
 - [폰트 해석 경로](../invariant/font-resolution.md)
 - [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md)
+- [resource name scope](../invariant/resource-scope.md)
 
 ## Blast radius
 - [렌더 인터프리터](render-interpreter.md) — 원본. 래스터 쪽에서 고친 연산자 동작은 여기로 전파되지 않는다.

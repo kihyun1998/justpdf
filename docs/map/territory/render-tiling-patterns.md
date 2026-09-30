@@ -7,11 +7,13 @@
 **None.**
 
 ## Design model
+- `scn`/`SCN` resolves the pattern in the current scope and puts the object (`PatternSelection`) in the graphics state. The tile is drawn in the pattern's `/Resources` scope — [resource name scope](../invariant/resource-scope.md).
 - 경로 채우기·선 긋기만 패턴을 쓴다. 텍스트는 패턴으로 채우지 않는다(추론).
 - 타일은 실행 중인 스트림으로 기록된 채 그려지고, 타일 안에서 같은 패턴을 다시 칠하면 패턴 없이 채우기 색으로 칠한다. 타일은 페이지의 소프트 마스크 없이 그린다 — [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md).
 
 ## Code
-- `justpdf-render/src/interpreter.rs` — `resolve_pattern`, `render_tiling_pattern`, `try_fill_with_pattern`, `try_stroke_with_pattern`, `resolve_and_render_pattern`
+- `justpdf-render/src/resources.rs` — `select_pattern`
+- `justpdf-render/src/interpreter.rs` — `render_tiling_pattern`, `try_fill_with_pattern`, `try_stroke_with_pattern`, `render_pattern`
 - `justpdf-render/src/device.rs` — `fill_path_with_pattern`, `stroke_path_with_pattern`
 
 ## Reference behaviour
@@ -19,6 +21,7 @@
 
 ## Cross-cutting invariants
 - [콘텐츠 스트림 재귀](../invariant/content-stream-recursion.md)
+- [resource name scope](../invariant/resource-scope.md)
 
 ## Blast radius
 - [셰이딩](render-shading.md) — 셰이딩 패턴.

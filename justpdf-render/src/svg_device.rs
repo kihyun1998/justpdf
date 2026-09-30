@@ -12,9 +12,8 @@ use justpdf_core::page::PageInfo;
 use justpdf_core::PdfDocument;
 
 use crate::error::{RenderError, Result};
-use crate::graphics_state::{
-    GraphicsState, LineCap, LineJoin, Matrix, PdfBlendMode,
-};
+use crate::graphics_state::{FontKey, GraphicsState, LineCap, LineJoin, Matrix, PdfBlendMode};
+use crate::resources::ResourceScopes;
 
 /// Resolved font for SVG rendering.
 struct ResolvedFont {
@@ -29,7 +28,9 @@ pub struct SvgRenderer<'a> {
     doc: &'a PdfDocument,
     state: GraphicsState,
     state_stack: Vec<GraphicsState>,
-    fonts: HashMap<Vec<u8>, ResolvedFont>,
+    fonts: HashMap<FontKey, ResolvedFont>,
+    /// The `/Resources` names resolve in.
+    resources: ResourceScopes,
     /// Transform from PDF user space to SVG space.
     page_transform: Matrix,
     /// Current path being constructed (SVG path data string).
@@ -65,6 +66,7 @@ impl<'a> SvgRenderer<'a> {
             state: GraphicsState::default(),
             state_stack: Vec::new(),
             fonts: HashMap::new(),
+            resources: ResourceScopes::default(),
             page_transform,
             path_data: None,
             elements: Vec::new(),
@@ -86,12 +88,12 @@ impl<'a> SvgRenderer<'a> {
 
     /// Render a page's content streams and return the SVG XML string.
     pub fn render_page(mut self, page: &PageInfo) -> Result<String> {
-        let _ = self.resolve_page_fonts(page);
+        self.resources = ResourceScopes::for_page(self.doc, page);
 
         let content_data = self.get_page_content(page)?;
         if !content_data.is_empty() {
             let ops = parse_content_stream(&content_data).map_err(RenderError::Core)?;
-            self.execute_ops(&ops, page)?;
+            self.execute_ops(&ops)?;
         }
 
         Ok(self.build_svg())
@@ -136,97 +138,63 @@ impl<'a> SvgRenderer<'a> {
     // Font resolution (mirrors RenderInterpreter)
     // -----------------------------------------------------------------------
 
-    fn resolve_page_fonts(&mut self, page: &PageInfo) -> Result<()> {
-        let resources_obj = match &page.resources_ref {
-            Some(obj) => self.resolve_object(obj)?,
-            None => return Ok(()),
-        };
+    /// Selects the font named `name` in the current resource scope,
+    /// resolving it on first use.
+    fn select_font(&mut self, name: &[u8]) -> Option<FontKey> {
+        let fonts = &self.fonts;
+        let selection = self
+            .resources
+            .select_font(self.doc, name, |key| fonts.contains_key(key))?;
+        if let Some(dict) = &selection.dict {
+            let font = self.resolve_font(dict).ok()?;
+            self.fonts.insert(selection.key.clone(), font);
+        }
+        Some(selection.key)
+    }
 
-        let resources_dict = match &resources_obj {
-            PdfObject::Dict(d) => d.clone(),
-            _ => return Ok(()),
-        };
+    fn resolve_font(&mut self, fd: &PdfDict) -> Result<ResolvedFont> {
+        let mut info = parse_font_info(fd);
 
-        let font_dict_obj = match resources_dict.get(b"Font") {
-            Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
+        let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {
+            let tu_ref = tu_ref.clone();
+            if let Ok(tu_obj) = self.doc.resolve(&tu_ref) {
+                if let PdfObject::Stream { dict, data } = tu_obj {
+                    let decoded = self.doc.decode_stream(&dict, &data).ok();
+                    decoded.map(|d| ToUnicodeCMap::parse(&d))
+                } else {
+                    None
+                }
+            } else {
+                None
             }
-            _ => return Ok(()),
+        } else {
+            None
         };
 
-        if let PdfObject::Dict(font_dict) = &font_dict_obj {
-            for (name, val) in font_dict.iter() {
-                let font_obj = match val {
-                    PdfObject::Reference(r) => {
-                        let r = r.clone();
-                        self.doc.resolve(&r)?
-                    }
-                    other => other.clone(),
-                };
-
-                if let PdfObject::Dict(fd) = &font_obj {
-                    let mut info = parse_font_info(fd);
-
-                    let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {
-                        let tu_ref = tu_ref.clone();
-                        if let Ok(tu_obj) = self.doc.resolve(&tu_ref) {
-                            if let PdfObject::Stream { dict, data } = tu_obj {
-                                let decoded = self.doc.decode_stream(&dict, &data).ok();
-                                decoded.map(|d| ToUnicodeCMap::parse(&d))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
+        // Resolve CID font widths for Type0
+        if info.subtype == b"Type0" {
+            if let Some(PdfObject::Array(descendants)) = fd.get(b"DescendantFonts") {
+                if let Some(desc_ref) = descendants.first() {
+                    let desc_obj = match desc_ref {
+                        PdfObject::Reference(r) => {
+                            let r = r.clone();
+                            self.doc.resolve(&r)?
                         }
-                    } else {
-                        None
+                        other => other.clone(),
                     };
-
-                    // Resolve CID font widths for Type0
-                    if info.subtype == b"Type0" {
-                        if let Some(PdfObject::Array(descendants)) = fd.get(b"DescendantFonts") {
-                            if let Some(desc_ref) = descendants.first() {
-                                let desc_obj = match desc_ref {
-                                    PdfObject::Reference(r) => {
-                                        let r = r.clone();
-                                        self.doc.resolve(&r)?
-                                    }
-                                    other => other.clone(),
-                                };
-                                if let PdfObject::Dict(cid_dict) = &desc_obj {
-                                    let cid_info = parse_font_info(cid_dict);
-                                    info.widths = cid_info.widths;
-                                }
-                            }
-                        }
+                    if let PdfObject::Dict(cid_dict) = &desc_obj {
+                        let cid_info = parse_font_info(cid_dict);
+                        info.widths = cid_info.widths;
                     }
-
-                    self.fonts.insert(
-                        name.clone(),
-                        ResolvedFont {
-                            info,
-                            cmap,
-                            font_data: None, // SVG uses <text>, not glyph outlines
-                        },
-                    );
                 }
             }
         }
 
-        Ok(())
-    }
-
-    fn resolve_object(&mut self, obj: &PdfObject) -> Result<PdfObject> {
-        match obj {
-            PdfObject::Reference(r) => {
-                let r = r.clone();
-                Ok(self.doc.resolve(&r)?)
-            }
-            other => Ok(other.clone()),
-        }
+        Ok(ResolvedFont {
+            info,
+            cmap,
+            font_data: None, // SVG uses <text>, not glyph outlines
+        })
     }
 
     fn get_page_content(&mut self, page: &PageInfo) -> Result<Vec<u8>> {
@@ -282,14 +250,14 @@ impl<'a> SvgRenderer<'a> {
     // Operator dispatch
     // -----------------------------------------------------------------------
 
-    fn execute_ops(&mut self, ops: &[ContentOp], page: &PageInfo) -> Result<()> {
+    fn execute_ops(&mut self, ops: &[ContentOp]) -> Result<()> {
         for op in ops {
-            self.execute_op(op, page)?;
+            self.execute_op(op)?;
         }
         Ok(())
     }
 
-    fn execute_op(&mut self, op: &ContentOp, page: &PageInfo) -> Result<()> {
+    fn execute_op(&mut self, op: &ContentOp) -> Result<()> {
         let operator = op.operator_str();
         let operands = &op.operands;
 
@@ -363,7 +331,7 @@ impl<'a> SvgRenderer<'a> {
             // ExtGState
             "gs" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    let _ = self.apply_extgstate(name, page);
+                    let _ = self.apply_extgstate(name);
                 }
             }
 
@@ -495,7 +463,7 @@ impl<'a> SvgRenderer<'a> {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
                     self.state.stroke_cs = cs_from_name(name);
                     if name != b"Pattern" {
-                        self.state.stroke_pattern_name = None;
+                        self.state.stroke_pattern = None;
                     }
                 }
             }
@@ -503,14 +471,15 @@ impl<'a> SvgRenderer<'a> {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
                     self.state.fill_cs = cs_from_name(name);
                     if name != b"Pattern" {
-                        self.state.fill_pattern_name = None;
+                        self.state.fill_pattern = None;
                     }
                 }
             }
             "SC" | "SCN" => {
                 let last_is_name = operands.last().and_then(|o| o.as_name());
                 if last_is_name.is_some() {
-                    self.state.stroke_pattern_name = last_is_name.map(|n| n.to_vec());
+                    self.state.stroke_pattern =
+                        last_is_name.and_then(|n| self.resources.select_pattern(self.doc, n));
                     let comps: Vec<f64> = operands.iter().filter_map(|o| o.as_f64()).collect();
                     if !comps.is_empty() {
                         self.state.stroke_color = PdfColor { components: comps };
@@ -525,7 +494,8 @@ impl<'a> SvgRenderer<'a> {
             "sc" | "scn" => {
                 let last_is_name = operands.last().and_then(|o| o.as_name());
                 if last_is_name.is_some() {
-                    self.state.fill_pattern_name = last_is_name.map(|n| n.to_vec());
+                    self.state.fill_pattern =
+                        last_is_name.and_then(|n| self.resources.select_pattern(self.doc, n));
                     let comps: Vec<f64> = operands.iter().filter_map(|o| o.as_f64()).collect();
                     if !comps.is_empty() {
                         self.state.fill_color = PdfColor { components: comps };
@@ -594,7 +564,7 @@ impl<'a> SvgRenderer<'a> {
             }
             "Tf" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    self.state.text.font_name = name.to_vec();
+                    self.state.text.font = self.select_font(name);
                 }
                 if operands.len() > 1 {
                     self.state.text.font_size = f(operands, 1);
@@ -691,7 +661,7 @@ impl<'a> SvgRenderer<'a> {
             // --- XObject (images and forms) ---
             "Do" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    let _ = self.do_xobject(name, page);
+                    let _ = self.do_xobject(name);
                 }
             }
 
@@ -895,8 +865,13 @@ impl<'a> SvgRenderer<'a> {
     // -----------------------------------------------------------------------
 
     fn render_text_string(&mut self, string_bytes: &[u8]) {
-        let font_name = self.state.text.font_name.clone();
-        let font = match self.fonts.get(&font_name) {
+        let font = match self
+            .state
+            .text
+            .font
+            .as_ref()
+            .and_then(|k| self.fonts.get(k))
+        {
             Some(f) => f,
             None => return,
         };
@@ -1043,8 +1018,8 @@ impl<'a> SvgRenderer<'a> {
     // XObject handling
     // -----------------------------------------------------------------------
 
-    fn do_xobject(&mut self, name: &[u8], page: &PageInfo) -> Result<()> {
-        let xobj = self.resolve_xobject(name, page)?;
+    fn do_xobject(&mut self, name: &[u8]) -> Result<()> {
+        let xobj = self.resolve_xobject(name)?;
         let xobj = match xobj {
             Some(x) => x,
             None => return Ok(()),
@@ -1063,8 +1038,12 @@ impl<'a> SvgRenderer<'a> {
                     return Ok(());
                 }
                 self.xobject_depth += 1;
+                let entered = self.resources.enter(self.doc, &dict, Some(&obj_ref));
                 self.running_forms.push(obj_ref);
-                let _ = self.render_form_xobject(&dict, &data, page);
+                let _ = self.render_form_xobject(&dict, &data);
+                if entered {
+                    self.resources.leave();
+                }
                 self.running_forms.pop();
                 self.xobject_depth -= 1;
             }
@@ -1073,37 +1052,14 @@ impl<'a> SvgRenderer<'a> {
         Ok(())
     }
 
-    fn resolve_xobject(&mut self, name: &[u8], page: &PageInfo) -> Result<Option<XObjectData>> {
-        let resources_obj = match &page.resources_ref {
-            Some(obj) => self.resolve_object(obj)?,
-            None => return Ok(None),
+    fn resolve_xobject(&mut self, name: &[u8]) -> Result<Option<XObjectData>> {
+        let Some(found) = self.resources.lookup(self.doc, b"XObject", name)? else {
+            return Ok(None);
         };
-
-        let resources_dict = match &resources_obj {
-            PdfObject::Dict(d) => d.clone(),
-            _ => return Ok(None),
+        let Some(xobj_ref) = found.obj_ref else {
+            return Ok(None);
         };
-
-        let xobject_dict_obj = match resources_dict.get(b"XObject") {
-            Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
-            }
-            _ => return Ok(None),
-        };
-
-        let xobject_dict = match &xobject_dict_obj {
-            PdfObject::Dict(d) => d,
-            _ => return Ok(None),
-        };
-
-        let xobj_ref = match xobject_dict.get(name) {
-            Some(PdfObject::Reference(r)) => r.clone(),
-            _ => return Ok(None),
-        };
-
-        let xobj = self.doc.resolve(&xobj_ref)?;
+        let xobj = found.object;
 
         match xobj {
             PdfObject::Stream { dict, data } => {
@@ -1184,12 +1140,7 @@ impl<'a> SvgRenderer<'a> {
         Ok(())
     }
 
-    fn render_form_xobject(
-        &mut self,
-        dict: &PdfDict,
-        data: &[u8],
-        page: &PageInfo,
-    ) -> Result<()> {
+    fn render_form_xobject(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
         self.state_stack.push(self.state.clone());
         self.clip_id_stack.push(self.active_clip_id.clone());
 
@@ -1209,7 +1160,7 @@ impl<'a> SvgRenderer<'a> {
         }
 
         let ops = parse_content_stream(data).map_err(RenderError::Core)?;
-        let _ = self.execute_ops(&ops, page);
+        let _ = self.execute_ops(&ops);
 
         if let Some(s) = self.state_stack.pop() {
             self.state = s;
@@ -1225,37 +1176,9 @@ impl<'a> SvgRenderer<'a> {
     // ExtGState
     // -----------------------------------------------------------------------
 
-    fn apply_extgstate(&mut self, name: &[u8], page: &PageInfo) -> Result<()> {
-        let resources_obj = match &page.resources_ref {
-            Some(obj) => self.resolve_object(obj)?,
-            None => return Ok(()),
-        };
-
-        let resources_dict = match &resources_obj {
-            PdfObject::Dict(d) => d.clone(),
-            _ => return Ok(()),
-        };
-
-        let extgstate_dict_obj = match resources_dict.get(b"ExtGState") {
-            Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
-            }
-            _ => return Ok(()),
-        };
-
-        let extgstate_dict = match &extgstate_dict_obj {
-            PdfObject::Dict(d) => d,
-            _ => return Ok(()),
-        };
-
-        let gs_obj = match extgstate_dict.get(name) {
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
-            }
-            Some(other) => other.clone(),
+    fn apply_extgstate(&mut self, name: &[u8]) -> Result<()> {
+        let gs_obj = match self.resources.lookup(self.doc, b"ExtGState", name)? {
+            Some(found) => found.object,
             None => return Ok(()),
         };
 

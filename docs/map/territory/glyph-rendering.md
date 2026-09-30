@@ -14,7 +14,7 @@
 - 캐시 키는 폰트 FNV 해시 + GID, 기본 용량 4096.
 
 ## Code
-- `justpdf-render/src/interpreter.rs` — `resolve_page_fonts`, `extract_font_data`, `get_font_descriptor`, `render_text_string`, `render_glyph`, `adjust_text_position`
+- `justpdf-render/src/interpreter.rs` — `select_font`, `resolve_font`, `extract_font_data`, `get_font_descriptor`, `render_text_string`, `render_glyph`, `adjust_text_position`
 - `justpdf-render/src/glyph.rs` — `glyph_outline`, `char_code_to_glyph_id`, `units_per_em`
 - `justpdf-render/src/glyph_cache.rs` — `GlyphCache`
 
@@ -31,5 +31,6 @@
 - [SVG 렌더러](svg-renderer.md) — 별도 텍스트 경로.
 
 ## Known holes / open
+- `GlyphCache::font_hash` caches a font's hash by the address of the font data, and `render_text_string` clones and drops that data on every call, so a later font reusing the address gets the earlier font's glyph outlines; which glyphs are affected depends on allocation patterns (measured 2026-09-30: two builds differing only in unrelated code drew different glyphs on four pages, identical once the memo was removed). Tracked: #163
 - 폰트 없는 표준 14 텍스트·CFF·Type1·Type3가 사각형으로 그려진다(추론; 픽셀 검증 테스트 없음).
 - Tracked: #45 (/Differences·CID 폭·CFF)

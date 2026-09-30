@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use justpdf_core::color::{Color, ColorSpace};
+use justpdf_core::object::{IndirectRef, PdfObject};
 use tiny_skia::Mask;
 
 /// Soft mask type (Luminosity or Alpha).
@@ -108,6 +111,26 @@ impl Matrix {
     }
 }
 
+/// The font `Tf` selected: its dictionary's reference, or for a direct
+/// dictionary, the indirect object holding the `/Font` entry and its name
+/// there.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FontKey {
+    Object(IndirectRef),
+    Direct {
+        holder: Option<IndirectRef>,
+        name: Vec<u8>,
+    },
+}
+
+/// The pattern `scn`/`SCN` selected.
+#[derive(Debug, Clone)]
+pub struct PatternSelection {
+    /// The pattern's reference; `None` for a direct pattern dictionary.
+    pub obj_ref: Option<IndirectRef>,
+    pub object: Arc<PdfObject>,
+}
+
 /// Text state parameters (PDF spec 9.3).
 #[derive(Debug, Clone)]
 pub struct TextState {
@@ -115,7 +138,7 @@ pub struct TextState {
     pub word_spacing: f64,
     pub horiz_scaling: f64,
     pub leading: f64,
-    pub font_name: Vec<u8>,
+    pub font: Option<FontKey>,
     pub font_size: f64,
     pub text_rise: f64,
     pub render_mode: i64,
@@ -128,7 +151,7 @@ impl Default for TextState {
             word_spacing: 0.0,
             horiz_scaling: 1.0,
             leading: 0.0,
-            font_name: Vec::new(),
+            font: None,
             font_size: 12.0,
             text_rise: 0.0,
             render_mode: 0,
@@ -242,10 +265,10 @@ pub struct GraphicsState {
     pub has_clip: bool,
     // Soft mask (from ExtGState /SMask)
     pub soft_mask: Option<SoftMask>,
-    // Fill pattern name (when color space is /Pattern)
-    pub fill_pattern_name: Option<Vec<u8>>,
-    // Stroke pattern name (when color space is /Pattern)
-    pub stroke_pattern_name: Option<Vec<u8>>,
+    // Fill pattern (when color space is /Pattern)
+    pub fill_pattern: Option<PatternSelection>,
+    // Stroke pattern (when color space is /Pattern)
+    pub stroke_pattern: Option<PatternSelection>,
     // Text matrices (only valid inside BT..ET)
     pub text_matrix: Matrix,
     pub text_line_matrix: Matrix,
@@ -271,8 +294,8 @@ impl Default for GraphicsState {
             blend_mode: PdfBlendMode::Normal,
             has_clip: false,
             soft_mask: None,
-            fill_pattern_name: None,
-            stroke_pattern_name: None,
+            fill_pattern: None,
+            stroke_pattern: None,
             text_matrix: Matrix::identity(),
             text_line_matrix: Matrix::identity(),
         }

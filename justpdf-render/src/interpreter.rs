@@ -14,8 +14,10 @@ use crate::device::PixmapDevice;
 use crate::error::{RenderError, Result};
 use crate::glyph_cache::GlyphCache;
 use crate::graphics_state::{
-    GraphicsState, LineCap, LineJoin, Matrix, PdfBlendMode, SoftMask, SoftMaskSubtype,
+    FontKey, GraphicsState, LineCap, LineJoin, Matrix, PatternSelection, PdfBlendMode, SoftMask,
+    SoftMaskSubtype,
 };
+use crate::resources::ResourceScopes;
 
 /// Resolved font for rendering.
 struct ResolvedFont {
@@ -35,7 +37,9 @@ pub struct RenderInterpreter<'a> {
     device: &'a mut PixmapDevice,
     state: GraphicsState,
     state_stack: Vec<GraphicsState>,
-    fonts: HashMap<Vec<u8>, ResolvedFont>,
+    fonts: HashMap<FontKey, ResolvedFont>,
+    /// The `/Resources` names resolve in.
+    resources: ResourceScopes,
     /// Transform from PDF user space to device (pixel) space.
     page_transform: Matrix,
     /// Current path being constructed.
@@ -72,6 +76,7 @@ impl<'a> RenderInterpreter<'a> {
             state: GraphicsState::default(),
             state_stack: Vec::new(),
             fonts: HashMap::new(),
+            resources: ResourceScopes::default(),
             page_transform,
             path_builder: None,
             xobject_depth: 0,
@@ -84,14 +89,13 @@ impl<'a> RenderInterpreter<'a> {
 
     /// Render a page's content streams, then annotation appearance streams.
     pub fn render_page(&mut self, page: &PageInfo) -> Result<()> {
-        // Resolve resources and fonts (non-fatal if it fails)
-        let _ = self.resolve_page_fonts(page);
+        self.resources = ResourceScopes::for_page(self.doc, page);
 
         // Get content stream data
         let content_data = self.get_page_content(page)?;
         if !content_data.is_empty() {
             let ops = parse_content_stream(&content_data).map_err(|e| RenderError::Core(e))?;
-            self.execute_ops(&ops, page)?;
+            self.execute_ops(&ops)?;
         }
 
         // Render annotation appearance streams
@@ -144,18 +148,19 @@ impl<'a> RenderInterpreter<'a> {
             }
 
             // Get appearance stream: /AP /N
-            let ap_stream = match annot_dict.get(b"AP") {
+            let (ap_ref, ap_stream) = match annot_dict.get(b"AP") {
                 Some(PdfObject::Dict(ap)) => {
-                    let n_obj = match ap.get(b"N") {
+                    let (n_ref, n_obj) = match ap.get(b"N") {
                         Some(PdfObject::Reference(r)) => {
                             let r = r.clone();
-                            self.doc.resolve(&r)?
+                            let obj = self.doc.resolve(&r)?;
+                            (Some(r), obj)
                         }
-                        Some(other) => other.clone(),
+                        Some(other) => (None, other.clone()),
                         None => continue,
                     };
                     match n_obj {
-                        PdfObject::Stream { dict, data } => (dict, data),
+                        PdfObject::Stream { dict, data } => (n_ref, (dict, data)),
                         _ => continue,
                     }
                 }
@@ -171,7 +176,9 @@ impl<'a> RenderInterpreter<'a> {
             self.state_stack.push(self.state.clone());
 
             let (ap_dict, ap_data) = ap_stream;
-            let _ = self.render_form_xobject(&ap_dict, &ap_data, page);
+            self.with_stream_resources(&ap_dict, ap_ref.as_ref(), |this| {
+                let _ = this.render_form_xobject(&ap_dict, &ap_data);
+            });
 
             // Restore graphics state
             if let Some(saved) = self.state_stack.pop() {
@@ -270,116 +277,86 @@ impl<'a> RenderInterpreter<'a> {
         }
     }
 
-    fn resolve_page_fonts(&mut self, page: &PageInfo) -> Result<()> {
-        let resources_obj = match &page.resources_ref {
-            Some(obj) => self.resolve_object(obj)?,
-            None => return Ok(()),
-        };
+    /// Selects the font named `name` in the current resource scope,
+    /// resolving it on first use.
+    fn select_font(&mut self, name: &[u8]) -> Option<FontKey> {
+        let fonts = &self.fonts;
+        let selection = self
+            .resources
+            .select_font(self.doc, name, |key| fonts.contains_key(key))?;
+        if let Some(dict) = &selection.dict {
+            let font = self.resolve_font(dict).ok()?;
+            self.fonts.insert(selection.key.clone(), font);
+        }
+        Some(selection.key)
+    }
 
-        let resources_dict = match &resources_obj {
-            PdfObject::Dict(d) => d.clone(),
-            _ => return Ok(()),
-        };
+    fn resolve_font(&mut self, fd: &PdfDict) -> Result<ResolvedFont> {
+        let mut info = parse_font_info(fd);
 
-        let font_dict_obj = match resources_dict.get(b"Font") {
-            Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
+        // Resolve ToUnicode CMap
+        let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {
+            let tu_ref = tu_ref.clone();
+            if let Ok(tu_obj) = self.doc.resolve(&tu_ref) {
+                if let PdfObject::Stream { dict, data } = tu_obj {
+                    let decoded = self.doc.decode_stream(&dict, &data).ok();
+                    decoded.map(|d| ToUnicodeCMap::parse(&d))
+                } else {
+                    None
+                }
+            } else {
+                None
             }
-            _ => return Ok(()),
+        } else {
+            None
         };
 
-        if let PdfObject::Dict(font_dict) = &font_dict_obj {
-            for (name, val) in font_dict.iter() {
-                let font_obj = match val {
-                    PdfObject::Reference(r) => {
-                        let r = r.clone();
-                        self.doc.resolve(&r)?
-                    }
-                    other => other.clone(),
-                };
-
-                if let PdfObject::Dict(fd) = &font_obj {
-                    let mut info = parse_font_info(fd);
-
-                    // Resolve ToUnicode CMap
-                    let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {
-                        let tu_ref = tu_ref.clone();
-                        if let Ok(tu_obj) = self.doc.resolve(&tu_ref) {
-                            if let PdfObject::Stream { dict, data } = tu_obj {
-                                let decoded = self.doc.decode_stream(&dict, &data).ok();
-                                decoded.map(|d| ToUnicodeCMap::parse(&d))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
+        // Resolve CIDFont widths, font descriptor, and CIDToGIDMap for Type0 fonts
+        let mut cid_font_descriptor: Option<PdfDict> = None;
+        let mut cid_to_gid_map: Option<Vec<u16>> = None;
+        if info.subtype == b"Type0" {
+            if let Some(PdfObject::Array(descendants)) = fd.get(b"DescendantFonts") {
+                if let Some(desc_ref) = descendants.first() {
+                    let desc_obj = match desc_ref {
+                        PdfObject::Reference(r) => {
+                            let r = r.clone();
+                            self.doc.resolve(&r)?
                         }
-                    } else {
-                        None
+                        other => other.clone(),
                     };
-
-                    // Resolve CIDFont widths, font descriptor, and CIDToGIDMap for Type0 fonts
-                    let mut cid_font_descriptor: Option<PdfDict> = None;
-                    let mut cid_to_gid_map: Option<Vec<u16>> = None;
-                    if info.subtype == b"Type0" {
-                        if let Some(PdfObject::Array(descendants)) =
-                            fd.get(b"DescendantFonts")
-                        {
-                            if let Some(desc_ref) = descendants.first() {
-                                let desc_obj = match desc_ref {
-                                    PdfObject::Reference(r) => {
-                                        let r = r.clone();
-                                        self.doc.resolve(&r)?
-                                    }
-                                    other => other.clone(),
-                                };
-                                if let PdfObject::Dict(cid_dict) = &desc_obj {
-                                    let cid_info = parse_font_info(cid_dict);
-                                    info.widths = cid_info.widths;
-                                    // Get font descriptor from CID font
-                                    if let Some(fd_obj) = cid_dict.get(b"FontDescriptor") {
-                                        let fd_resolved = match fd_obj {
-                                            PdfObject::Reference(r) => {
-                                                let r = r.clone();
-                                                self.doc.resolve(&r).ok()
-                                            }
-                                            other => Some(other.clone()),
-                                        };
-                                        if let Some(PdfObject::Dict(d)) = fd_resolved {
-                                            cid_font_descriptor = Some(d);
-                                        }
-                                    }
-
-                                    // Parse CIDToGIDMap
-                                    cid_to_gid_map =
-                                        self.parse_cid_to_gid_map(cid_dict);
+                    if let PdfObject::Dict(cid_dict) = &desc_obj {
+                        let cid_info = parse_font_info(cid_dict);
+                        info.widths = cid_info.widths;
+                        // Get font descriptor from CID font
+                        if let Some(fd_obj) = cid_dict.get(b"FontDescriptor") {
+                            let fd_resolved = match fd_obj {
+                                PdfObject::Reference(r) => {
+                                    let r = r.clone();
+                                    self.doc.resolve(&r).ok()
                                 }
+                                other => Some(other.clone()),
+                            };
+                            if let Some(PdfObject::Dict(d)) = fd_resolved {
+                                cid_font_descriptor = Some(d);
                             }
                         }
+
+                        // Parse CIDToGIDMap
+                        cid_to_gid_map = self.parse_cid_to_gid_map(cid_dict);
                     }
-
-                    // Extract embedded font data from FontDescriptor
-                    let font_data = self.extract_font_data(
-                        fd,
-                        cid_font_descriptor.as_ref(),
-                    );
-
-                    self.fonts.insert(
-                        name.clone(),
-                        ResolvedFont {
-                            info,
-                            cmap,
-                            font_data,
-                            cid_to_gid_map,
-                        },
-                    );
                 }
             }
         }
 
-        Ok(())
+        // Extract embedded font data from FontDescriptor
+        let font_data = self.extract_font_data(fd, cid_font_descriptor.as_ref());
+
+        Ok(ResolvedFont {
+            info,
+            cmap,
+            font_data,
+            cid_to_gid_map,
+        })
     }
 
     /// Extract embedded font program from FontDescriptor.
@@ -461,16 +438,6 @@ impl<'a> RenderInterpreter<'a> {
         }
     }
 
-    fn resolve_object(&mut self, obj: &PdfObject) -> Result<PdfObject> {
-        match obj {
-            PdfObject::Reference(r) => {
-                let r = r.clone();
-                Ok(self.doc.resolve(&r)?)
-            }
-            other => Ok(other.clone()),
-        }
-    }
-
     fn get_page_content(&mut self, page: &PageInfo) -> Result<Vec<u8>> {
         let contents = match &page.contents_ref {
             Some(c) => c.clone(),
@@ -521,7 +488,7 @@ impl<'a> RenderInterpreter<'a> {
         Ok(combined)
     }
 
-    fn execute_ops(&mut self, ops: &[ContentOp], page: &PageInfo) -> Result<()> {
+    fn execute_ops(&mut self, ops: &[ContentOp]) -> Result<()> {
         for op in ops {
             let operator = op.operator_str();
 
@@ -536,12 +503,12 @@ impl<'a> RenderInterpreter<'a> {
                 continue;
             }
 
-            self.execute_op(op, page)?;
+            self.execute_op(op)?;
         }
         Ok(())
     }
 
-    fn execute_op(&mut self, op: &ContentOp, page: &PageInfo) -> Result<()> {
+    fn execute_op(&mut self, op: &ContentOp) -> Result<()> {
         let operator = op.operator_str();
         let operands = &op.operands;
 
@@ -620,7 +587,7 @@ impl<'a> RenderInterpreter<'a> {
             // ExtGState
             "gs" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    self.apply_extgstate(name, page)?;
+                    self.apply_extgstate(name)?;
                 }
             }
 
@@ -701,45 +668,45 @@ impl<'a> RenderInterpreter<'a> {
             // --- Path painting ---
             "S" => {
                 // Stroke
-                self.stroke_current_path(page);
+                self.stroke_current_path();
             }
             "s" => {
                 // Close and stroke
                 if let Some(pb) = &mut self.path_builder {
                     pb.close();
                 }
-                self.stroke_current_path(page);
+                self.stroke_current_path();
             }
             "f" | "F" => {
                 // Fill (non-zero winding)
-                self.fill_current_path(FillRule::Winding, page);
+                self.fill_current_path(FillRule::Winding);
             }
             "f*" => {
                 // Fill (even-odd)
-                self.fill_current_path(FillRule::EvenOdd, page);
+                self.fill_current_path(FillRule::EvenOdd);
             }
             "B" => {
                 // Fill and stroke (non-zero)
-                self.fill_current_path_keep(FillRule::Winding, page);
-                self.stroke_current_path(page);
+                self.fill_current_path_keep(FillRule::Winding);
+                self.stroke_current_path();
             }
             "B*" => {
-                self.fill_current_path_keep(FillRule::EvenOdd, page);
-                self.stroke_current_path(page);
+                self.fill_current_path_keep(FillRule::EvenOdd);
+                self.stroke_current_path();
             }
             "b" => {
                 if let Some(pb) = &mut self.path_builder {
                     pb.close();
                 }
-                self.fill_current_path_keep(FillRule::Winding, page);
-                self.stroke_current_path(page);
+                self.fill_current_path_keep(FillRule::Winding);
+                self.stroke_current_path();
             }
             "b*" => {
                 if let Some(pb) = &mut self.path_builder {
                     pb.close();
                 }
-                self.fill_current_path_keep(FillRule::EvenOdd, page);
-                self.stroke_current_path(page);
+                self.fill_current_path_keep(FillRule::EvenOdd);
+                self.stroke_current_path();
             }
             "n" => {
                 // End path without fill/stroke (used for clipping)
@@ -759,7 +726,7 @@ impl<'a> RenderInterpreter<'a> {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
                     self.state.stroke_cs = cs_from_name(name);
                     if name != b"Pattern" {
-                        self.state.stroke_pattern_name = None;
+                        self.state.stroke_pattern = None;
                     }
                 }
             }
@@ -767,7 +734,7 @@ impl<'a> RenderInterpreter<'a> {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
                     self.state.fill_cs = cs_from_name(name);
                     if name != b"Pattern" {
-                        self.state.fill_pattern_name = None;
+                        self.state.fill_pattern = None;
                     }
                 }
             }
@@ -775,8 +742,8 @@ impl<'a> RenderInterpreter<'a> {
                 // Last operand may be a pattern name if stroke CS is Pattern
                 let last_is_name = operands.last().and_then(|o| o.as_name());
                 if last_is_name.is_some() {
-                    self.state.stroke_pattern_name =
-                        last_is_name.map(|n| n.to_vec());
+                    self.state.stroke_pattern =
+                        last_is_name.and_then(|n| self.resources.select_pattern(self.doc, n));
                     // Remaining numeric operands are underlying color components
                     let comps: Vec<f64> = operands.iter().filter_map(|o| o.as_f64()).collect();
                     if !comps.is_empty() {
@@ -793,8 +760,8 @@ impl<'a> RenderInterpreter<'a> {
                 // Last operand may be a pattern name if fill CS is Pattern
                 let last_is_name = operands.last().and_then(|o| o.as_name());
                 if last_is_name.is_some() {
-                    self.state.fill_pattern_name =
-                        last_is_name.map(|n| n.to_vec());
+                    self.state.fill_pattern =
+                        last_is_name.and_then(|n| self.resources.select_pattern(self.doc, n));
                     // Remaining numeric operands are underlying color components
                     let comps: Vec<f64> = operands.iter().filter_map(|o| o.as_f64()).collect();
                     if !comps.is_empty() {
@@ -809,29 +776,29 @@ impl<'a> RenderInterpreter<'a> {
             }
             "G" => {
                 self.state.stroke_cs = ColorSpace::DeviceGray;
-                self.state.stroke_pattern_name = None;
+                self.state.stroke_pattern = None;
                 self.state.stroke_color = PdfColor::gray(f(operands, 0));
             }
             "g" => {
                 self.state.fill_cs = ColorSpace::DeviceGray;
-                self.state.fill_pattern_name = None;
+                self.state.fill_pattern = None;
                 self.state.fill_color = PdfColor::gray(f(operands, 0));
             }
             "RG" => {
                 self.state.stroke_cs = ColorSpace::DeviceRGB;
-                self.state.stroke_pattern_name = None;
+                self.state.stroke_pattern = None;
                 self.state.stroke_color =
                     PdfColor::rgb(f(operands, 0), f(operands, 1), f(operands, 2));
             }
             "rg" => {
                 self.state.fill_cs = ColorSpace::DeviceRGB;
-                self.state.fill_pattern_name = None;
+                self.state.fill_pattern = None;
                 self.state.fill_color =
                     PdfColor::rgb(f(operands, 0), f(operands, 1), f(operands, 2));
             }
             "K" => {
                 self.state.stroke_cs = ColorSpace::DeviceCMYK;
-                self.state.stroke_pattern_name = None;
+                self.state.stroke_pattern = None;
                 self.state.stroke_color = PdfColor::cmyk(
                     f(operands, 0),
                     f(operands, 1),
@@ -841,7 +808,7 @@ impl<'a> RenderInterpreter<'a> {
             }
             "k" => {
                 self.state.fill_cs = ColorSpace::DeviceCMYK;
-                self.state.fill_pattern_name = None;
+                self.state.fill_pattern = None;
                 self.state.fill_color = PdfColor::cmyk(
                     f(operands, 0),
                     f(operands, 1),
@@ -870,7 +837,7 @@ impl<'a> RenderInterpreter<'a> {
             }
             "Tf" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    self.state.text.font_name = name.to_vec();
+                    self.state.text.font = self.select_font(name);
                 }
                 if operands.len() > 1 {
                     self.state.text.font_size = f(operands, 1);
@@ -968,7 +935,7 @@ impl<'a> RenderInterpreter<'a> {
             // --- XObject (images and forms) ---
             "Do" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    self.do_xobject(name, page)?;
+                    self.do_xobject(name)?;
                 }
             }
 
@@ -1002,7 +969,7 @@ impl<'a> RenderInterpreter<'a> {
             // --- Shading ---
             "sh" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    self.render_shading(name, page)?;
+                    self.render_shading(name)?;
                 }
             }
 
@@ -1029,12 +996,12 @@ impl<'a> RenderInterpreter<'a> {
         self.state.blend_mode.to_skia()
     }
 
-    fn fill_current_path(&mut self, rule: FillRule, page: &PageInfo) {
+    fn fill_current_path(&mut self, rule: FillRule) {
         if let Some(pb) = self.path_builder.take() {
             if let Some(path) = pb.finish() {
                 // Check for pattern fill
-                if self.state.fill_pattern_name.is_some() {
-                    if self.try_fill_with_pattern(&path, rule, page) {
+                if self.state.fill_pattern.is_some() {
+                    if self.try_fill_with_pattern(&path, rule) {
                         return;
                     }
                 }
@@ -1048,13 +1015,13 @@ impl<'a> RenderInterpreter<'a> {
         }
     }
 
-    fn fill_current_path_keep(&mut self, rule: FillRule, page: &PageInfo) {
+    fn fill_current_path_keep(&mut self, rule: FillRule) {
         if let Some(pb) = &self.path_builder {
             let pb_clone = pb.clone();
             if let Some(path) = pb_clone.finish() {
                 // Check for pattern fill
-                if self.state.fill_pattern_name.is_some() {
-                    if self.try_fill_with_pattern(&path, rule, page) {
+                if self.state.fill_pattern.is_some() {
+                    if self.try_fill_with_pattern(&path, rule) {
                         return;
                     }
                 }
@@ -1068,12 +1035,12 @@ impl<'a> RenderInterpreter<'a> {
         }
     }
 
-    fn stroke_current_path(&mut self, page: &PageInfo) {
+    fn stroke_current_path(&mut self) {
         if let Some(pb) = self.path_builder.take() {
             if let Some(path) = pb.finish() {
                 // Check for pattern stroke
-                if self.state.stroke_pattern_name.is_some() {
-                    if self.try_stroke_with_pattern(&path, page) {
+                if self.state.stroke_pattern.is_some() {
+                    if self.try_stroke_with_pattern(&path) {
                         return;
                     }
                 }
@@ -1140,8 +1107,13 @@ impl<'a> RenderInterpreter<'a> {
     // --- Text rendering ---
 
     fn render_text_string(&mut self, string_bytes: &[u8]) -> Result<()> {
-        let font_name = self.state.text.font_name.clone();
-        let font = match self.fonts.get(&font_name) {
+        let font = match self
+            .state
+            .text
+            .font
+            .as_ref()
+            .and_then(|k| self.fonts.get(k))
+        {
             Some(f) => f,
             None => return Ok(()), // font not found, skip
         };
@@ -1343,8 +1315,24 @@ impl<'a> RenderInterpreter<'a> {
         Some(out)
     }
 
-    fn do_xobject(&mut self, name: &[u8], page: &PageInfo) -> Result<()> {
-        let xobj = self.resolve_xobject(name, page)?;
+    /// Runs `f` inside the resource scope of the stream with dictionary
+    /// `dict` and reference `stream`.
+    fn with_stream_resources<T>(
+        &mut self,
+        dict: &PdfDict,
+        stream: Option<&IndirectRef>,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let entered = self.resources.enter(self.doc, dict, stream);
+        let out = f(self);
+        if entered {
+            self.resources.leave();
+        }
+        out
+    }
+
+    fn do_xobject(&mut self, name: &[u8]) -> Result<()> {
+        let xobj = self.resolve_xobject(name)?;
         let xobj = match xobj {
             Some(x) => x,
             None => return Ok(()),
@@ -1364,7 +1352,9 @@ impl<'a> RenderInterpreter<'a> {
                 }
                 self.xobject_depth += 1;
                 self.with_running_stream(Some(&obj_ref), |this| {
-                    let _ = this.render_form_xobject(&dict, &data, page);
+                    this.with_stream_resources(&dict, Some(&obj_ref), |this| {
+                        let _ = this.render_form_xobject(&dict, &data);
+                    });
                 });
                 self.xobject_depth -= 1;
             }
@@ -1373,37 +1363,14 @@ impl<'a> RenderInterpreter<'a> {
         Ok(())
     }
 
-    fn resolve_xobject(&mut self, name: &[u8], page: &PageInfo) -> Result<Option<XObjectData>> {
-        let resources_obj = match &page.resources_ref {
-            Some(obj) => self.resolve_object(obj)?,
-            None => return Ok(None),
+    fn resolve_xobject(&mut self, name: &[u8]) -> Result<Option<XObjectData>> {
+        let Some(found) = self.resources.lookup(self.doc, b"XObject", name)? else {
+            return Ok(None);
         };
-
-        let resources_dict = match &resources_obj {
-            PdfObject::Dict(d) => d.clone(),
-            _ => return Ok(None),
+        let Some(xobj_ref) = found.obj_ref else {
+            return Ok(None);
         };
-
-        let xobject_dict_obj = match resources_dict.get(b"XObject") {
-            Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
-            }
-            _ => return Ok(None),
-        };
-
-        let xobject_dict = match &xobject_dict_obj {
-            PdfObject::Dict(d) => d,
-            _ => return Ok(None),
-        };
-
-        let xobj_ref = match xobject_dict.get(name) {
-            Some(PdfObject::Reference(r)) => r.clone(),
-            _ => return Ok(None),
-        };
-
-        let xobj = self.doc.resolve(&xobj_ref)?;
+        let xobj = found.object;
 
         match xobj {
             PdfObject::Stream { dict, data } => {
@@ -1748,37 +1715,9 @@ impl<'a> RenderInterpreter<'a> {
         Ok(())
     }
 
-    fn render_shading(&mut self, name: &[u8], page: &PageInfo) -> Result<()> {
-        let resources_obj = match &page.resources_ref {
-            Some(obj) => self.resolve_object(obj)?,
-            None => return Ok(()),
-        };
-
-        let resources_dict = match &resources_obj {
-            PdfObject::Dict(d) => d.clone(),
-            _ => return Ok(()),
-        };
-
-        let shading_dict_obj = match resources_dict.get(b"Shading") {
-            Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
-            }
-            _ => return Ok(()),
-        };
-
-        let shading_container = match &shading_dict_obj {
-            PdfObject::Dict(d) => d,
-            _ => return Ok(()),
-        };
-
-        let sh_obj = match shading_container.get(name) {
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
-            }
-            Some(other) => other.clone(),
+    fn render_shading(&mut self, name: &[u8]) -> Result<()> {
+        let sh_obj = match self.resources.lookup(self.doc, b"Shading", name)? {
+            Some(found) => found.object,
             None => return Ok(()),
         };
 
@@ -1813,12 +1752,7 @@ impl<'a> RenderInterpreter<'a> {
         Ok(())
     }
 
-    fn render_form_xobject(
-        &mut self,
-        dict: &PdfDict,
-        data: &[u8],
-        page: &PageInfo,
-    ) -> Result<()> {
+    fn render_form_xobject(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
         // Check if this form has a transparency group
         let has_transparency_group = dict
             .get(b"Group")
@@ -1830,7 +1764,7 @@ impl<'a> RenderInterpreter<'a> {
             .unwrap_or(false);
 
         if has_transparency_group {
-            return self.render_transparency_group(dict, data, page);
+            return self.render_transparency_group(dict, data);
         }
 
         // Save state
@@ -1853,7 +1787,7 @@ impl<'a> RenderInterpreter<'a> {
 
         // Parse and execute the form's content stream
         let ops = parse_content_stream(data).map_err(|e| RenderError::Core(e))?;
-        self.execute_ops(&ops, page)?;
+        self.execute_ops(&ops)?;
 
         // Restore state
         if let Some(s) = self.state_stack.pop() {
@@ -1865,12 +1799,7 @@ impl<'a> RenderInterpreter<'a> {
 
     /// Render a transparency group: draw content into a temporary pixmap,
     /// then composite onto the main device.
-    fn render_transparency_group(
-        &mut self,
-        dict: &PdfDict,
-        data: &[u8],
-        page: &PageInfo,
-    ) -> Result<()> {
+    fn render_transparency_group(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
         let w = self.device.pixmap.width();
         let h = self.device.pixmap.height();
 
@@ -1879,7 +1808,7 @@ impl<'a> RenderInterpreter<'a> {
             Some(p) => p,
             None => {
                 // Fallback: render directly (non-grouped)
-                return self.render_form_xobject_direct(dict, data, page);
+                return self.render_form_xobject_direct(dict, data);
             }
         };
 
@@ -1925,7 +1854,7 @@ impl<'a> RenderInterpreter<'a> {
 
         // Parse and execute the form's content stream into temp pixmap
         let ops = parse_content_stream(data).map_err(|e| RenderError::Core(e))?;
-        let _ = self.execute_ops(&ops, page);
+        let _ = self.execute_ops(&ops);
 
         // Restore state
         if let Some(s) = self.state_stack.pop() {
@@ -1951,12 +1880,7 @@ impl<'a> RenderInterpreter<'a> {
 
     /// Render a form xobject directly (without transparency group handling).
     /// Used as fallback when temp pixmap creation fails.
-    fn render_form_xobject_direct(
-        &mut self,
-        dict: &PdfDict,
-        data: &[u8],
-        page: &PageInfo,
-    ) -> Result<()> {
+    fn render_form_xobject_direct(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
         self.state_stack.push(self.state.clone());
 
         if let Some(matrix_arr) = dict.get_array(b"Matrix") {
@@ -1974,7 +1898,7 @@ impl<'a> RenderInterpreter<'a> {
         }
 
         let ops = parse_content_stream(data).map_err(|e| RenderError::Core(e))?;
-        self.execute_ops(&ops, page)?;
+        self.execute_ops(&ops)?;
 
         if let Some(s) = self.state_stack.pop() {
             self.state = s;
@@ -1983,37 +1907,9 @@ impl<'a> RenderInterpreter<'a> {
         Ok(())
     }
 
-    fn apply_extgstate(&mut self, name: &[u8], page: &PageInfo) -> Result<()> {
-        let resources_obj = match &page.resources_ref {
-            Some(obj) => self.resolve_object(obj)?,
-            None => return Ok(()),
-        };
-
-        let resources_dict = match &resources_obj {
-            PdfObject::Dict(d) => d.clone(),
-            _ => return Ok(()),
-        };
-
-        let extgstate_dict_obj = match resources_dict.get(b"ExtGState") {
-            Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
-            }
-            _ => return Ok(()),
-        };
-
-        let extgstate_dict = match &extgstate_dict_obj {
-            PdfObject::Dict(d) => d,
-            _ => return Ok(()),
-        };
-
-        let gs_obj = match extgstate_dict.get(name) {
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
-            }
-            Some(other) => other.clone(),
+    fn apply_extgstate(&mut self, name: &[u8]) -> Result<()> {
+        let gs_obj = match self.resources.lookup(self.doc, b"ExtGState", name)? {
+            Some(found) => found.object,
             None => return Ok(()),
         };
 
@@ -2057,7 +1953,7 @@ impl<'a> RenderInterpreter<'a> {
                     self.state.soft_mask = None;
                 }
                 Some(PdfObject::Dict(smask_dict)) => {
-                    let _ = self.apply_soft_mask(smask_dict.clone(), page);
+                    let _ = self.apply_soft_mask(smask_dict.clone());
                 }
                 _ => {}
             }
@@ -2067,7 +1963,7 @@ impl<'a> RenderInterpreter<'a> {
     }
 
     /// Resolve and render a soft mask from an SMask dictionary.
-    fn apply_soft_mask(&mut self, smask_dict: PdfDict, page: &PageInfo) -> Result<()> {
+    fn apply_soft_mask(&mut self, smask_dict: PdfDict) -> Result<()> {
         // /S: Luminosity or Alpha
         let subtype = match smask_dict.get_name(b"S") {
             Some(b"Luminosity") => SoftMaskSubtype::Luminosity,
@@ -2098,7 +1994,9 @@ impl<'a> RenderInterpreter<'a> {
                 Ok(decoded) => decoded,
                 Err(_) => return Ok(()),
             };
-            this.render_soft_mask(subtype, &form_dict, &form_data, page)
+            this.with_stream_resources(&form_dict, form_ref.as_ref(), |this| {
+                this.render_soft_mask(subtype, &form_dict, &form_data)
+            })
         })
         .unwrap_or(Ok(()))
     }
@@ -2110,7 +2008,6 @@ impl<'a> RenderInterpreter<'a> {
         subtype: SoftMaskSubtype,
         form_dict: &PdfDict,
         form_data: &[u8],
-        page: &PageInfo,
     ) -> Result<()> {
         let w = self.device.pixmap.width();
         let h = self.device.pixmap.height();
@@ -2152,7 +2049,7 @@ impl<'a> RenderInterpreter<'a> {
 
         // Render the mask form
         if let Ok(ops) = parse_content_stream(form_data) {
-            let _ = self.execute_ops(&ops, page);
+            let _ = self.execute_ops(&ops);
         }
 
         // Restore state
@@ -2205,54 +2102,11 @@ impl<'a> RenderInterpreter<'a> {
 
     // --- Pattern rendering ---
 
-    /// Resolve a pattern from page resources, with its reference when it is
-    /// an indirect object.
-    fn resolve_pattern(
-        &mut self,
-        name: &[u8],
-        page: &PageInfo,
-    ) -> Result<Option<(Option<IndirectRef>, PdfObject)>> {
-        let resources_obj = match &page.resources_ref {
-            Some(obj) => self.resolve_object(obj)?,
-            None => return Ok(None),
-        };
-
-        let resources_dict = match &resources_obj {
-            PdfObject::Dict(d) => d.clone(),
-            _ => return Ok(None),
-        };
-
-        let pattern_dict_obj = match resources_dict.get(b"Pattern") {
-            Some(PdfObject::Dict(d)) => PdfObject::Dict(d.clone()),
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                self.doc.resolve(&r)?
-            }
-            _ => return Ok(None),
-        };
-
-        let pattern_dict = match &pattern_dict_obj {
-            PdfObject::Dict(d) => d,
-            _ => return Ok(None),
-        };
-
-        match pattern_dict.get(name) {
-            Some(PdfObject::Reference(r)) => {
-                let r = r.clone();
-                let obj = self.doc.resolve(&r)?;
-                Ok(Some((Some(r), obj)))
-            }
-            Some(other) => Ok(Some((None, other.clone()))),
-            None => Ok(None),
-        }
-    }
-
     /// Render a tiling pattern cell and return the pixmap.
     fn render_tiling_pattern(
         &mut self,
         pattern_dict: &PdfDict,
         pattern_data: &[u8],
-        page: &PageInfo,
     ) -> Result<Option<Pixmap>> {
         let xstep = pattern_dict
             .get(b"XStep")
@@ -2328,7 +2182,7 @@ impl<'a> RenderInterpreter<'a> {
 
         // Render the pattern content stream
         if let Ok(ops) = parse_content_stream(pattern_data) {
-            let _ = self.execute_ops(&ops, page);
+            let _ = self.execute_ops(&ops);
         }
 
         // Restore state
@@ -2346,13 +2200,13 @@ impl<'a> RenderInterpreter<'a> {
 
     /// Try to fill a path using the current fill pattern, if one is set.
     /// Returns true if pattern fill was performed.
-    fn try_fill_with_pattern(&mut self, path: &tiny_skia::Path, rule: FillRule, page: &PageInfo) -> bool {
-        let pattern_name = match &self.state.fill_pattern_name {
-            Some(name) => name.clone(),
+    fn try_fill_with_pattern(&mut self, path: &tiny_skia::Path, rule: FillRule) -> bool {
+        let pattern = match &self.state.fill_pattern {
+            Some(pattern) => pattern.clone(),
             None => return false,
         };
 
-        if let Ok(Some(pattern_pixmap)) = self.resolve_and_render_pattern(&pattern_name, page) {
+        if let Ok(Some(pattern_pixmap)) = self.render_pattern(&pattern) {
             let transform = self.effective_transform();
             let bm = self.blend_mode();
             self.device.fill_path_with_pattern(
@@ -2371,13 +2225,13 @@ impl<'a> RenderInterpreter<'a> {
 
     /// Try to stroke a path using the current stroke pattern, if one is set.
     /// Returns true if pattern stroke was performed.
-    fn try_stroke_with_pattern(&mut self, path: &tiny_skia::Path, page: &PageInfo) -> bool {
-        let pattern_name = match &self.state.stroke_pattern_name {
-            Some(name) => name.clone(),
+    fn try_stroke_with_pattern(&mut self, path: &tiny_skia::Path) -> bool {
+        let pattern = match &self.state.stroke_pattern {
+            Some(pattern) => pattern.clone(),
             None => return false,
         };
 
-        if let Ok(Some(pattern_pixmap)) = self.resolve_and_render_pattern(&pattern_name, page) {
+        if let Ok(Some(pattern_pixmap)) = self.render_pattern(&pattern) {
             let transform = self.effective_transform();
             let bm = self.blend_mode();
             self.device.stroke_path_with_pattern(
@@ -2394,35 +2248,29 @@ impl<'a> RenderInterpreter<'a> {
         }
     }
 
-    /// Resolve a pattern by name and render it. Handles both tiling and shading patterns.
-    fn resolve_and_render_pattern(
-        &mut self,
-        name: &[u8],
-        page: &PageInfo,
-    ) -> Result<Option<Pixmap>> {
-        let (pattern_ref, pattern_obj) = match self.resolve_pattern(name, page)? {
-            Some(found) => found,
-            None => return Ok(None),
-        };
-
-        match &pattern_obj {
+    /// Render a selected pattern. Handles both tiling and shading patterns.
+    fn render_pattern(&mut self, pattern: &PatternSelection) -> Result<Option<Pixmap>> {
+        let pattern_ref = pattern.obj_ref.as_ref();
+        match &*pattern.object {
             PdfObject::Stream { dict, data } => {
                 let pattern_type = dict.get_i64(b"PatternType").unwrap_or(0);
                 match pattern_type {
                     1 => {
                         // Tiling pattern
-                        self.with_running_stream(pattern_ref.as_ref(), |this| {
+                        self.with_running_stream(pattern_ref, |this| {
                             let decoded = match this.doc.decode_stream(dict, data) {
                                 Ok(d) => d,
                                 Err(_) => return Ok(None),
                             };
-                            this.render_tiling_pattern(dict, &decoded, page)
+                            this.with_stream_resources(dict, pattern_ref, |this| {
+                                this.render_tiling_pattern(dict, &decoded)
+                            })
                         })
                         .unwrap_or(Ok(None))
                     }
                     2 => {
                         // Shading pattern: render shading into a temp pixmap
-                        self.render_shading_pattern(dict, page)
+                        self.render_shading_pattern(dict)
                     }
                     _ => Ok(None),
                 }
@@ -2430,7 +2278,7 @@ impl<'a> RenderInterpreter<'a> {
             PdfObject::Dict(dict) => {
                 let pattern_type = dict.get_i64(b"PatternType").unwrap_or(0);
                 if pattern_type == 2 {
-                    self.render_shading_pattern(dict, page)
+                    self.render_shading_pattern(dict)
                 } else {
                     Ok(None)
                 }
@@ -2440,11 +2288,7 @@ impl<'a> RenderInterpreter<'a> {
     }
 
     /// Render a shading pattern (PatternType 2) into a pixmap.
-    fn render_shading_pattern(
-        &mut self,
-        pattern_dict: &PdfDict,
-        _page: &PageInfo,
-    ) -> Result<Option<Pixmap>> {
+    fn render_shading_pattern(&mut self, pattern_dict: &PdfDict) -> Result<Option<Pixmap>> {
         // Get the shading dict from the pattern
         let shading_obj = match pattern_dict.get(b"Shading") {
             Some(PdfObject::Reference(r)) => {
