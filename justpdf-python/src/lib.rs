@@ -4,8 +4,25 @@
 use pyo3::prelude::*;
 use pyo3::exceptions::{PyIOError, PyValueError, PyIndexError, PyRuntimeError};
 
-use justpdf_core::PdfDocument;
 use justpdf_core::page::{self, PageInfo};
+use justpdf_core::{JustPdfError, PdfDocument};
+use justpdf_render::RenderError;
+
+/// The Python exception for a core error from a page lookup.
+fn page_error(e: JustPdfError) -> PyErr {
+    match e {
+        JustPdfError::PageOutOfRange { .. } => PyIndexError::new_err(format!("{e}")),
+        _ => PyRuntimeError::new_err(format!("{e}")),
+    }
+}
+
+/// The Python exception for a render error.
+fn render_error(e: RenderError) -> PyErr {
+    match e {
+        RenderError::Core(e @ JustPdfError::PageOutOfRange { .. }) => page_error(e),
+        _ => PyRuntimeError::new_err(format!("{e}")),
+    }
+}
 
 /// A PDF document.
 #[pyclass]
@@ -59,8 +76,7 @@ impl Document {
 
     /// Get a page by index (0-based).
     fn page(&self, index: usize) -> PyResult<Page> {
-        let info = page::get_page(&self.inner, index)
-            .map_err(|_| PyIndexError::new_err(format!("page index {index} out of range")))?;
+        let info = page::get_page(&self.inner, index).map_err(page_error)?;
         Ok(Page { info })
     }
 
@@ -72,8 +88,7 @@ impl Document {
 
     /// Extract text from a specific page.
     fn page_text(&self, index: usize) -> PyResult<String> {
-        let info = page::get_page(&self.inner, index)
-            .map_err(|_| PyIndexError::new_err(format!("page index {index} out of range")))?;
+        let info = page::get_page(&self.inner, index).map_err(page_error)?;
         justpdf_core::text::extract_page_text_string(&self.inner, &info)
             .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
@@ -87,8 +102,7 @@ impl Document {
             format: justpdf_render::OutputFormat::Png,
             ..Default::default()
         };
-        justpdf_render::render_page(&self.inner, index, &opts)
-            .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+        justpdf_render::render_page(&self.inner, index, &opts).map_err(render_error)
     }
 
     /// Render a page and save to a file.

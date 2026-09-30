@@ -66,6 +66,17 @@ fn get_page_rejects_page_tree_cycle() {
     assert_cycle(get_page(&cyclic_page_tree(), 3), 2);
 }
 
+/// `/Pages` lists itself as its only kid: a cycle, not an index past the
+/// last page (#134).
+#[test]
+fn get_page_rejects_pages_node_listing_itself() {
+    let doc = pdf(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [2 0 R] /Count 1 >>",
+    ]);
+    assert_cycle(get_page(&doc, 0), 2);
+}
+
 #[test]
 fn page_tree_shared_kid_is_not_a_cycle() {
     // Intermediate node 3 is listed twice under the same parent.

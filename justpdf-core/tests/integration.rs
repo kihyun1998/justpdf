@@ -1638,6 +1638,12 @@ use std::borrow::Cow;
 
 /// Create a synthetic multi-page PDF with the given number of pages.
 fn create_multi_page_pdf(num_pages: usize) -> Vec<u8> {
+    build_multi_page_pdf(num_pages, true)
+}
+
+/// A synthetic multi-page PDF whose `/Pages` node has `/Count` only when
+/// `write_count` is set.
+fn build_multi_page_pdf(num_pages: usize, write_count: bool) -> Vec<u8> {
     let mut w = PdfWriter::new();
 
     // Font
@@ -1695,7 +1701,9 @@ fn create_multi_page_pdf(num_pages: usize) -> Vec<u8> {
     let mut pages_dict = PdfDict::new();
     pages_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Pages".to_vec()));
     pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(page_refs));
-    pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(num_pages as i64));
+    if write_count {
+        pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(num_pages as i64));
+    }
     w.set_object(pages_num, PdfObject::Dict(pages_dict));
 
     // Catalog
@@ -1763,7 +1771,13 @@ fn test_get_page_out_of_range() {
     let bytes = create_multi_page_pdf(5);
     let mut doc = PdfDocument::from_bytes(bytes).unwrap();
     let result = get_page(&mut doc, 5);
-    assert!(result.is_err());
+    assert!(
+        matches!(
+            result,
+            Err(JustPdfError::PageOutOfRange { index: 5, count: 5 })
+        ),
+        "{result:?}"
+    );
 }
 
 #[test]
@@ -1771,7 +1785,56 @@ fn test_get_page_out_of_range_large_index() {
     let bytes = create_multi_page_pdf(3);
     let mut doc = PdfDocument::from_bytes(bytes).unwrap();
     let result = get_page(&mut doc, 999);
-    assert!(result.is_err());
+    assert!(
+        matches!(
+            result,
+            Err(JustPdfError::PageOutOfRange {
+                index: 999,
+                count: 3
+            })
+        ),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn test_get_page_past_last_page_without_count() {
+    let bytes = build_multi_page_pdf(2, false);
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert_eq!(get_page(&doc, 1).unwrap().index, 1);
+    let result = get_page(&doc, 2);
+    assert!(
+        matches!(
+            result,
+            Err(JustPdfError::PageOutOfRange { index: 2, count: 2 })
+        ),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn test_get_page_past_last_page_under_overstated_count() {
+    let mut bytes = create_multi_page_pdf(2);
+    let at = bytes
+        .windows(8)
+        .position(|w| w == b"/Count 2")
+        .expect("fixture must have /Count 2");
+    bytes[at + 7] = b'5';
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert_eq!(get_page(&doc, 1).unwrap().index, 1);
+    let result = get_page(&doc, 2);
+    assert!(
+        matches!(result, Err(JustPdfError::InvalidObject { .. })),
+        "{result:?}"
+    );
+    let result = get_page(&doc, 5);
+    assert!(
+        matches!(
+            result,
+            Err(JustPdfError::PageOutOfRange { index: 5, count: 5 })
+        ),
+        "{result:?}"
+    );
 }
 
 #[test]

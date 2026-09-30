@@ -8,9 +8,10 @@ PyO3 모듈(maturin 빌드). `Document`(열기·인증·텍스트·렌더·Info)
 
 ## Design model
 - `Page`에는 텍스트 메서드가 없다(텍스트는 `Document.page_text`).
+- Only core `PageOutOfRange` (from rendering, `RenderError::Core(PageOutOfRange)`) becomes `IndexError`; every other error becomes `RuntimeError(str(e))` (`page_error`, `render_error`, #134; measured by building the module with cargo and calling it from Python — no test in the repo runs it). `__getitem__` resolves a negative index against `page_count` first, so a document whose `page_count` fails reads as length 0 there and raises `IndexError` (measured on an unauthenticated encrypted document, 2026-09-30; Tracked: #147).
 
 ## Code
-- `justpdf-python/src/lib.rs` — `Document`, `open`, `from_bytes`, `authenticate`, `page`, `text`, `page_text`, `render_page`, `render_page_to_file`, `Page`
+- `justpdf-python/src/lib.rs` — `page_error`, `render_error`, `Document`, `open`, `from_bytes`, `authenticate`, `page`, `text`, `page_text`, `render_page`, `render_page_to_file`, `Page`
 - `justpdf-python/pyproject.toml` — `maturin`
 
 ## Reference behaviour
@@ -26,4 +27,3 @@ PyO3 모듈(maturin 빌드). `Document`(열기·인증·텍스트·렌더·Info)
 
 ## Known holes / open
 - 자체 `Cargo.lock`이 루트와 따로 움직인다 — core 의존성 업데이트가 여기엔 반영되지 않는다.
-- `get_page`의 모든 오류를 `IndexError`("out of range")로 바꾼다. Tracked: #134

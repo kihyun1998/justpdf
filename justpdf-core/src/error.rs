@@ -28,6 +28,9 @@ pub enum JustPdfError {
     #[error("tree walk visit limit exceeded at object {obj_num} {gen_num}")]
     LimitExceeded { obj_num: u32, gen_num: u16 },
 
+    #[error("page index {index} out of range (document has {count} pages)")]
+    PageOutOfRange { index: usize, count: usize },
+
     #[error("unsupported PDF version: {version}")]
     UnsupportedVersion { version: String },
 

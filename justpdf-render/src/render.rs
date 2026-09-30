@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use justpdf_core::page::{PageInfo, collect_pages};
-use justpdf_core::PdfDocument;
+use justpdf_core::{JustPdfError, PdfDocument};
 
 use crate::device::PixmapDevice;
 use crate::error::{RenderError, Result};
@@ -48,9 +48,10 @@ pub fn render_page(
     let pages = collect_pages(doc)?;
     let page = pages
         .get(page_index)
-        .ok_or_else(|| RenderError::InvalidDimensions {
-            detail: format!("page index {page_index} out of range (total: {})", pages.len()),
-        })?
+        .ok_or(RenderError::Core(JustPdfError::PageOutOfRange {
+            index: page_index,
+            count: pages.len(),
+        }))?
         .clone();
 
     render_page_info(doc, &page, options)
@@ -139,9 +140,10 @@ pub fn render_page_to_pixmap(
     let pages = collect_pages(doc)?;
     let page = pages
         .get(page_index)
-        .ok_or_else(|| RenderError::InvalidDimensions {
-            detail: format!("page index {page_index} out of range (total: {})", pages.len()),
-        })?
+        .ok_or(RenderError::Core(JustPdfError::PageOutOfRange {
+            index: page_index,
+            count: pages.len(),
+        }))?
         .clone();
 
     let media_box = page.crop_box.unwrap_or(page.media_box);
@@ -195,9 +197,10 @@ pub fn render_page_to_svg(
     let pages = collect_pages(doc)?;
     let page = pages
         .get(page_index)
-        .ok_or_else(|| RenderError::InvalidDimensions {
-            detail: format!("page index {page_index} out of range (total: {})", pages.len()),
-        })?
+        .ok_or(RenderError::Core(JustPdfError::PageOutOfRange {
+            index: page_index,
+            count: pages.len(),
+        }))?
         .clone();
 
     let media_box = page.crop_box.unwrap_or(page.media_box);
@@ -250,9 +253,10 @@ pub fn render_pages_parallel(
         .map(|&idx| {
             let page = pages
                 .get(idx)
-                .ok_or_else(|| RenderError::InvalidDimensions {
-                    detail: format!("page index {idx} out of range (total: {})", pages.len()),
-                })?;
+                .ok_or(RenderError::Core(JustPdfError::PageOutOfRange {
+                    index: idx,
+                    count: pages.len(),
+                }))?;
             render_page_info(doc, page, options)
         })
         .collect()
@@ -372,7 +376,17 @@ mod tests {
         // Out-of-range index should produce an error.
         let results = render_pages_parallel(&doc, &[9999], &opts);
         assert_eq!(results.len(), 1);
-        assert!(results[0].is_err());
+        assert!(
+            matches!(
+                results[0],
+                Err(RenderError::Core(JustPdfError::PageOutOfRange {
+                    index: 9999,
+                    ..
+                }))
+            ),
+            "{:?}",
+            results[0]
+        );
     }
 
     #[cfg(feature = "parallel")]

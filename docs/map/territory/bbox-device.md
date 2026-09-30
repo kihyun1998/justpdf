@@ -23,3 +23,4 @@ Computes the bounding box of what is actually drawn on a page. It is the third o
 
 ## Known holes / open
 - Public as `compute_page_bbox`, but nothing in the workspace or the bindings calls it.
+- Tracked: #150 (a page index out of range is `RenderError::InvalidDimensions`)

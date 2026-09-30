@@ -38,4 +38,4 @@
 ## Known holes / open
 - `--structural` 도움말이 "GC + dedup + object streams"라고 하지만 object stream 패킹은 꺼져 있다.
 - "비암호화 PDF에 `--password`" 경로에 테스트가 없다(수동 실행으로는 정상).
-- Tracked: #37 (서명 연결·CLI sign), #49 (convert MOBI·FB2)
+- Tracked: #37 (서명 연결·CLI sign), #49 (convert MOBI·FB2), #149 (`text --page`: 0-based message, `--page 0` panics)

@@ -151,7 +151,12 @@ fn subtree_count(dict: &PdfDict) -> Option<usize> {
 ///
 /// A `/Count` that is missing or negative skips no subtree.
 ///
-/// Fails with `CircularReference` when a `/Pages` node lists one of its own
+/// Fails with `PageOutOfRange` when `index` is not below the root `/Count`,
+/// or, where the root has no `/Count`, when the tree holds no page at
+/// `index` — `count` is then the root `/Count`, or the number of pages the
+/// walk counted. Fails with `InvalidObject` when `index` is below the root
+/// `/Count` but the tree holds no page there. Fails with
+/// `CircularReference` when a `/Pages` node lists one of its own
 /// ancestors as a kid, and with `LimitExceeded` when shared nodes make the
 /// walk read more than a few times the size of the tree.
 pub fn get_page(doc: &PdfDocument, index: usize) -> Result<PageInfo> {
@@ -180,15 +185,11 @@ pub fn get_page(doc: &PdfDocument, index: usize) -> Result<PageInfo> {
         offset: 0,
         detail: "Pages is not a dict".into(),
     })?;
-    if let Some(count) = subtree_count(pages_dict)
+    let root_count = subtree_count(pages_dict);
+    if let Some(count) = root_count
         && index >= count
     {
-        return Err(JustPdfError::InvalidObject {
-            offset: 0,
-            detail: format!(
-                "page index {index} out of range (document has {count} pages)"
-            ),
-        });
+        return Err(JustPdfError::PageOutOfRange { index, count });
     }
 
     let inherited = InheritedAttrs::default();
@@ -202,12 +203,17 @@ pub fn get_page(doc: &PdfDocument, index: usize) -> Result<PageInfo> {
         &mut HashSet::new(),
         &mut VisitBudget::default(),
     )
-        .and_then(|opt| {
-            opt.ok_or(JustPdfError::InvalidObject {
-                offset: 0,
-                detail: format!("page index {index} not found in page tree"),
-            })
-        })
+    .and_then(|opt| match (opt, root_count) {
+        (Some(page), _) => Ok(page),
+        (None, None) => Err(JustPdfError::PageOutOfRange {
+            index,
+            count: counter,
+        }),
+        (None, Some(_)) => Err(JustPdfError::InvalidObject {
+            offset: 0,
+            detail: format!("page index {index} not found in page tree"),
+        }),
+    })
 }
 
 /// Recursively walk the page tree looking for the page at `target` index.

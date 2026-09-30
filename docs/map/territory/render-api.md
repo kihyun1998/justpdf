@@ -9,6 +9,7 @@
 ## Design model
 - `render_page_to_pixmap`이 `render_page_info`의 크기 계산·검증(16384px 상한)을 중복한다.
 - `compute_page_transform`은 회전을 처리하지만 픽셀 폭·높이는 회전 전 상자에서 나온다 — 90/270° 페이지의 크기가 뒤바뀔 수 있다(추론; 회전 테스트 없음).
+- An index past the last page is `RenderError::Core(JustPdfError::PageOutOfRange { index, count })` from `render_page`, `render_page_to_pixmap`, `render_page_to_svg` and `render_pages_parallel`; `count` is the length of `collect_pages` (#134; measured by `render_test.rs` and the `parallel` unit test).
 - `parallel`은 rayon으로 `render_page_info`를 페이지마다 돌린다. 타일 분할 아님.
 
 ## Code
@@ -27,4 +28,4 @@
 
 ## Known holes / open
 - 렌더 테스트(`tests/render_test.rs`)는 저장소에 추적된 `testpdf.pdf`가 없으면 조용히 통과하는 조건부 탈출을 가진다(현재는 파일이 있어 발동하지 않음). 회전 0만 테스트한다.
-- Tracked: #54 (회전 페이지 렌더 크기)
+- Tracked: #54 (회전 페이지 렌더 크기), #150 (`render_pages_parallel` stringifies a `collect_pages` failure)

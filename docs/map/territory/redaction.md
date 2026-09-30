@@ -35,4 +35,4 @@ Redact 주석 영역의 페이지 콘텐츠를 걷어내고 채운 사각형을 
 ## Known holes / open
 - `test_redaction_apply`는 Redact 주석이 사라졌는지만 확인하고 텍스트가 지워졌는지 확인하지 않는다.
 - 콘텐츠가 없는 페이지에서는 Redact 주석이 제거되지 않는다. `/Rect` 없는 Redact는 조용히 버려진다. `overlay_text`는 `dead_code`.
-- Tracked: #39 (리댁션 잔존)
+- Tracked: #39 (리댁션 잔존), #150 (a page index out of range is `AnnotationError`)
