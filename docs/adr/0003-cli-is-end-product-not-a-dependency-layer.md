@@ -1,21 +1,21 @@
-# CLI는 완제품 — 의존성 레이어 원칙의 대상이 아니다
+# The CLI is a finished product — not subject to the dependency layer principle
 
-`justpdf-cli`(바이너리 `justpdf`)는 **단 하나의 정식 PDF CLI**다. 새 기능은 별도 경량 도구로 빼지 않고 이 크레이트에 서브커맨드로 더한다. 따라서 `core + render + formats`를 통째로 의존하며, 이진 크기 최소화를 추구하지 않는다.
+`justpdf-cli` (binary `justpdf`) is **the one official PDF CLI**. New features are added to this crate as subcommands, not split out into separate lightweight tools. It therefore depends on `core + render + formats` wholesale and does not aim to minimize binary size.
 
-## ADR 0001과의 관계
+## Relation to ADR 0001
 
-[ADR 0001](./0001-crates-split-by-dependency-layer.md)의 일차 원칙은 "사용자는 필요한 레이어까지만 가져와서 이진 크기와 컴파일 시간을 제어한다"이다. 이 원칙은 **라이브러리 소비자**를 다스린다 — 크레이트를 `[dependencies]`에 적는 사람이 의존 그래프를 직접 고른다.
+The primary principle of [ADR 0001](./0001-crates-split-by-dependency-layer.md) is "users pull in only as far as the layer they need and so control binary size and compile time". This principle governs **library consumers** — the person who writes a crate into `[dependencies]` picks the dependency graph directly.
 
-CLI 사용자는 의존 그래프를 고르지 않는다. `justpdf compress`를 칠 뿐이다. 그에게 바이너리가 `render`를 품었는지는 보이지 않는 구현 세부다. 그러므로 ADR 0001의 최소화 원칙은 **CLI의 기능 표면에 적용되지 않는다.** 한 바이너리가 모든 서브커맨드를 묶는 것이 정상이다.
+CLI users do not pick a dependency graph. They just type `justpdf compress`. Whether the binary contains `render` is an invisible implementation detail to them. So ADR 0001's minimization principle **does not apply to the CLI's feature surface.** One binary bundling every subcommand is the normal case.
 
-## 트레이드오프
+## Trade-offs
 
-대안으로 `just-tic`식 **단일 목적 경량 CLI**를 검토했다 — compress만 하는 `justpdf-core`-only 바이너리. 작은 콜드 인스톨, 최소 표면이 장점이다.
+The alternative considered was a `just-tic`-style **single-purpose lightweight CLI** — a `justpdf-core`-only binary that only compresses. Its advantages are a small cold install and a minimal surface.
 
-기각 이유: 그 길은 기능마다 크레이트·바이너리 이름·배포물이 늘어나고, 사용자가 "PDF 합치려면 도구 A, 압축하려면 도구 B"를 외워야 한다. "PDF는 `justpdf` 하나로 다 된다"는 단일 진입점의 가치가 파편화 비용보다 크다고 판단했다.
+Why it was rejected: that path adds a crate, a binary name and a release artifact for every feature, and users have to remember "tool A to merge PDFs, tool B to compress". The value of a single entry point — "`justpdf` alone does everything for PDF" — was judged to outweigh the cost of fragmentation.
 
-## 부수 효과
+## Consequences
 
-- "이 기능을 CLI에 넣을까, 별도 도구로 뺄까?"라는 질문은 이 ADR로 일괄 정리된다 — **넣는다.**
-- 경량 단일 목적 배포가 진짜 필요해지면(예: 브라우저·임베디드), 그건 CLI가 아니라 `compress-wasm`처럼 별도 1급 product로 다룬다([ADR 0002](./0002-language-bindings-outside-workspace.md)의 정체성 기준).
-- CLI 이진 크기는 비목표(non-goal)다. 크기가 문제면 레이어를 직접 쓰는 라이브러리 경로가 답이지 CLI를 깎는 게 아니다.
+- The question "should this feature go into the CLI or be split out into a separate tool?" is settled once and for all by this ADR — **it goes in.**
+- If a lightweight single-purpose release is ever genuinely needed (e.g. browser, embedded), it is handled not as the CLI but as a separate first-class product like `compress-wasm` (the identity criterion of [ADR 0002](./0002-language-bindings-outside-workspace.md)).
+- CLI binary size is a non-goal. If size is a problem, the answer is the library path that uses the layers directly, not trimming the CLI.
