@@ -1,39 +1,39 @@
-# 콘텐츠 스트림 파싱
+# Content stream parsing
 
 ## What it is
-페이지·Form XObject·외관 스트림의 콘텐츠를 연산자 목록(`ContentOp { operator, operands }`)으로 파싱한다. 인라인 이미지는 `Operand::InlineImage`를 가진 `BI` 연산 하나가 된다. 렌더러·텍스트 추출·리댁션·압축이 모두 이 결과를 입력으로 쓴다. `ContentOp::write_to`/`Operand::write_to`/`write_content`(`pub(crate)`)는 연산자를 다시 바이트로 쓰는 쪽이다. **메인테이너 판단(2026-09-25, #29 check-it)**: 공개하지 않는다 — 제시된 사실: 호출자가 크레이트 안뿐이고, 역연산은 파서가 만든 연산에만 보장된다(아래). 나중에 공개하는 것은 비파괴적이다.
+Parses the content of pages, Form XObjects and appearance streams into an operator list (`ContentOp { operator, operands }`). An inline image becomes a single `BI` operation carrying an `Operand::InlineImage`. The renderer, text extraction, redaction and compression all take this result as input. `ContentOp::write_to`/`Operand::write_to`/`write_content` (`pub(crate)`) are the side that writes operators back to bytes. **Maintainer decision (2026-09-25, #29 check-it)**: do not make them public — facts offered: the only callers are inside the crate, and the inverse is guaranteed only for operations the parser produced (below). Making them public later is non-breaking.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- 파일 구조 [토크나이저](tokenizer.md)와 별개의 렉서다(문자 분류 함수만 공유).
-- 이름의 `#XX`를 디코드한다. EI는 앞에 공백이 있어야 한다. 모르는 바이트는 건너뛴다.
-- 인라인 이미지 사전의 값은 `read_inline_dict`·`read_array`와 같이 읽는다 — `<<`는 사전, `null`은 `Null`. #29 전에는 `<<`를 hex 문자열로 읽어 `/DP << /Predictor 15 … >>`가 쓰레기 문자열이 되었다(`test_inline_image_dict_values_read_like_other_dicts`, 일반·arena 두 파서).
-- **다시 쓰는 쪽은 이 파서가 만든 연산의 역연산이다**: 이 파서가 만든 `ContentOp` 목록을 `write_content`로 쓰고 되읽으면 같은 목록이다(`test_written_ops_read_back_unchanged`, #29). 손으로 만든 연산은 그렇지 않을 수 있다 — 인라인 이미지 데이터에 공백+`EI`+공백/구분자가 들어 있으면 파서가 거기서 이미지를 끊는다(이 파서가 만든 데이터에는 그 패턴이 없다). `BI`가 아닌 연산자에 인라인 이미지 피연산자를 넣으면 이미지 뒤에 그 연산자를 쓴다. 이름·문자열·실수는 `PdfObject` Display와 같은 함수(`write_name`·`write_string`·`write_real`)로 쓴다. 인라인 이미지는 `BI <dict> ID <data> EI`로 데이터를 바이트 그대로 쓴다 — `ID` 뒤 공백 하나와 `EI` 앞 공백 하나를 파서가 떼어 내므로 그 둘을 쓴다. 사전(`Operand::Dict`)은 `PdfDict`(`BTreeMap`)로 바꾸지 않고 쓴다 — 바꾸면 `BDC` 속성 사전의 키 순서가 바뀐다 — [객체 구문 왕복](../invariant/object-syntax-roundtrip.md).
-- `ContentOp`의 Display는 `write_to`의 결과를 보여 준다. `String`이라 인라인 이미지의 UTF-8 아닌 데이터는 손실되어 보이므로, 구문을 쓰는 쪽은 Display가 아니라 `write_to`를 쓴다.
-- literal 문자열 안의 이스케이프 없는 CR·CRLF를 LF로 읽는다 — 토크나이저와 같고, ISO 32000-1 §7.3.4.2("An end-of-line marker appearing within a literal string without a preceding REVERSE SOLIDUS shall be treated as a byte value of (0Ah)")를 따른다(`test_literal_line_ends_read_as_line_feed`, 일반·arena 두 파서, #87). #87 전에는 CR을 그대로 두어, 이 파서로 되읽는 테스트가 쓰는 쪽의 CR 이스케이프 누락을 볼 수 없었다.
-- i64를 넘는 정수 텍스트는 가장 가까운 `Real`로 읽는다 — [토크나이저](tokenizer.md)와 같은 규칙(두 파서 모두, `test_integer_text_beyond_i64_reads_as_real`, #84). #84 전에는 `Integer(0)`이었다(`parse().unwrap_or(0)`).
-- arena 파서(`parse_content_stream_arena`, feature `arena`)는 core 밖에서 호출되지 않는다.
+- A lexer separate from the file-structure [Tokenizer](tokenizer.md) (only the character classification functions are shared).
+- Decodes `#XX` in names. EI must be preceded by whitespace. Unknown bytes are skipped.
+- Values in an inline image dictionary are read the same way as in `read_inline_dict` and `read_array` — `<<` is a dictionary, `null` is `Null`. Before #29, `<<` was read as a hex string, so `/DP << /Predictor 15 … >>` became a garbage string (`test_inline_image_dict_values_read_like_other_dicts`, both the plain and arena parsers).
+- **The writing side is the inverse of the operations this parser produces**: writing a `ContentOp` list this parser produced with `write_content` and reading it back gives the same list (`test_written_ops_read_back_unchanged`, #29). Hand-built operations may not — if inline image data contains whitespace + `EI` + whitespace/delimiter, the parser cuts the image there (data this parser produces never has that pattern). Putting an inline image operand on an operator other than `BI` writes that operator after the image. Names, strings and reals are written with the same functions as `PdfObject` Display (`write_name`, `write_string`, `write_real`). An inline image is written as `BI <dict> ID <data> EI` with the data as raw bytes — the parser strips one whitespace after `ID` and one before `EI`, so those two are written. A dictionary (`Operand::Dict`) is written without converting it to `PdfDict` (`BTreeMap`) — converting would change the key order of `BDC` property dictionaries — [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md).
+- `ContentOp`'s Display shows the result of `write_to`. It is a `String`, so non-UTF-8 inline image data shows up lossily; code that writes syntax uses `write_to`, not Display.
+- Unescaped CR and CRLF inside a literal string are read as LF — the same as the tokenizer, following ISO 32000-1 §7.3.4.2 ("An end-of-line marker appearing within a literal string without a preceding REVERSE SOLIDUS shall be treated as a byte value of (0Ah)") (`test_literal_line_ends_read_as_line_feed`, both the plain and arena parsers, #87). Before #87 CR was kept as is, so tests that read back through this parser could not see a missing CR escape on the writing side.
+- Integer text beyond i64 is read as the nearest `Real` — the same rule as the [Tokenizer](tokenizer.md) (both parsers, `test_integer_text_beyond_i64_reads_as_real`, #84). Before #84 it was `Integer(0)` (`parse().unwrap_or(0)`).
+- The arena parser (`parse_content_stream_arena`, feature `arena`) is not called from outside core.
 
 ## Code
 - `justpdf-core/src/content/mod.rs` — `parse_content_stream`, `parse_content_stream_arena`, `ContentParser`, `next_op`, `read_name`, `read_inline_image`
 - `justpdf-core/src/content/operator.rs` — `Operand`, `ContentOp`, `ContentOp::write_to`, `Operand::write_to`, `write_content`
 
 ## Reference behaviour
-**None.** 비교 대상 조항: ISO 32000-2 §7.8.2, Annex A(연산자 요약).
+**None.** Clauses to compare against: ISO 32000-2 §7.8.2, Annex A (operator summary).
 
 ## Cross-cutting invariants
-- [객체 구문 왕복](../invariant/object-syntax-roundtrip.md) — `write_content`.
-- [페이지 콘텐츠 조립](../invariant/page-content-assembly.md) — 파서 입력을 만드는 방식이 소비처마다 따로 있다.
+- [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md) — `write_content`.
+- [Page content assembly](../invariant/page-content-assembly.md) — each consumer has its own way of building the parser's input.
 
 ## Blast radius
-- [렌더 인터프리터](render-interpreter.md), [SVG 렌더러](svg-renderer.md), [bbox 장치](bbox-device.md) — `ContentOp` 소비처.
-- [텍스트 추출](text-extraction.md) — 같은 연산자 스트림.
-- [리댁션](redaction.md) — 파싱 후 `write_content`로 다시 쓴다.
-- [compress-grayscale](compress-grayscale.md) — 파싱 후 `ContentOp::write_to`로 다시 쓴다.
-- [compress-images](compress-images.md), [compress-unused-resources](compress-unused-resources.md) — CTM·리소스 사용 수집.
-- `Operand` 변형을 추가하면 `Operand::write_to`를 고친다(`match`가 빠진 변형을 컴파일 에러로 알린다).
+- [Render interpreter](render-interpreter.md), [SVG renderer](svg-renderer.md), [Bbox device](bbox-device.md) — consumers of `ContentOp`.
+- [Text extraction](text-extraction.md) — the same operator stream.
+- [Redaction](redaction.md) — parses, then writes back with `write_content`.
+- [Compress grayscale](compress-grayscale.md) — parses, then writes back with `ContentOp::write_to`.
+- [Compress images](compress-images.md), [Compress unused resources](compress-unused-resources.md) — collect the CTM and resource usage.
+- When adding an `Operand` variant, update `Operand::write_to` (the `match` reports a missing variant as a compile error).
 
 ## Known holes / open
-**None.** 알려진 구멍이 없다 — 이 노트가 추적하던 구멍은 모두 고쳐졌다.
+**None.** No known holes — every hole this note was tracking has been fixed.
