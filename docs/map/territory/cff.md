@@ -1,27 +1,27 @@
-# CFF 파서
+# CFF parser
 
 ## What it is
-Compact Font Format(FontFile3) 폰트의 헤더·INDEX·Top DICT·charset을 파싱하고 다시 인코딩한다. Type 2 CharString은 해석하지 않는다.
+Parses the header, INDEXes, Top DICT and charset of a Compact Font Format (FontFile3) font and encodes them again. It does not interpret Type 2 CharStrings.
 
 ## Governing decisions
 **None.**
 
 ## Design model
-- "does not interpret Type 2 CharString programs", Global Subr INDEX는 건너뛴다.
+- "does not interpret Type 2 CharString programs", and the Global Subr INDEX is skipped.
 
 ## Code
 - `justpdf-core/src/font/cff.rs` — `parse_cff`, `CffFont`, `CffTopDict`, `CffCharset`
 
 ## Reference behaviour
-**None.** 코드가 Adobe TN #5176을 인용한다(비교 기록 아님).
+**None.** The code cites Adobe TN #5176 (not a comparison record).
 
 ## Cross-cutting invariants
 **None.**
 
 ## Blast radius
-- [글리프 렌더링](glyph-rendering.md) — CFF 폰트를 렌더하려면 여기를 써야 하지만 현재는 `ttf_parser`에 원바이트를 넘긴다.
-- [폰트 서브세팅](font-subsetting.md) — CFF 서브세팅이 생기면 여기가 재료다.
+- [Glyph rendering](glyph-rendering.md) — rendering a CFF font would need this, but it currently hands the raw bytes to `ttf_parser`.
+- [Font subsetting](font-subsetting.md) — if CFF subsetting is added, this is its material.
 
 ## Known holes / open
-- 제품 코드 소비처가 없다. 렌더러는 순수 CFF(FontFile3)를 `ttf_parser::Face::parse`에 넘기고, 실패하면 자리표시 사각형을 그린다(추론).
-- Tracked: #45 (/Differences·CID 폭·CFF)
+- There is no consumer in product code. The renderer hands a pure CFF (FontFile3) to `ttf_parser::Face::parse` and draws a placeholder box when that fails (inferred).
+- Tracked: #45 (/Differences, CID widths, CFF)
