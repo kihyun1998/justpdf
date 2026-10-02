@@ -24,7 +24,7 @@ cargo install justpdf-cli
 | `clean`   | Rebuild the file                 |
 | `compress`| Compress with a preset + overrides |
 | `convert` | Convert between formats          |
-| `sign`    | Not implemented yet              |
+| `sign`    | Not implemented yet (always fails) |
 
 ## Examples
 
