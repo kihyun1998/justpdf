@@ -37,6 +37,6 @@ Leaves the original bytes untouched and appends an incremental section holding t
 
 ## Known holes / open
 - There is no sign → verify round-trip test.
-- CLI `sign` prints "not yet fully implemented" and exits with a success code. The CLI takes `--cert`, but core has no PKCS#12 parser.
+- CLI `sign` fails with exit code 1 without signing (measured). The CLI takes `--cert`, but core has no PKCS#12 parser — #181.
 - Encrypted documents cannot be signed (above).
-- Tracked: #33 (text string encoding), #37 (signature wiring, CLI sign)
+- Tracked: #33 (text string encoding), #37 (signature wiring and validity), #180 (timestamp ordering), #181 (CLI sign)
