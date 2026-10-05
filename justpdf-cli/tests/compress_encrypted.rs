@@ -4,7 +4,7 @@
 //! password, so authentication is genuinely required) and written to a temp
 //! file, then driven through the binary end-to-end.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use justpdf_core::crypto;
@@ -19,9 +19,9 @@ fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_justpdf"))
 }
 
-/// Build a small AES-128 encrypted PDF requiring `USER_PW`, write it to a
-/// uniquely-named temp file, and return its path.
-fn encrypted_fixture(tag: &str) -> PathBuf {
+/// Build a small AES-128 encrypted PDF requiring `USER_PW`, write it into
+/// `dir`, and return its path.
+fn encrypted_fixture(dir: &Path) -> PathBuf {
     let mut builder = DocumentBuilder::new();
     let font = builder.add_standard_font("Helvetica");
     let mut page = PageBuilder::new(612.0, 792.0);
@@ -41,7 +41,7 @@ fn encrypted_fixture(tag: &str) -> PathBuf {
     });
     let bytes = builder.build().unwrap();
 
-    let path = std::env::temp_dir().join(format!("justpdf_cli_enc_{tag}.pdf"));
+    let path = dir.join("in.pdf");
     std::fs::write(&path, &bytes).unwrap();
     path
 }
@@ -58,14 +58,14 @@ fn is_encrypted(bytes: &[u8]) -> bool {
 
 #[test]
 fn compresses_encrypted_pdf_with_password_and_drops_encryption() {
-    let input = encrypted_fixture("ok");
+    let dir = tempfile::tempdir().unwrap();
+    let input = encrypted_fixture(dir.path());
     assert!(
         is_encrypted(&std::fs::read(&input).unwrap()),
         "fixture must be encrypted"
     );
 
-    let out = std::env::temp_dir().join("justpdf_cli_enc_out.pdf");
-    let _ = std::fs::remove_file(&out);
+    let out = dir.path().join("out.pdf");
 
     let output = bin()
         .arg("compress")
@@ -94,9 +94,9 @@ fn compresses_encrypted_pdf_with_password_and_drops_encryption() {
 
 #[test]
 fn encrypted_pdf_without_password_is_an_error() {
-    let input = encrypted_fixture("nopw");
-    let out = std::env::temp_dir().join("justpdf_cli_enc_nopw_out.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let input = encrypted_fixture(dir.path());
+    let out = dir.path().join("out.pdf");
 
     let output = bin()
         .arg("compress")
@@ -120,9 +120,9 @@ fn encrypted_pdf_without_password_is_an_error() {
 
 #[test]
 fn wrong_password_is_rejected() {
-    let input = encrypted_fixture("wrong");
-    let out = std::env::temp_dir().join("justpdf_cli_enc_wrong_out.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let input = encrypted_fixture(dir.path());
+    let out = dir.path().join("out.pdf");
 
     let output = bin()
         .arg("compress")

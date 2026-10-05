@@ -1293,8 +1293,8 @@ mod tests {
     #[test]
     fn test_mmap_truncated_file() {
         use std::io::Write;
-        let dir = std::env::temp_dir();
-        let path = dir.join("justpdf_mmap_truncated.pdf");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doc.pdf");
         {
             let mut f = std::fs::File::create(&path).unwrap();
             // Write just the PDF header, not a complete PDF
@@ -1303,21 +1303,19 @@ mod tests {
         let result = PdfDocument::open_mmap(&path);
         // Should be an error, not a panic
         assert!(result.is_err());
-        let _ = std::fs::remove_file(&path);
     }
 
     #[cfg(feature = "mmap")]
     #[test]
     fn test_mmap_empty_file() {
-        let dir = std::env::temp_dir();
-        let path = dir.join("justpdf_mmap_empty.pdf");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doc.pdf");
         {
             std::fs::File::create(&path).unwrap();
         }
         let result = PdfDocument::open_mmap(&path);
         // Should be an error, not a panic
         assert!(result.is_err());
-        let _ = std::fs::remove_file(&path);
     }
 
     #[cfg(feature = "mmap")]
@@ -1326,8 +1324,8 @@ mod tests {
         use std::io::Write;
         // Write a minimal PDF to a temp file and open with mmap.
         let data = build_minimal_pdf();
-        let dir = std::env::temp_dir();
-        let path = dir.join("justpdf_mmap_test.pdf");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doc.pdf");
         {
             let mut f = std::fs::File::create(&path).unwrap();
             f.write_all(&data).unwrap();
@@ -1344,8 +1342,5 @@ mod tests {
             }
             _ => panic!("expected dict for catalog"),
         }
-
-        // Clean up.
-        let _ = std::fs::remove_file(&path);
     }
 }

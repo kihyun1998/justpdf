@@ -47,6 +47,7 @@ spki = "0.7"
 rand = "0.8"
 rsa = { version = "0.9", features = ["sha2", "pkcs5"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
 
 [[bench]]
 name = "parse"
