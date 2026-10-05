@@ -26,4 +26,4 @@ DER code that builds a timestamp request (TSQ) and pulls the token out of a resp
 
 ## Known holes / open
 - The token-signature ordering problem (above).
-- Tracked: #37 (signature wiring, CLI sign)
+- Tracked: #180 (token ordering, nonce, PKIStatus), #37 (signature validity, which this depends on)

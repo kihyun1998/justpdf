@@ -129,7 +129,7 @@ enum Commands {
         #[arg(long, short = 'F')]
         format: Option<String>,
     },
-    /// Digital signature (not yet fully implemented)
+    /// Digital signature (not implemented yet: always fails)
     Sign {
         /// Input PDF file
         file: PathBuf,
@@ -295,10 +295,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             output,
             format,
         } => cmd_convert(&file, &output, format.as_deref()),
-        Commands::Sign { .. } => {
-            eprintln!("Digital signature support is not yet fully implemented.");
-            Ok(())
-        }
+        Commands::Sign { .. } => Err("digital signing is not implemented yet (#181)".into()),
     }
 }
 
