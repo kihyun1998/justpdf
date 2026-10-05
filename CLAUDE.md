@@ -12,7 +12,7 @@ Uses the canonical five-role label vocabulary unchanged (`needs-triage`, `needs-
 
 ### Domain docs
 
-Single-context layout — one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context layout — one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
 ### Map
 
