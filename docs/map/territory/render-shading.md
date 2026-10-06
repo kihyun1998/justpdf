@@ -31,3 +31,4 @@ Rasterizes type 1–7 shadings (function-based, axial, radial, mesh) for the `sh
 ## Known holes / open
 - Type 7 (tensor-product) patches take their corners from stream points 0, 3, 12, 15; pdf.js `_decodeType7Shading` maps stream points 0, 3, 6, 9 to the corners and 12–15 to the interior control points, as for Type 6 (inferred: read against pdf.js `src/core/pattern.js`, not reproduced by rendering). The branch that picks `c1` is identical for both types, which clippy flags as `if_same_then_else`; it is allowed at the site rather than merged so the selection stays visible. Tracked: #196
 - Tracked: #47 (function Type 0 and Type 4)
+- Axial/radial read `/Function` by hand, a function array uses only its first element, and mesh shadings ignore `/Function` (inferred). Tracked: #233, blocked by #47
