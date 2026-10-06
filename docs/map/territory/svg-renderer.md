@@ -11,6 +11,7 @@ Outputs a page as an SVG document. It is not a device but a **second interpreter
 - Resource names resolve through the same scope stack as the raster side (`ResourceScopes`) — [resource name scope](../invariant/resource-scope.md).
 - A Form XObject is skipped when a running form (`running_forms`) is met again, and skipped past depth 10 — [Content stream recursion](../invariant/content-stream-recursion.md).
 - Text becomes `<text>` through ToUnicode; without it only ASCII (<128); without an outline, a "rectangle placeholder".
+- Its `resolve_xobject` decodes every non-DCT image before `render_image` hands it to `decode_image`, the same double decode as the raster side: a Flate image XObject produces no `<image>` element (measured 2026-10-06). Tracked: #42.
 - It has copies of `image_to_rgba` and `cs_from_name` — [Image pixel layout](../invariant/image-pixel-layout.md).
 
 ## Code
