@@ -21,13 +21,14 @@ Command to find them again: `rg -n 'fn image_to_rgba|fn to_rgb_pixels|fn compone
 - An Indexed image renders in the wrong colors, and compression silently skips it.
 - 16-bit and 1/2/4-bit raw images show as stripes or cut-off images.
 - CCITT and JBIG2 image masks are unpacked wrongly.
+- A 1-bit mask whose width is not a multiple of 8 is sheared, because the row padding to a byte boundary is ignored (measured 2026-10-06, see [Render images](../territory/render-images.md)).
 - The same image has different colors rendered directly and rendered after compression.
 Condition: with 8-bit DeviceRGB/Gray JPEG, all of it is fine — common test inputs meet this condition, so it stays invisible.
 
 ## Discovery history
 No recorded incident. On 2026-09-23, while writing the map, two research agents (stream/image/color, render) reported the copies independently. All of it is inferred from reading code, and `decode_image` has no unit test.
 
-- Tracked: #42 (render inline images and masks), #46 (image decode color spaces and Decode)
+- Tracked: #42 (render: double decode, mask row padding and shape, inline images), #46 (image decode color spaces and Decode)
 
 ## Where it will recur
 **A function that indexes the bytes of a `DecodedImage` or converts color components to RGB is subject to this invariant.** Before writing a new one, find the existing copies with the command above, and use the functions in [Color spaces](../territory/color-spaces.md) where possible. Unless test inputs include Indexed, 16-bit, CMYK and CCITT, this invariant is not checked.
