@@ -84,9 +84,8 @@ pub fn subset_font(font_data: &[u8], glyph_ids: &[u16]) -> Option<SubsetResult> 
     }
 
     // Look up essential tables.
-    let find_table = |tag: &[u8; 4]| -> Option<&TableRecord> {
-        tables.iter().find(|t| &t.tag == tag)
-    };
+    let find_table =
+        |tag: &[u8; 4]| -> Option<&TableRecord> { tables.iter().find(|t| &t.tag == tag) };
 
     let head_rec = find_table(b"head")?;
     let maxp_rec = find_table(b"maxp")?;
@@ -315,7 +314,10 @@ pub fn subset_font(font_data: &[u8], glyph_ids: &[u16]) -> Option<SubsetResult> 
         }
     }
 
-    Some(SubsetResult { data: output, gid_map })
+    Some(SubsetResult {
+        data: output,
+        gid_map,
+    })
 }
 
 /// Parse the `loca` table into a vector of byte offsets into the `glyf` table.

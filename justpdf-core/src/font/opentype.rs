@@ -150,7 +150,12 @@ fn read_tag(data: &[u8], offset: usize) -> Option<[u8; 4]> {
     if offset + 4 > data.len() {
         return None;
     }
-    Some([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+    Some([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
 }
 
 // ---------------------------------------------------------------------------
@@ -713,10 +718,7 @@ fn parse_gpos_pair(data: &[u8], subtable_offsets: &[usize]) -> GposLookup {
 
 /// Parse a GSUB or GPOS table given the table data slice.
 /// Returns (scripts, features, lookup_list_offset).
-fn parse_layout_header(
-    data: &[u8],
-    table_offset: usize,
-) -> Option<(usize, usize, usize)> {
+fn parse_layout_header(data: &[u8], table_offset: usize) -> Option<(usize, usize, usize)> {
     let version = read_u32(data, table_offset)?;
     if version != 0x00010000 {
         return None;

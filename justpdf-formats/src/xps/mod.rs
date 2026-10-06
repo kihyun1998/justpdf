@@ -7,9 +7,9 @@
 use std::io::{Cursor, Read};
 use std::path::Path;
 
+use crate::Result;
 use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
 use crate::error::FormatError;
-use crate::Result;
 
 /// A parsed XPS document.
 pub struct XpsDocument {
@@ -44,8 +44,8 @@ impl XpsDocument {
     /// Parse XPS from bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let reader = Cursor::new(data);
-        let mut archive = zip::ZipArchive::new(reader)
-            .map_err(|e| FormatError::Zip(format!("{e}")))?;
+        let mut archive =
+            zip::ZipArchive::new(reader).map_err(|e| FormatError::Zip(format!("{e}")))?;
 
         // Step 1: Find the FixedDocumentSequence
         let fdseq_path = find_fixed_doc_sequence(&mut archive)?;
@@ -85,9 +85,7 @@ impl XpsDocument {
 }
 
 /// Find the FixedDocumentSequence path from the content types or relationships.
-fn find_fixed_doc_sequence(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-) -> Result<String> {
+fn find_fixed_doc_sequence(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<String> {
     // Try reading _rels/.rels first
     if let Ok(rels) = read_zip_text(archive, "_rels/.rels") {
         if let Ok(doc) = roxmltree::Document::parse(&rels) {
@@ -182,10 +180,7 @@ fn parse_fixed_document(
 }
 
 /// Parse a FixedPage XML file.
-fn parse_fixed_page(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-    path: &str,
-) -> Result<XpsPage> {
+fn parse_fixed_page(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, path: &str) -> Result<XpsPage> {
     let xml = read_zip_text(archive, path)?;
     let doc = roxmltree::Document::parse(&xml)
         .map_err(|e| FormatError::Xml(format!("parsing FixedPage {path}: {e}")))?;
@@ -244,10 +239,7 @@ fn extract_metadata(
     let mut author = None;
 
     // Try to read core properties
-    let core_props_paths = [
-        "docProps/core.xml",
-        "metadata/core-properties/1.xml",
-    ];
+    let core_props_paths = ["docProps/core.xml", "metadata/core-properties/1.xml"];
 
     for path in &core_props_paths {
         if let Ok(xml) = read_zip_text(archive, path) {
@@ -275,10 +267,7 @@ fn extract_metadata(
 }
 
 /// Read a text file from the ZIP archive.
-fn read_zip_text(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-    path: &str,
-) -> Result<String> {
+fn read_zip_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, path: &str) -> Result<String> {
     let mut file = archive
         .by_name(path)
         .map_err(|e| FormatError::Zip(format!("reading {path}: {e}")))?;
@@ -444,17 +433,24 @@ mod tests {
 
             // FixedDocumentSequence
             zip.start_file("FixedDocumentSequence.fdseq", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="utf-8"?>
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="utf-8"?>
 <FixedDocumentSequence xmlns="http://schemas.microsoft.com/xps/2005/06">
   <DocumentReference Source="Documents/1/FixedDocument.fdoc"/>
-</FixedDocumentSequence>"#).unwrap();
+</FixedDocumentSequence>"#,
+            )
+            .unwrap();
 
             // FixedDocument
-            zip.start_file("Documents/1/FixedDocument.fdoc", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="utf-8"?>
+            zip.start_file("Documents/1/FixedDocument.fdoc", opts)
+                .unwrap();
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="utf-8"?>
 <FixedDocument xmlns="http://schemas.microsoft.com/xps/2005/06">
   <PageContent Source="Pages/1.fpage"/>
-</FixedDocument>"#).unwrap();
+</FixedDocument>"#,
+            )
+            .unwrap();
 
             // FixedPage
             zip.start_file("Documents/1/Pages/1.fpage", opts).unwrap();
@@ -530,8 +526,14 @@ mod tests {
 
     #[test]
     fn test_normalize_xps_path() {
-        assert_eq!(normalize_xps_path("/Documents/1/doc.fdoc"), "Documents/1/doc.fdoc");
-        assert_eq!(normalize_xps_path("Documents/1/doc.fdoc"), "Documents/1/doc.fdoc");
+        assert_eq!(
+            normalize_xps_path("/Documents/1/doc.fdoc"),
+            "Documents/1/doc.fdoc"
+        );
+        assert_eq!(
+            normalize_xps_path("Documents/1/doc.fdoc"),
+            "Documents/1/doc.fdoc"
+        );
     }
 
     #[test]
@@ -541,7 +543,10 @@ mod tests {
             "Documents/1/Pages/1.fpage"
         );
         assert_eq!(
-            resolve_xps_path("FixedDocumentSequence.fdseq", "Documents/1/FixedDocument.fdoc"),
+            resolve_xps_path(
+                "FixedDocumentSequence.fdseq",
+                "Documents/1/FixedDocument.fdoc"
+            ),
             "Documents/1/FixedDocument.fdoc"
         );
     }

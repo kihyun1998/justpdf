@@ -400,9 +400,7 @@ impl TextInterpreter {
         let font = self.fonts.get(&self.gs.text.font_name);
 
         let is_two_byte = font
-            .map(|f| {
-                matches!(f.info.encoding, Encoding::Identity) || f.info.subtype == b"Type0"
-            })
+            .map(|f| matches!(f.info.encoding, Encoding::Identity) || f.info.subtype == b"Type0")
             .unwrap_or(false);
 
         let tfs = self.gs.text.font_size;
@@ -433,9 +431,7 @@ impl TextInterpreter {
             };
 
             // Get glyph width in text space (1/1000 units)
-            let w0 = font
-                .map(|f| f.char_width(code))
-                .unwrap_or(500.0);
+            let w0 = font.map(|f| f.char_width(code)).unwrap_or(500.0);
 
             // Calculate position in user space:
             // Text rendering matrix = [fontSize*Tz 0 0; 0 fontSize 0; 0 rise 1] × Tm × CTM
@@ -662,12 +658,7 @@ fn build_line(mut words: Vec<TextWord>) -> TextLine {
     let x = words.first().map(|w| w.x).unwrap_or(0.0);
     let y = words.first().map(|w| w.y).unwrap_or(0.0);
 
-    TextLine {
-        text,
-        x,
-        y,
-        words,
-    }
+    TextLine { text, x, y, words }
 }
 
 // ---------------------------------------------------------------------------
@@ -783,13 +774,8 @@ fn resolve_type0_descendant(doc: &PdfDocument, font_dict: &PdfDict, info: &mut F
     // Get /DW (default width)
     if let Some(dw) = descendant.get(b"DW").and_then(|o| o.as_f64()) {
         match &mut info.widths {
-            crate::font::FontWidths::CID {
-                default_width,
-                ..
-            } => *default_width = dw,
-            crate::font::FontWidths::None {
-                default_width,
-            } => *default_width = dw,
+            crate::font::FontWidths::CID { default_width, .. } => *default_width = dw,
+            crate::font::FontWidths::None { default_width } => *default_width = dw,
             _ => {}
         }
     }
@@ -821,10 +807,7 @@ fn parse_cid_widths(w_array: &[PdfObject]) -> crate::font::FontWidths {
         match &w_array[i] {
             PdfObject::Array(widths) => {
                 let ws: Vec<f64> = widths.iter().filter_map(|o| o.as_f64()).collect();
-                entries.push(CIDWidthEntry::List {
-                    first,
-                    widths: ws,
-                });
+                entries.push(CIDWidthEntry::List { first, widths: ws });
                 i += 1;
             }
             PdfObject::Integer(_) | PdfObject::Real(_) => {
@@ -833,11 +816,7 @@ fn parse_cid_widths(w_array: &[PdfObject]) -> crate::font::FontWidths {
                     i += 1;
                     let width = w_array.get(i).and_then(|o| o.as_f64()).unwrap_or(1000.0);
                     i += 1;
-                    entries.push(CIDWidthEntry::Range {
-                        first,
-                        last,
-                        width,
-                    });
+                    entries.push(CIDWidthEntry::Range { first, last, width });
                 } else {
                     break;
                 }
@@ -1025,10 +1004,7 @@ mod tests {
             },
             ContentOp {
                 operator: b"Tf".to_vec(),
-                operands: vec![
-                    Operand::Name(b"F1".to_vec()),
-                    Operand::Integer(12),
-                ],
+                operands: vec![Operand::Name(b"F1".to_vec()), Operand::Integer(12)],
             },
             ContentOp {
                 operator: b"Td".to_vec(),
@@ -1086,10 +1062,7 @@ mod tests {
             },
             ContentOp {
                 operator: b"Tf".to_vec(),
-                operands: vec![
-                    Operand::Name(b"F1".to_vec()),
-                    Operand::Integer(12),
-                ],
+                operands: vec![Operand::Name(b"F1".to_vec()), Operand::Integer(12)],
             },
             ContentOp {
                 operator: b"TJ".to_vec(),
@@ -1222,10 +1195,7 @@ mod tests {
             },
             ContentOp {
                 operator: b"Tf".to_vec(),
-                operands: vec![
-                    Operand::Name(b"F1".to_vec()),
-                    Operand::Integer(12),
-                ],
+                operands: vec![Operand::Name(b"F1".to_vec()), Operand::Integer(12)],
             },
             ContentOp {
                 operator: b"Td".to_vec(),
@@ -1319,10 +1289,7 @@ mod tests {
             },
             ContentOp {
                 operator: b"Tf".to_vec(),
-                operands: vec![
-                    Operand::Name(b"F1".to_vec()),
-                    Operand::Integer(12),
-                ],
+                operands: vec![Operand::Name(b"F1".to_vec()), Operand::Integer(12)],
             },
             ContentOp {
                 operator: b"Tj".to_vec(),
@@ -1342,10 +1309,7 @@ mod tests {
             },
             ContentOp {
                 operator: b"Tf".to_vec(),
-                operands: vec![
-                    Operand::Name(b"F1".to_vec()),
-                    Operand::Integer(12),
-                ],
+                operands: vec![Operand::Name(b"F1".to_vec()), Operand::Integer(12)],
             },
             ContentOp {
                 operator: b"Tj".to_vec(),

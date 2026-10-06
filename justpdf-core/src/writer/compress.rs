@@ -6,7 +6,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-
 use crate::content::parse_content_stream;
 use crate::error::{JustPdfError, Result};
 use crate::font::subset::subset_font;
@@ -383,10 +382,7 @@ fn recompress_images(
             b"ColorSpace".to_vec(),
             PdfObject::Name(b"DeviceRGB".to_vec()),
         );
-        new_dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"DCTDecode".to_vec()),
-        );
+        new_dict.insert(b"Filter".to_vec(), PdfObject::Name(b"DCTDecode".to_vec()));
         new_dict.insert(
             b"Length".to_vec(),
             PdfObject::Integer(jpeg_bytes.len() as i64),
@@ -480,9 +476,7 @@ fn compute_target_dimensions_with_ctm(
 /// Returns a map from image XObject name → (display_width_pt, display_height_pt).
 /// Parses `cm` operators to track the current transformation matrix, and extracts
 /// display dimensions when `Do` is invoked on an image.
-fn collect_image_display_sizes(
-    modifier: &mut DocumentModifier,
-) -> HashMap<u32, (f64, f64)> {
+fn collect_image_display_sizes(modifier: &mut DocumentModifier) -> HashMap<u32, (f64, f64)> {
     let mut result: HashMap<u32, (f64, f64)> = HashMap::new();
 
     // Collect page data
@@ -499,9 +493,16 @@ fn collect_image_display_sizes(
                 }
                 let content_obj_nums = match dict.get(b"Contents") {
                     Some(PdfObject::Reference(r)) => vec![r.obj_num],
-                    Some(PdfObject::Array(arr)) => arr.iter().filter_map(|o| {
-                        if let PdfObject::Reference(r) = o { Some(r.obj_num) } else { None }
-                    }).collect(),
+                    Some(PdfObject::Array(arr)) => arr
+                        .iter()
+                        .filter_map(|o| {
+                            if let PdfObject::Reference(r) = o {
+                                Some(r.obj_num)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
                     _ => return None,
                 };
                 Some((content_obj_nums, dict.clone()))
@@ -553,13 +554,16 @@ fn collect_image_display_sizes(
                 }
                 b"cm" => {
                     if op.operands.len() >= 6 {
-                        let vals: Vec<f64> = op.operands.iter().take(6).map(|o| {
-                            match o {
+                        let vals: Vec<f64> = op
+                            .operands
+                            .iter()
+                            .take(6)
+                            .map(|o| match o {
                                 crate::content::Operand::Real(v) => *v,
                                 crate::content::Operand::Integer(v) => *v as f64,
                                 _ => 0.0,
-                            }
-                        }).collect();
+                            })
+                            .collect();
                         // Multiply: CTM = new_matrix * current_CTM
                         let new = [vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]];
                         ctm = multiply_matrix(&new, &ctm);
@@ -636,11 +640,7 @@ fn extract_xobject_map(page_dict: &PdfDict, modifier: &DocumentModifier) -> Hash
 }
 
 /// Convert decoded image pixels to RGB and optionally resize.
-fn to_rgb_pixels(
-    decoded: &image::DecodedImage,
-    target_w: u32,
-    target_h: u32,
-) -> Vec<u8> {
+fn to_rgb_pixels(decoded: &image::DecodedImage, target_w: u32, target_h: u32) -> Vec<u8> {
     use ::image::{DynamicImage, RgbImage, imageops::FilterType};
 
     let (src_w, src_h) = (decoded.width, decoded.height);
@@ -650,11 +650,7 @@ fn to_rgb_pixels(
     let rgb_data: Vec<u8> = match components {
         1 => {
             // Grayscale → RGB
-            decoded
-                .data
-                .iter()
-                .flat_map(|&g| [g, g, g])
-                .collect()
+            decoded.data.iter().flat_map(|&g| [g, g, g]).collect()
         }
         3 => {
             // Already RGB
@@ -737,10 +733,7 @@ fn compress_raw_streams(modifier: &mut DocumentModifier) {
         if let Ok(compressed) = encode_flate(&data) {
             // Only replace if compression actually helps
             if compressed.len() < data.len() {
-                dict.insert(
-                    b"Filter".to_vec(),
-                    PdfObject::Name(b"FlateDecode".to_vec()),
-                );
+                dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
                 dict.insert(
                     b"Length".to_vec(),
                     PdfObject::Integer(compressed.len() as i64),
@@ -875,25 +868,33 @@ fn convert_images_to_grayscale(modifier: &mut DocumentModifier, stats: &mut Comp
         let gray_pixels: Vec<u8> = match decoded.components {
             3 => {
                 // RGB → Gray using luminance: 0.299R + 0.587G + 0.114B
-                decoded.data.chunks_exact(3).map(|rgb| {
-                    let r = rgb[0] as f32;
-                    let g = rgb[1] as f32;
-                    let b = rgb[2] as f32;
-                    (0.299 * r + 0.587 * g + 0.114 * b).round() as u8
-                }).collect()
+                decoded
+                    .data
+                    .chunks_exact(3)
+                    .map(|rgb| {
+                        let r = rgb[0] as f32;
+                        let g = rgb[1] as f32;
+                        let b = rgb[2] as f32;
+                        (0.299 * r + 0.587 * g + 0.114 * b).round() as u8
+                    })
+                    .collect()
             }
             4 => {
                 // CMYK → Gray
-                decoded.data.chunks_exact(4).map(|cmyk| {
-                    let c = cmyk[0] as f32 / 255.0;
-                    let m = cmyk[1] as f32 / 255.0;
-                    let y = cmyk[2] as f32 / 255.0;
-                    let k = cmyk[3] as f32 / 255.0;
-                    let r = (1.0 - c) * (1.0 - k);
-                    let g = (1.0 - m) * (1.0 - k);
-                    let b = (1.0 - y) * (1.0 - k);
-                    ((0.299 * r + 0.587 * g + 0.114 * b) * 255.0).round() as u8
-                }).collect()
+                decoded
+                    .data
+                    .chunks_exact(4)
+                    .map(|cmyk| {
+                        let c = cmyk[0] as f32 / 255.0;
+                        let m = cmyk[1] as f32 / 255.0;
+                        let y = cmyk[2] as f32 / 255.0;
+                        let k = cmyk[3] as f32 / 255.0;
+                        let r = (1.0 - c) * (1.0 - k);
+                        let g = (1.0 - m) * (1.0 - k);
+                        let b = (1.0 - y) * (1.0 - k);
+                        ((0.299 * r + 0.587 * g + 0.114 * b) * 255.0).round() as u8
+                    })
+                    .collect()
             }
             _ => continue,
         };
@@ -914,11 +915,20 @@ fn convert_images_to_grayscale(modifier: &mut DocumentModifier, stats: &mut Comp
         new_dict.insert(b"Type".to_vec(), PdfObject::Name(b"XObject".to_vec()));
         new_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Image".to_vec()));
         new_dict.insert(b"Width".to_vec(), PdfObject::Integer(decoded.width as i64));
-        new_dict.insert(b"Height".to_vec(), PdfObject::Integer(decoded.height as i64));
+        new_dict.insert(
+            b"Height".to_vec(),
+            PdfObject::Integer(decoded.height as i64),
+        );
         new_dict.insert(b"BitsPerComponent".to_vec(), PdfObject::Integer(8));
-        new_dict.insert(b"ColorSpace".to_vec(), PdfObject::Name(b"DeviceGray".to_vec()));
+        new_dict.insert(
+            b"ColorSpace".to_vec(),
+            PdfObject::Name(b"DeviceGray".to_vec()),
+        );
         new_dict.insert(b"Filter".to_vec(), PdfObject::Name(b"DCTDecode".to_vec()));
-        new_dict.insert(b"Length".to_vec(), PdfObject::Integer(jpeg_bytes.len() as i64));
+        new_dict.insert(
+            b"Length".to_vec(),
+            PdfObject::Integer(jpeg_bytes.len() as i64),
+        );
 
         modifier.set_object(
             obj_num,
@@ -1017,12 +1027,9 @@ fn rewrite_color_operators_to_gray(modifier: &mut DocumentModifier) {
         };
 
         // Check if any color operators exist
-        let has_color_ops = ops.iter().any(|op| {
-            matches!(
-                op.operator.as_slice(),
-                b"rg" | b"RG" | b"k" | b"K"
-            )
-        });
+        let has_color_ops = ops
+            .iter()
+            .any(|op| matches!(op.operator.as_slice(), b"rg" | b"RG" | b"k" | b"K"));
 
         if !has_color_ops {
             continue;
@@ -1077,10 +1084,7 @@ fn rewrite_color_operators_to_gray(modifier: &mut DocumentModifier) {
                 final_dict.insert(key.clone(), val.clone());
             }
         }
-        final_dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"FlateDecode".to_vec()),
-        );
+        final_dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
         final_dict.insert(
             b"Length".to_vec(),
             PdfObject::Integer(compressed.len() as i64),
@@ -1236,9 +1240,10 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
                     }
                 }
                 b"TJ" => {
-                    if let (Some(font_name), Some(arr)) =
-                        (&current_font_name, op.operands.first().and_then(|o| o.as_array()))
-                    {
+                    if let (Some(font_name), Some(arr)) = (
+                        &current_font_name,
+                        op.operands.first().and_then(|o| o.as_array()),
+                    ) {
                         if let Some(&font_obj_num) = font_map.get(font_name.as_slice()) {
                             let codes = font_char_codes.entry(font_obj_num).or_default();
                             for item in arr {
@@ -1353,10 +1358,7 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
             b"Length1".to_vec(),
             PdfObject::Integer(subset_result.data.len() as i64),
         );
-        new_dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"FlateDecode".to_vec()),
-        );
+        new_dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
 
         modifier.set_object(
             fontfile2_obj_num,
@@ -1781,9 +1783,7 @@ fn get_stream_raw_data(obj_num: u32, modifier: &DocumentModifier) -> Option<Vec<
 fn get_stream_decoded_data(obj_num: u32, modifier: &DocumentModifier) -> Option<Vec<u8>> {
     let obj = modifier.find_object_pub(obj_num)?;
     match obj {
-        PdfObject::Stream { dict, data } => {
-            crate::stream::decode_stream(data, dict).ok()
-        }
+        PdfObject::Stream { dict, data } => crate::stream::decode_stream(data, dict).ok(),
         _ => None,
     }
 }
@@ -1811,7 +1811,11 @@ fn remove_unused_resources(modifier: &mut DocumentModifier, stats: &mut Compress
             Some(PdfObject::Array(arr)) => arr
                 .iter()
                 .filter_map(|o| {
-                    if let PdfObject::Reference(r) = o { Some(r.obj_num) } else { None }
+                    if let PdfObject::Reference(r) = o {
+                        Some(r.obj_num)
+                    } else {
+                        None
+                    }
                 })
                 .collect(),
             _ => continue,
@@ -1884,18 +1888,24 @@ fn remove_unused_resources(modifier: &mut DocumentModifier, stats: &mut Compress
                             for op in &form_ops {
                                 match op.operator.as_slice() {
                                     b"Tf" => {
-                                        if let Some(n) = op.operands.first().and_then(|o| o.as_name()) {
+                                        if let Some(n) =
+                                            op.operands.first().and_then(|o| o.as_name())
+                                        {
                                             used_fonts.insert(n.to_vec());
                                         }
                                     }
                                     b"Do" => {
-                                        if let Some(n) = op.operands.first().and_then(|o| o.as_name()) {
+                                        if let Some(n) =
+                                            op.operands.first().and_then(|o| o.as_name())
+                                        {
                                             used_xobjects.insert(n.to_vec());
                                             form_xobjects_to_check.push(n.to_vec());
                                         }
                                     }
                                     b"gs" => {
-                                        if let Some(n) = op.operands.first().and_then(|o| o.as_name()) {
+                                        if let Some(n) =
+                                            op.operands.first().and_then(|o| o.as_name())
+                                        {
                                             used_extgstate.insert(n.to_vec());
                                         }
                                     }
@@ -1911,12 +1921,10 @@ fn remove_unused_resources(modifier: &mut DocumentModifier, stats: &mut Compress
         // Get resources dict (resolve if indirect)
         let (resources_obj_num, resources_dict) = match page_dict.get(b"Resources") {
             Some(PdfObject::Dict(d)) => (None, d.clone()),
-            Some(PdfObject::Reference(r)) => {
-                match find_object_dict(r.obj_num, modifier) {
-                    Some(d) => (Some(r.obj_num), d),
-                    None => continue,
-                }
-            }
+            Some(PdfObject::Reference(r)) => match find_object_dict(r.obj_num, modifier) {
+                Some(d) => (Some(r.obj_num), d),
+                None => continue,
+            },
             _ => continue,
         };
 
@@ -2012,9 +2020,9 @@ fn count_removed(
 ) -> usize {
     let old_count = match resources.get(key) {
         Some(PdfObject::Dict(d)) => d.len(),
-        Some(PdfObject::Reference(r)) => {
-            find_object_dict(r.obj_num, modifier).map(|d| d.len()).unwrap_or(0)
-        }
+        Some(PdfObject::Reference(r)) => find_object_dict(r.obj_num, modifier)
+            .map(|d| d.len())
+            .unwrap_or(0),
         _ => 0,
     };
     let new_count = match new_value {
@@ -2194,8 +2202,8 @@ mod tests {
         let mut rgb = vec![0u8; (width * height * 3) as usize];
         for pixel in rgb.chunks_exact_mut(3) {
             pixel[0] = 255; // R
-            pixel[1] = 0;   // G
-            pixel[2] = 0;   // B
+            pixel[1] = 0; // G
+            pixel[2] = 0; // B
         }
 
         let mut buf = Cursor::new(Vec::new());
@@ -2211,7 +2219,8 @@ mod tests {
 
         let mut doc = DocumentBuilder::new();
         let font = doc.add_standard_font("Helvetica");
-        let (_img_name, img_ref) = crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
+        let (_img_name, img_ref) =
+            crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
 
         let mut page = PageBuilder::new(612.0, 792.0);
         page.add_font(&font, "Helvetica");
@@ -2266,8 +2275,7 @@ mod tests {
         let pdf = create_pdf_with_jpeg(1000, 1000, 95);
         let original_size = pdf.len();
 
-        let (compressed, stats) =
-            compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
 
         assert!(compressed.starts_with(b"%PDF"));
         assert_eq!(stats.original_size, original_size);
@@ -2286,8 +2294,7 @@ mod tests {
         let pdf = create_pdf_with_jpeg(2000, 2000, 95);
         let original_size = pdf.len();
 
-        let (compressed, stats) =
-            compress_pdf(&pdf, &CompressOptions::preset_high()).unwrap();
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_high()).unwrap();
 
         assert!(compressed.starts_with(b"%PDF"));
         assert_eq!(stats.original_size, original_size);
@@ -2306,8 +2313,7 @@ mod tests {
         let pdf = create_pdf_with_jpeg(1000, 1000, 95);
         let original_size = pdf.len();
 
-        let (compressed, stats) =
-            compress_pdf(&pdf, &CompressOptions::preset_extreme()).unwrap();
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_extreme()).unwrap();
 
         assert!(compressed.starts_with(b"%PDF"));
         // extreme preset must re-encode the image
@@ -2330,8 +2336,7 @@ mod tests {
     fn test_compress_roundtrip_valid() {
         let pdf = create_pdf_with_jpeg(100, 100, 90);
 
-        let (compressed, _) =
-            compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
+        let (compressed, _) = compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
 
         // Re-parse the compressed PDF to ensure it's valid
         let reparsed = PdfDocument::from_bytes(compressed).unwrap();
@@ -2365,11 +2370,13 @@ mod tests {
         // Very small image at low quality — re-encoding might make it larger
         let pdf = create_pdf_with_jpeg(4, 4, 10);
 
-        let (_, stats) =
-            compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
+        let (_, stats) = compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
 
         // Either recompressed (if smaller) or skipped (if larger) — no panic
-        assert!(stats.images_recompressed + stats.images_skipped >= stats.images_found.saturating_sub(0));
+        assert!(
+            stats.images_recompressed + stats.images_skipped
+                >= stats.images_found.saturating_sub(0)
+        );
     }
 
     #[test]
@@ -2601,10 +2608,8 @@ mod tests {
         let font = doc.add_standard_font("Helvetica");
 
         // Embed the same JPEG data twice — creates two separate stream objects
-        let (_name1, img_ref1) =
-            crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
-        let (_name2, img_ref2) =
-            crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
+        let (_name1, img_ref1) = crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
+        let (_name2, img_ref2) = crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
 
         let mut page = PageBuilder::new(612.0, 792.0);
         page.add_font(&font, "Helvetica");
@@ -2805,7 +2810,7 @@ mod tests {
     #[test]
     fn test_dedup_different_streams_no_false_positive() {
         // Create two images with different data
-        let jpeg1 = create_test_jpeg(100, 100, 90);  // red
+        let jpeg1 = create_test_jpeg(100, 100, 90); // red
         let mut jpeg2_pixels = vec![0u8; 100 * 100 * 3];
         for pixel in jpeg2_pixels.chunks_exact_mut(3) {
             pixel[0] = 0;
@@ -2817,7 +2822,8 @@ mod tests {
             use std::io::Cursor;
             let mut buf = Cursor::new(Vec::new());
             let mut enc = JpegEncoder::new_with_quality(&mut buf, 90);
-            enc.encode(&jpeg2_pixels, 100, 100, ::image::ExtendedColorType::Rgb8).unwrap();
+            enc.encode(&jpeg2_pixels, 100, 100, ::image::ExtendedColorType::Rgb8)
+                .unwrap();
             buf.into_inner()
         };
 
@@ -4155,25 +4161,37 @@ mod tests {
         use crate::object::IndirectRef;
 
         let objects = vec![
-            (1, PdfObject::Dict({
-                let mut d = PdfDict::new();
-                d.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
-                d.insert(b"Pages".to_vec(), PdfObject::Reference(IndirectRef { obj_num: 2, gen_num: 0 }));
-                d
-            })),
-            (2, PdfObject::Dict({
-                let mut d = PdfDict::new();
-                d.insert(b"Type".to_vec(), PdfObject::Name(b"Pages".to_vec()));
-                d
-            })),
-            (3, PdfObject::Integer(42)),  // eligible
-            (4, PdfObject::String(b"hello".to_vec())),  // eligible
-            (5, PdfObject::Integer(99)),  // eligible
+            (
+                1,
+                PdfObject::Dict({
+                    let mut d = PdfDict::new();
+                    d.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
+                    d.insert(
+                        b"Pages".to_vec(),
+                        PdfObject::Reference(IndirectRef {
+                            obj_num: 2,
+                            gen_num: 0,
+                        }),
+                    );
+                    d
+                }),
+            ),
+            (
+                2,
+                PdfObject::Dict({
+                    let mut d = PdfDict::new();
+                    d.insert(b"Type".to_vec(), PdfObject::Name(b"Pages".to_vec()));
+                    d
+                }),
+            ),
+            (3, PdfObject::Integer(42)),               // eligible
+            (4, PdfObject::String(b"hello".to_vec())), // eligible
+            (5, PdfObject::Integer(99)),               // eligible
         ];
 
-        let packed = crate::writer::object_stream::pack_object_streams(
-            &objects, 100, 1, Some(2), None
-        ).unwrap();
+        let packed =
+            crate::writer::object_stream::pack_object_streams(&objects, 100, 1, Some(2), None)
+                .unwrap();
 
         // Catalog (1) and Pages (2) should remain unpacked
         // Objects 3, 4, 5 should be packed into an object stream
@@ -4189,18 +4207,21 @@ mod tests {
         use crate::object::IndirectRef;
 
         let objects = vec![
-            (1, PdfObject::Dict({
-                let mut d = PdfDict::new();
-                d.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
-                d
-            })),
+            (
+                1,
+                PdfObject::Dict({
+                    let mut d = PdfDict::new();
+                    d.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
+                    d
+                }),
+            ),
             (2, PdfObject::Integer(42)),
             (3, PdfObject::Integer(99)),
         ];
 
-        let packed = crate::writer::object_stream::pack_object_streams(
-            &objects, 100, 1, None, None
-        ).unwrap();
+        let packed =
+            crate::writer::object_stream::pack_object_streams(&objects, 100, 1, None, None)
+                .unwrap();
 
         // Find the object stream
         let objstm = packed.objects.iter().find(|(_, obj)| {
@@ -4225,20 +4246,26 @@ mod tests {
         use crate::object::IndirectRef;
 
         let objects = vec![
-            (1, PdfObject::Dict({
-                let mut d = PdfDict::new();
-                d.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
-                d
-            })),
-            (2, PdfObject::Stream {
-                dict: PdfDict::new(),
-                data: vec![1, 2, 3],
-            }),
+            (
+                1,
+                PdfObject::Dict({
+                    let mut d = PdfDict::new();
+                    d.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
+                    d
+                }),
+            ),
+            (
+                2,
+                PdfObject::Stream {
+                    dict: PdfDict::new(),
+                    data: vec![1, 2, 3],
+                },
+            ),
         ];
 
-        let packed = crate::writer::object_stream::pack_object_streams(
-            &objects, 100, 1, None, None
-        ).unwrap();
+        let packed =
+            crate::writer::object_stream::pack_object_streams(&objects, 100, 1, None, None)
+                .unwrap();
 
         // Both objects should remain (stream is ineligible, catalog is excluded)
         assert_eq!(packed.objects.len(), 2);
@@ -4373,7 +4400,10 @@ mod tests {
         // Content stream
         let content = b"BT /F1 12 Tf (Hello) Tj ET";
         let (cs_dict, cs_data) = crate::writer::encode::make_stream(content, true);
-        let cs_ref = writer.add_object(PdfObject::Stream { dict: cs_dict, data: cs_data });
+        let cs_ref = writer.add_object(PdfObject::Stream {
+            dict: cs_dict,
+            data: cs_data,
+        });
 
         // Page
         let mut page = PdfDict::new();
@@ -4383,8 +4413,10 @@ mod tests {
         page.insert(
             b"MediaBox".to_vec(),
             PdfObject::Array(vec![
-                PdfObject::Integer(0), PdfObject::Integer(0),
-                PdfObject::Integer(612), PdfObject::Integer(792),
+                PdfObject::Integer(0),
+                PdfObject::Integer(0),
+                PdfObject::Integer(612),
+                PdfObject::Integer(792),
             ]),
         );
         let page_ref = writer.add_object(PdfObject::Dict(page));
@@ -4392,7 +4424,10 @@ mod tests {
         // Pages
         let mut pages = PdfDict::new();
         pages.insert(b"Type".to_vec(), PdfObject::Name(b"Pages".to_vec()));
-        pages.insert(b"Kids".to_vec(), PdfObject::Array(vec![PdfObject::Reference(page_ref)]));
+        pages.insert(
+            b"Kids".to_vec(),
+            PdfObject::Array(vec![PdfObject::Reference(page_ref)]),
+        );
         pages.insert(b"Count".to_vec(), PdfObject::Integer(1));
         let pages_ref = writer.add_object(PdfObject::Dict(pages));
 
@@ -4402,9 +4437,9 @@ mod tests {
         catalog.insert(b"Pages".to_vec(), PdfObject::Reference(pages_ref));
         let catalog_ref = writer.add_object(PdfObject::Dict(catalog));
 
-        let pdf = crate::writer::serialize::serialize_pdf(
-            &writer.objects, (1, 7), &catalog_ref, None,
-        ).unwrap();
+        let pdf =
+            crate::writer::serialize::serialize_pdf(&writer.objects, (1, 7), &catalog_ref, None)
+                .unwrap();
 
         // Compress with low preset (triggers serialize roundtrip)
         let (compressed, _) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
@@ -4420,14 +4455,22 @@ mod tests {
             let res = match pd.get(b"Resources") {
                 Some(PdfObject::Dict(d)) => d.clone(),
                 Some(PdfObject::Reference(r)) => {
-                    if let PdfObject::Dict(d) = reparsed.resolve(r).unwrap() { d } else { panic!() }
+                    if let PdfObject::Dict(d) = reparsed.resolve(r).unwrap() {
+                        d
+                    } else {
+                        panic!()
+                    }
                 }
                 _ => panic!("No Resources"),
             };
             let fonts = match res.get(b"Font") {
                 Some(PdfObject::Dict(d)) => d.clone(),
                 Some(PdfObject::Reference(r)) => {
-                    if let PdfObject::Dict(d) = reparsed.resolve(r).unwrap() { d } else { panic!() }
+                    if let PdfObject::Dict(d) = reparsed.resolve(r).unwrap() {
+                        d
+                    } else {
+                        panic!()
+                    }
                 }
                 _ => panic!("No Font dict"),
             };
@@ -4476,8 +4519,7 @@ mod tests {
         let original_size = pdf.len();
         let original_analysis = analyze_pdf(&pdf).unwrap();
 
-        let (compressed, stats) =
-            compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
 
         assert!(compressed.starts_with(b"%PDF"));
         // Size envelope: low must not blow up the file
@@ -4492,8 +4534,14 @@ mod tests {
         assert_eq!(new_analysis.pages, original_analysis.pages);
         assert_eq!(new_analysis.images, original_analysis.images);
         // low does not touch images or metadata
-        assert_eq!(stats.images_recompressed, 0, "low must not re-encode images");
-        assert_eq!(stats.metadata_items_stripped, 0, "low must not strip metadata");
+        assert_eq!(
+            stats.images_recompressed, 0,
+            "low must not re-encode images"
+        );
+        assert_eq!(
+            stats.metadata_items_stripped, 0,
+            "low must not strip metadata"
+        );
         assert_eq!(stats.images_grayscaled, 0, "low must not grayscale images");
     }
 
@@ -4505,8 +4553,7 @@ mod tests {
         let original_size = pdf.len();
         let original_analysis = analyze_pdf(&pdf).unwrap();
 
-        let (compressed, stats) =
-            compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_medium()).unwrap();
 
         assert!(compressed.starts_with(b"%PDF"));
         // Re-encoding must yield a smaller file
@@ -4526,8 +4573,14 @@ mod tests {
             "medium must re-encode at least one image"
         );
         // medium does not strip metadata or grayscale
-        assert_eq!(stats.metadata_items_stripped, 0, "medium must not strip metadata");
-        assert_eq!(stats.images_grayscaled, 0, "medium must not grayscale images");
+        assert_eq!(
+            stats.metadata_items_stripped, 0,
+            "medium must not strip metadata"
+        );
+        assert_eq!(
+            stats.images_grayscaled, 0,
+            "medium must not grayscale images"
+        );
     }
 
     /// Like `create_pdf_with_jpeg` but renders the image at a smaller
@@ -4561,8 +4614,7 @@ mod tests {
         let original_size = pdf.len();
         let original_analysis = analyze_pdf(&pdf).unwrap();
 
-        let (compressed, stats) =
-            compress_pdf(&pdf, &CompressOptions::preset_high()).unwrap();
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_high()).unwrap();
 
         assert!(compressed.starts_with(b"%PDF"));
         assert!(
@@ -4616,8 +4668,7 @@ mod tests {
         let original_size = pdf.len();
         let original_analysis = analyze_pdf(&pdf).unwrap();
 
-        let (compressed, stats) =
-            compress_pdf(&pdf, &CompressOptions::preset_extreme()).unwrap();
+        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_extreme()).unwrap();
 
         assert!(compressed.starts_with(b"%PDF"));
         assert!(

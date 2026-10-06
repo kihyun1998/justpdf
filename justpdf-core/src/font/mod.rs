@@ -229,12 +229,10 @@ pub fn parse_font_descriptor(dict: &PdfDict) -> Option<FontDescriptor> {
         .and_then(|o| o.as_name())
         .map(|n| n.to_vec())?;
 
-    let font_family = dict
-        .get(b"FontFamily")
-        .and_then(|o| match o {
-            PdfObject::String(s) => Some(s.clone()),
-            _ => o.as_name().map(|n| n.to_vec()),
-        });
+    let font_family = dict.get(b"FontFamily").and_then(|o| match o {
+        PdfObject::String(s) => Some(s.clone()),
+        _ => o.as_name().map(|n| n.to_vec()),
+    });
 
     let flags = dict.get_i64(b"Flags").unwrap_or(0) as u32;
     let italic_angle = dict.get_f64(b"ItalicAngle").unwrap_or(0.0);
@@ -392,10 +390,7 @@ mod tests {
     fn test_parse_font_descriptor_full() {
         let mut desc = PdfDict::new();
         desc.insert(b"FontName".to_vec(), PdfObject::Name(b"ArialMT".to_vec()));
-        desc.insert(
-            b"FontFamily".to_vec(),
-            PdfObject::String(b"Arial".to_vec()),
-        );
+        desc.insert(b"FontFamily".to_vec(), PdfObject::String(b"Arial".to_vec()));
         desc.insert(b"Flags".to_vec(), PdfObject::Integer(32)); // NONSYMBOLIC
         desc.insert(
             b"FontBBox".to_vec(),
@@ -574,10 +569,7 @@ mod tests {
             b"Encoding".to_vec(),
             PdfObject::Name(b"WinAnsiEncoding".to_vec()),
         );
-        font_dict.insert(
-            b"FontDescriptor".to_vec(),
-            PdfObject::Dict(desc_dict),
-        );
+        font_dict.insert(b"FontDescriptor".to_vec(), PdfObject::Dict(desc_dict));
 
         let info = parse_font_info(&font_dict);
         assert_eq!(info.base_font, b"TimesNewRomanPSMT");
@@ -602,15 +594,24 @@ mod tests {
         desc.insert(b"FontName".to_vec(), PdfObject::Name(b"Test".to_vec()));
         desc.insert(
             b"FontFile".to_vec(),
-            PdfObject::Reference(IndirectRef { obj_num: 10, gen_num: 0 }),
+            PdfObject::Reference(IndirectRef {
+                obj_num: 10,
+                gen_num: 0,
+            }),
         );
         desc.insert(
             b"FontFile2".to_vec(),
-            PdfObject::Reference(IndirectRef { obj_num: 20, gen_num: 0 }),
+            PdfObject::Reference(IndirectRef {
+                obj_num: 20,
+                gen_num: 0,
+            }),
         );
         desc.insert(
             b"FontFile3".to_vec(),
-            PdfObject::Reference(IndirectRef { obj_num: 30, gen_num: 0 }),
+            PdfObject::Reference(IndirectRef {
+                obj_num: 30,
+                gen_num: 0,
+            }),
         );
 
         let fd = parse_font_descriptor(&desc).expect("should parse");

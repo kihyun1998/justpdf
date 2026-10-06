@@ -25,7 +25,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paths: Vec<std::path::PathBuf> = input_files.iter().map(std::path::PathBuf::from).collect();
     let merged = justpdf::merge(&paths)?;
     std::fs::write(output, &merged)?;
-    println!("Merged {} files → {output} ({} bytes)", input_files.len(), merged.len());
+    println!(
+        "Merged {} files → {output} ({} bytes)",
+        input_files.len(),
+        merged.len()
+    );
 
     Ok(())
 }

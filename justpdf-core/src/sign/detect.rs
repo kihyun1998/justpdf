@@ -138,28 +138,15 @@ fn collect_sig_fields(
     };
 
     // Extract signature properties
-    let filter = sig_dict
-        .get_name(b"Filter")
-        .unwrap_or(b"")
-        .to_vec();
-    let sub_filter = sig_dict
-        .get_name(b"SubFilter")
-        .unwrap_or(b"")
-        .to_vec();
+    let filter = sig_dict.get_name(b"Filter").unwrap_or(b"").to_vec();
+    let sub_filter = sig_dict.get_name(b"SubFilter").unwrap_or(b"").to_vec();
 
     let byte_range = sig_dict
         .get_array(b"ByteRange")
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|o| o.as_i64())
-                .collect::<Vec<_>>()
-        })
+        .map(|arr| arr.iter().filter_map(|o| o.as_i64()).collect::<Vec<_>>())
         .unwrap_or_default();
 
-    let contents_raw = sig_dict
-        .get_string(b"Contents")
-        .unwrap_or(&[])
-        .to_vec();
+    let contents_raw = sig_dict.get_string(b"Contents").unwrap_or(&[]).to_vec();
 
     let signer_name = sig_dict
         .get(b"Name")
@@ -222,7 +209,10 @@ mod tests {
     fn create_pdf_with_sig_field(signed: bool) -> Vec<u8> {
         let mut w = PdfWriter::new();
         let pages_num = w.alloc_object_num();
-        let pages_ref = IndirectRef { obj_num: pages_num, gen_num: 0 };
+        let pages_ref = IndirectRef {
+            obj_num: pages_num,
+            gen_num: 0,
+        };
 
         // Signature field
         let mut sig_field = PdfDict::new();
@@ -233,20 +223,33 @@ mod tests {
         sig_field.insert(
             b"Rect".to_vec(),
             PdfObject::Array(vec![
-                PdfObject::Integer(0), PdfObject::Integer(0),
-                PdfObject::Integer(0), PdfObject::Integer(0),
+                PdfObject::Integer(0),
+                PdfObject::Integer(0),
+                PdfObject::Integer(0),
+                PdfObject::Integer(0),
             ]),
         );
 
         if signed {
             // Add a fake /V signature dict
             let mut sig_val = PdfDict::new();
-            sig_val.insert(b"Filter".to_vec(), PdfObject::Name(b"Adobe.PPKLite".to_vec()));
-            sig_val.insert(b"SubFilter".to_vec(), PdfObject::Name(b"adbe.pkcs7.detached".to_vec()));
-            sig_val.insert(b"ByteRange".to_vec(), PdfObject::Array(vec![
-                PdfObject::Integer(0), PdfObject::Integer(100),
-                PdfObject::Integer(200), PdfObject::Integer(300),
-            ]));
+            sig_val.insert(
+                b"Filter".to_vec(),
+                PdfObject::Name(b"Adobe.PPKLite".to_vec()),
+            );
+            sig_val.insert(
+                b"SubFilter".to_vec(),
+                PdfObject::Name(b"adbe.pkcs7.detached".to_vec()),
+            );
+            sig_val.insert(
+                b"ByteRange".to_vec(),
+                PdfObject::Array(vec![
+                    PdfObject::Integer(0),
+                    PdfObject::Integer(100),
+                    PdfObject::Integer(200),
+                    PdfObject::Integer(300),
+                ]),
+            );
             sig_val.insert(b"Contents".to_vec(), PdfObject::String(vec![0u8; 32]));
             sig_val.insert(b"Name".to_vec(), PdfObject::String(b"Test Signer".to_vec()));
             sig_val.insert(b"Reason".to_vec(), PdfObject::String(b"Testing".to_vec()));
@@ -259,27 +262,37 @@ mod tests {
         let mut page = PdfDict::new();
         page.insert(b"Type".to_vec(), PdfObject::Name(b"Page".to_vec()));
         page.insert(b"Parent".to_vec(), PdfObject::Reference(pages_ref.clone()));
-        page.insert(b"MediaBox".to_vec(), PdfObject::Array(vec![
-            PdfObject::Integer(0), PdfObject::Integer(0),
-            PdfObject::Integer(612), PdfObject::Integer(792),
-        ]));
-        page.insert(b"Annots".to_vec(), PdfObject::Array(vec![
-            PdfObject::Reference(sig_ref.clone()),
-        ]));
+        page.insert(
+            b"MediaBox".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Integer(0),
+                PdfObject::Integer(0),
+                PdfObject::Integer(612),
+                PdfObject::Integer(792),
+            ]),
+        );
+        page.insert(
+            b"Annots".to_vec(),
+            PdfObject::Array(vec![PdfObject::Reference(sig_ref.clone())]),
+        );
         let page_ref = w.add_object(PdfObject::Dict(page));
 
         // Pages
         let mut pages = PdfDict::new();
         pages.insert(b"Type".to_vec(), PdfObject::Name(b"Pages".to_vec()));
-        pages.insert(b"Kids".to_vec(), PdfObject::Array(vec![PdfObject::Reference(page_ref)]));
+        pages.insert(
+            b"Kids".to_vec(),
+            PdfObject::Array(vec![PdfObject::Reference(page_ref)]),
+        );
         pages.insert(b"Count".to_vec(), PdfObject::Integer(1));
         w.set_object(pages_num, PdfObject::Dict(pages));
 
         // AcroForm
         let mut acroform = PdfDict::new();
-        acroform.insert(b"Fields".to_vec(), PdfObject::Array(vec![
-            PdfObject::Reference(sig_ref),
-        ]));
+        acroform.insert(
+            b"Fields".to_vec(),
+            PdfObject::Array(vec![PdfObject::Reference(sig_ref)]),
+        );
         acroform.insert(b"SigFlags".to_vec(), PdfObject::Integer(3));
 
         // Catalog

@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 
-use justpdf_core::writer::compress::{compress_pdf, analyze_pdf, CompressOptions};
+use justpdf_core::writer::compress::{CompressOptions, analyze_pdf, compress_pdf};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -28,13 +28,21 @@ fn main() {
     });
 
     let original_size = data.len();
-    println!("Input:  {} ({:.2} MB)", input_path, original_size as f64 / 1_048_576.0);
+    println!(
+        "Input:  {} ({:.2} MB)",
+        input_path,
+        original_size as f64 / 1_048_576.0
+    );
 
     // Analyze
     match analyze_pdf(&data) {
         Ok(info) => {
             println!("Pages:  {}", info.pages);
-            println!("Images: {} ({:.2} MB raw)", info.images, info.total_image_bytes as f64 / 1_048_576.0);
+            println!(
+                "Images: {} ({:.2} MB raw)",
+                info.images,
+                info.total_image_bytes as f64 / 1_048_576.0
+            );
             if info.is_encrypted {
                 eprintln!("Error: PDF is encrypted");
                 std::process::exit(1);
@@ -74,8 +82,16 @@ fn main() {
     let saved_pct = (1.0 - ratio) * 100.0;
 
     println!("\n--- Result ---");
-    println!("Output: {} ({:.2} MB)", output_path, stats.compressed_size as f64 / 1_048_576.0);
-    println!("Saved:  {:.2} MB ({:.1}% reduction)", saved as f64 / 1_048_576.0, saved_pct);
+    println!(
+        "Output: {} ({:.2} MB)",
+        output_path,
+        stats.compressed_size as f64 / 1_048_576.0
+    );
+    println!(
+        "Saved:  {:.2} MB ({:.1}% reduction)",
+        saved as f64 / 1_048_576.0,
+        saved_pct
+    );
     println!("Images found:        {}", stats.images_found);
     println!("Images recompressed: {}", stats.images_recompressed);
     println!("Images downscaled:   {}", stats.images_downscaled);

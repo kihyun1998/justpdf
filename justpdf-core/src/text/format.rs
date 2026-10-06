@@ -24,27 +24,23 @@ pub fn format_page(page: &PageText, format: OutputFormat) -> String {
 /// Format multiple pages.
 pub fn format_pages(pages: &[PageText], format: OutputFormat) -> String {
     match format {
-        OutputFormat::PlainText => {
-            pages
-                .iter()
-                .map(format_plain)
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        }
+        OutputFormat::PlainText => pages
+            .iter()
+            .map(format_plain)
+            .collect::<Vec<_>>()
+            .join("\n\n"),
         OutputFormat::Html => format_html_multi(pages),
         OutputFormat::Json => format_json_multi(pages),
-        OutputFormat::Markdown => {
-            pages
-                .iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    let mut s = format!("## Page {}\n\n", i + 1);
-                    s.push_str(&format_markdown(p));
-                    s
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n---\n\n")
-        }
+        OutputFormat::Markdown => pages
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let mut s = format!("## Page {}\n\n", i + 1);
+                s.push_str(&format_markdown(p));
+                s
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n"),
     }
 }
 
@@ -85,7 +81,9 @@ fn format_html_multi(pages: &[PageText]) -> String {
     html.push_str("  <meta charset=\"utf-8\">\n");
     html.push_str("  <title>Extracted Text</title>\n");
     html.push_str("  <style>\n");
-    html.push_str("    .page { margin-bottom: 2em; padding-bottom: 1em; border-bottom: 1px solid #ccc; }\n");
+    html.push_str(
+        "    .page { margin-bottom: 2em; padding-bottom: 1em; border-bottom: 1px solid #ccc; }\n",
+    );
     html.push_str("    p { margin: 0.5em 0; }\n");
     html.push_str("  </style>\n");
     html.push_str("</head>\n<body>\n");
@@ -129,7 +127,10 @@ fn format_json(page: &PageText) -> String {
             json.push_str("      \"lines\": [\n");
             for (li, line) in block.lines.iter().enumerate() {
                 json.push_str("        {\n");
-                json.push_str(&format!("          \"text\": {},\n", json_string(&line.text)));
+                json.push_str(&format!(
+                    "          \"text\": {},\n",
+                    json_string(&line.text)
+                ));
                 json.push_str(&format!("          \"x\": {:.2},\n", line.x));
                 json.push_str(&format!("          \"y\": {:.2},\n", line.y));
 
@@ -137,11 +138,17 @@ fn format_json(page: &PageText) -> String {
                 json.push_str("          \"words\": [\n");
                 for (wi, word) in line.words.iter().enumerate() {
                     json.push_str("            {\n");
-                    json.push_str(&format!("              \"text\": {},\n", json_string(&word.text)));
+                    json.push_str(&format!(
+                        "              \"text\": {},\n",
+                        json_string(&word.text)
+                    ));
                     json.push_str(&format!("              \"x\": {:.2},\n", word.x));
                     json.push_str(&format!("              \"y\": {:.2},\n", word.y));
                     json.push_str(&format!("              \"width\": {:.2},\n", word.width));
-                    json.push_str(&format!("              \"font_size\": {:.2}\n", word.font_size));
+                    json.push_str(&format!(
+                        "              \"font_size\": {:.2}\n",
+                        word.font_size
+                    ));
                     json.push_str("            }");
                     if wi + 1 < line.words.len() {
                         json.push(',');

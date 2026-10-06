@@ -23,8 +23,22 @@ pub fn render_shading(
         1 => render_function_based(pixmap, shading_dict, ctm, page_transform, clip_mask),
         2 => render_axial(pixmap, shading_dict, ctm, page_transform, clip_mask),
         3 => render_radial(pixmap, shading_dict, ctm, page_transform, clip_mask),
-        4 | 5 => render_gouraud_mesh(pixmap, shading_dict, ctm, page_transform, clip_mask, stream_data),
-        6 | 7 => render_patch_mesh(pixmap, shading_dict, ctm, page_transform, clip_mask, stream_data),
+        4 | 5 => render_gouraud_mesh(
+            pixmap,
+            shading_dict,
+            ctm,
+            page_transform,
+            clip_mask,
+            stream_data,
+        ),
+        6 | 7 => render_patch_mesh(
+            pixmap,
+            shading_dict,
+            ctm,
+            page_transform,
+            clip_mask,
+            stream_data,
+        ),
         _ => {} // unsupported
     }
 }
@@ -308,9 +322,21 @@ fn render_gouraud_mesh(
         for tri in &triangles {
             rasterize_triangle(
                 pixmap,
-                (tri[0].x as f32, tri[0].y as f32, [tri[0].r, tri[0].g, tri[0].b, 255]),
-                (tri[1].x as f32, tri[1].y as f32, [tri[1].r, tri[1].g, tri[1].b, 255]),
-                (tri[2].x as f32, tri[2].y as f32, [tri[2].r, tri[2].g, tri[2].b, 255]),
+                (
+                    tri[0].x as f32,
+                    tri[0].y as f32,
+                    [tri[0].r, tri[0].g, tri[0].b, 255],
+                ),
+                (
+                    tri[1].x as f32,
+                    tri[1].y as f32,
+                    [tri[1].r, tri[1].g, tri[1].b, 255],
+                ),
+                (
+                    tri[2].x as f32,
+                    tri[2].y as f32,
+                    [tri[2].r, tri[2].g, tri[2].b, 255],
+                ),
                 transform,
                 clip,
             );
@@ -525,9 +551,7 @@ pub fn rasterize_triangle(
                 let idx = (y * width + x) as usize;
                 if idx < pixels.len() {
                     // Premultiply alpha for tiny-skia
-                    if let Some(color) =
-                        tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, a)
-                    {
+                    if let Some(color) = tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, a) {
                         pixels[idx] = color;
                     }
                 }
@@ -541,10 +565,7 @@ fn edge_function(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
 }
 
 fn transform_point(t: Transform, x: f32, y: f32) -> (f32, f32) {
-    (
-        t.sx * x + t.kx * y + t.tx,
-        t.ky * x + t.sy * y + t.ty,
-    )
+    (t.sx * x + t.kx * y + t.tx, t.ky * x + t.sy * y + t.ty)
 }
 
 // ---------------------------------------------------------------------------
@@ -794,17 +815,25 @@ pub fn parse_patch_mesh(
         for _ in 0..n_points {
             let raw_x = match reader.read_bits(bits_per_coordinate) {
                 Some(v) => v,
-                None => { ok = false; break; }
+                None => {
+                    ok = false;
+                    break;
+                }
             };
             let raw_y = match reader.read_bits(bits_per_coordinate) {
                 Some(v) => v,
-                None => { ok = false; break; }
+                None => {
+                    ok = false;
+                    break;
+                }
             };
             let x = x_min + (raw_x as f64 / coord_max) * (x_max - x_min);
             let y = y_min + (raw_y as f64 / coord_max) * (y_max - y_min);
             points.push((x, y));
         }
-        if !ok { break; }
+        if !ok {
+            break;
+        }
 
         // Read colors
         let mut colors: Vec<[u8; 4]> = Vec::with_capacity(n_colors);
@@ -817,15 +846,22 @@ pub fn parse_patch_mesh(
                         let c_max = decode.get(4 + i * 2 + 1).copied().unwrap_or(1.0);
                         comps.push(c_min + (raw_c as f64 / comp_max) * (c_max - c_min));
                     }
-                    None => { ok = false; break; }
+                    None => {
+                        ok = false;
+                        break;
+                    }
                 }
             }
-            if !ok { break; }
+            if !ok {
+                break;
+            }
             let color = components_to_color(&comps, cs_name);
             let [r, g, b, a] = color_to_rgba8(color);
             colors.push([r, g, b, a]);
         }
-        if !ok { break; }
+        if !ok {
+            break;
+        }
 
         // For simplicity, extract the 4 corner positions and colors
         // (ignoring intermediate bezier control points — approximation)
@@ -833,8 +869,16 @@ pub fn parse_patch_mesh(
             // Full patch: corners are at indices 0, 3, 6, 9 for Type 6 (12 points)
             // or 0, 3, 8, 11 for Type 7 (16 points)
             let c0 = points[0];
-            let c1 = if points_per_patch == 16 { points[3] } else { points[3] };
-            let c2 = if points_per_patch == 16 { points[12] } else { points[9] };
+            let c1 = if points_per_patch == 16 {
+                points[3]
+            } else {
+                points[3]
+            };
+            let c2 = if points_per_patch == 16 {
+                points[12]
+            } else {
+                points[9]
+            };
             let c3 = if points_per_patch == 16 {
                 points.get(15).copied().unwrap_or(c2)
             } else {
@@ -855,10 +899,7 @@ pub fn parse_patch_mesh(
             } else {
                 [[128, 128, 128, 255]; 2]
             };
-            (
-                [c0, c1, c2, c3],
-                [pc[0], colors[0], pc[1], colors[1]],
-            )
+            ([c0, c1, c2, c3], [pc[0], colors[0], pc[1], colors[1]])
         } else {
             continue;
         };
@@ -1044,11 +1085,19 @@ fn extract_stops_from_function(func: &PdfDict, cs_name: &[u8]) -> Vec<GradientSt
     if func_type == 2 {
         let c0 = func
             .get_array(b"C0")
-            .map(|a| a.iter().map(|o| o.as_f64().unwrap_or(0.0)).collect::<Vec<_>>())
+            .map(|a| {
+                a.iter()
+                    .map(|o| o.as_f64().unwrap_or(0.0))
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_else(|| vec![0.0]);
         let c1 = func
             .get_array(b"C1")
-            .map(|a| a.iter().map(|o| o.as_f64().unwrap_or(0.0)).collect::<Vec<_>>())
+            .map(|a| {
+                a.iter()
+                    .map(|o| o.as_f64().unwrap_or(0.0))
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_else(|| vec![1.0]);
 
         vec![
@@ -1108,11 +1157,19 @@ fn extract_stops_from_function(func: &PdfDict, cs_name: &[u8]) -> Vec<GradientSt
 fn extract_colors_from_function(func: &PdfDict, cs_name: &[u8]) -> Vec<Color> {
     let c0 = func
         .get_array(b"C0")
-        .map(|a| a.iter().map(|o| o.as_f64().unwrap_or(0.0)).collect::<Vec<_>>())
+        .map(|a| {
+            a.iter()
+                .map(|o| o.as_f64().unwrap_or(0.0))
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_else(|| vec![0.0]);
     let c1 = func
         .get_array(b"C1")
-        .map(|a| a.iter().map(|o| o.as_f64().unwrap_or(0.0)).collect::<Vec<_>>())
+        .map(|a| {
+            a.iter()
+                .map(|o| o.as_f64().unwrap_or(0.0))
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_else(|| vec![1.0]);
 
     vec![
@@ -1237,6 +1294,9 @@ mod tests {
         let c = (5.0, 5.0);
         let area = edge_function(a, b, c);
         // The sign depends on winding order; the important thing is it's non-zero
-        assert!(area.abs() > 0.0, "degenerate triangle should not have zero area");
+        assert!(
+            area.abs() > 0.0,
+            "degenerate triangle should not have zero area"
+        );
     }
 }

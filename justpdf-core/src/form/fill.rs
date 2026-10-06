@@ -105,7 +105,10 @@ mod tests {
                     options: Vec::new(),
                     rect: None,
                     default_appearance: None,
-                    field_ref: IndirectRef { obj_num: 10, gen_num: 0 },
+                    field_ref: IndirectRef {
+                        obj_num: 10,
+                        gen_num: 0,
+                    },
                     page_obj_num: None,
                 },
                 FormField {
@@ -118,7 +121,10 @@ mod tests {
                     options: Vec::new(),
                     rect: None,
                     default_appearance: None,
-                    field_ref: IndirectRef { obj_num: 11, gen_num: 0 },
+                    field_ref: IndirectRef {
+                        obj_num: 11,
+                        gen_num: 0,
+                    },
                     page_obj_num: None,
                 },
                 FormField {
@@ -131,7 +137,10 @@ mod tests {
                     options: Vec::new(),
                     rect: None,
                     default_appearance: None,
-                    field_ref: IndirectRef { obj_num: 12, gen_num: 0 },
+                    field_ref: IndirectRef {
+                        obj_num: 12,
+                        gen_num: 0,
+                    },
                     page_obj_num: None,
                 },
             ],

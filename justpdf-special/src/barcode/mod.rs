@@ -191,41 +191,77 @@ fn code128_pattern(value: u32) -> &'static [bool] {
     // values outside the table use the space (0) pattern as a fallback.
     static PATTERNS: &[[bool; 11]] = &[
         // 0: space
-        [true, true, false, true, true, false, false, true, true, false, false],
+        [
+            true, true, false, true, true, false, false, true, true, false, false,
+        ],
         // 1: !
-        [true, true, false, false, true, true, false, true, true, false, false],
+        [
+            true, true, false, false, true, true, false, true, true, false, false,
+        ],
         // 2: "
-        [true, true, false, false, true, true, false, false, true, true, false],
+        [
+            true, true, false, false, true, true, false, false, true, true, false,
+        ],
         // 3: #
-        [true, false, false, true, false, false, true, true, false, false, false],
+        [
+            true, false, false, true, false, false, true, true, false, false, false,
+        ],
         // 4: $
-        [true, false, false, true, false, false, false, true, true, false, false],
+        [
+            true, false, false, true, false, false, false, true, true, false, false,
+        ],
         // 5: %
-        [true, false, false, false, true, false, false, true, true, false, false],
+        [
+            true, false, false, false, true, false, false, true, true, false, false,
+        ],
         // 6: &
-        [true, false, false, true, true, false, false, true, false, false, false],
+        [
+            true, false, false, true, true, false, false, true, false, false, false,
+        ],
         // 7: '
-        [true, false, false, true, true, false, false, false, true, false, false],
+        [
+            true, false, false, true, true, false, false, false, true, false, false,
+        ],
         // 8: (
-        [true, false, false, false, true, true, false, false, true, false, false],
+        [
+            true, false, false, false, true, true, false, false, true, false, false,
+        ],
         // 9: )
-        [true, true, false, false, true, false, false, true, false, false, false],
+        [
+            true, true, false, false, true, false, false, true, false, false, false,
+        ],
         // 10: *
-        [true, true, false, false, true, false, false, false, true, false, false],
+        [
+            true, true, false, false, true, false, false, false, true, false, false,
+        ],
         // 11: +
-        [true, true, false, false, false, true, false, false, true, false, false],
+        [
+            true, true, false, false, false, true, false, false, true, false, false,
+        ],
         // 12: ,
-        [true, false, true, true, false, false, true, true, true, false, false],
+        [
+            true, false, true, true, false, false, true, true, true, false, false,
+        ],
         // 13: -
-        [true, false, false, true, true, false, true, true, true, false, false],
+        [
+            true, false, false, true, true, false, true, true, true, false, false,
+        ],
         // 14: .
-        [true, false, false, true, true, false, false, true, true, true, false],
+        [
+            true, false, false, true, true, false, false, true, true, true, false,
+        ],
         // 15: /
-        [true, false, true, true, true, false, false, true, true, false, false],
+        [
+            true, false, true, true, true, false, false, true, true, false, false,
+        ],
         // 16: 0
-        [true, false, false, true, true, true, false, true, true, false, false],
+        [
+            true, false, false, true, true, true, false, true, true, false, false,
+        ],
         // 17: 1
-        [true, false, false, true, true, true, false, false, true, true, false],
+        [
+            true, false, false, true, true, true, false, false, true, true, false,
+        ],
     ];
 
     // Stop pattern (106) is special: 13 modules
@@ -284,32 +320,32 @@ fn encode_ean13(data: &str) -> Result<Vec<bool>> {
 
 fn ean_l_pattern(digit: u8) -> &'static [bool; 7] {
     static PATTERNS: [[bool; 7]; 10] = [
-        [false, false, false, true, true, false, true],  // 0
-        [false, false, true, true, false, false, true],  // 1
-        [false, false, true, false, false, true, true],  // 2
-        [false, true, true, true, true, false, true],    // 3
-        [false, true, false, false, false, true, true],  // 4
-        [false, true, true, false, false, false, true],  // 5
-        [false, true, false, true, true, true, true],    // 6
-        [false, true, true, true, false, true, true],    // 7
-        [false, true, true, false, true, true, true],    // 8
-        [false, false, false, true, false, true, true],  // 9
+        [false, false, false, true, true, false, true], // 0
+        [false, false, true, true, false, false, true], // 1
+        [false, false, true, false, false, true, true], // 2
+        [false, true, true, true, true, false, true],   // 3
+        [false, true, false, false, false, true, true], // 4
+        [false, true, true, false, false, false, true], // 5
+        [false, true, false, true, true, true, true],   // 6
+        [false, true, true, true, false, true, true],   // 7
+        [false, true, true, false, true, true, true],   // 8
+        [false, false, false, true, false, true, true], // 9
     ];
     &PATTERNS[digit as usize]
 }
 
 fn ean_r_pattern(digit: u8) -> &'static [bool; 7] {
     static PATTERNS: [[bool; 7]; 10] = [
-        [true, true, true, false, false, true, false],  // 0
-        [true, true, false, false, true, true, false],  // 1
-        [true, true, false, true, true, false, false],  // 2
+        [true, true, true, false, false, true, false],   // 0
+        [true, true, false, false, true, true, false],   // 1
+        [true, true, false, true, true, false, false],   // 2
         [true, false, false, false, false, true, false], // 3
-        [true, false, true, true, true, false, false],  // 4
-        [true, false, false, true, true, true, false],  // 5
+        [true, false, true, true, true, false, false],   // 4
+        [true, false, false, true, true, true, false],   // 5
         [true, false, true, false, false, false, false], // 6
         [true, false, false, false, true, false, false], // 7
         [true, false, false, true, false, false, false], // 8
-        [true, true, true, false, true, false, false],  // 9
+        [true, true, true, false, true, false, false],   // 9
     ];
     &PATTERNS[digit as usize]
 }
@@ -347,47 +383,129 @@ fn encode_code39(data: &str) -> Result<Vec<bool>> {
 /// with narrow = 1 module and wide = 2 modules).
 fn code39_pattern(ch: char) -> &'static [bool] {
     match ch {
-        '0' => &[true, false, true, false, false, true, true, false, true, true, false, true],
-        '1' => &[true, true, false, true, false, false, true, false, true, false, true, true],
-        '2' => &[true, false, true, true, false, false, true, false, true, false, true, true],
-        '3' => &[true, true, false, true, true, false, false, true, false, true, false, true],
-        '4' => &[true, false, true, false, false, true, true, false, true, false, true, true],
-        '5' => &[true, true, false, true, false, false, true, true, false, true, false, true],
-        '6' => &[true, false, true, true, false, false, true, true, false, true, false, true],
-        '7' => &[true, false, true, false, false, true, false, true, true, false, true, true],
-        '8' => &[true, true, false, true, false, false, true, false, true, true, false, true],
-        '9' => &[true, false, true, true, false, false, true, false, true, true, false, true],
-        'A' => &[true, true, false, true, false, true, false, false, true, false, true, true],
-        'B' => &[true, false, true, true, false, true, false, false, true, false, true, true],
-        'C' => &[true, true, false, true, true, false, true, false, false, true, false, true],
-        'D' => &[true, false, true, false, true, true, false, false, true, false, true, true],
-        'E' => &[true, true, false, true, false, true, true, false, false, true, false, true],
-        'F' => &[true, false, true, true, false, true, true, false, false, true, false, true],
-        'G' => &[true, false, true, false, true, false, false, true, true, false, true, true],
-        'H' => &[true, true, false, true, false, true, false, false, true, true, false, true],
-        'I' => &[true, false, true, true, false, true, false, false, true, true, false, true],
-        'J' => &[true, false, true, false, true, true, false, false, true, true, false, true],
-        'K' => &[true, true, false, true, false, true, false, true, false, false, true, true],
-        'L' => &[true, false, true, true, false, true, false, true, false, false, true, true],
-        'M' => &[true, true, false, true, true, false, true, false, true, false, false, true],
-        'N' => &[true, false, true, false, true, true, false, true, false, false, true, true],
-        'O' => &[true, true, false, true, false, true, true, false, true, false, false, true],
-        'P' => &[true, false, true, true, false, true, true, false, true, false, false, true],
-        'Q' => &[true, false, true, false, true, false, true, true, false, false, true, true],
-        'R' => &[true, true, false, true, false, true, false, true, true, false, false, true],
-        'S' => &[true, false, true, true, false, true, false, true, true, false, false, true],
-        'T' => &[true, false, true, false, true, true, false, true, true, false, false, true],
-        'U' => &[true, true, false, false, true, false, true, false, true, false, true, true],
-        'V' => &[true, false, false, true, true, false, true, false, true, false, true, true],
-        'W' => &[true, true, false, false, true, true, false, true, false, true, false, true],
-        'X' => &[true, false, false, true, false, true, true, false, true, false, true, true],
-        'Y' => &[true, true, false, false, true, false, true, true, false, true, false, true],
-        'Z' => &[true, false, false, true, true, false, true, true, false, true, false, true],
-        '-' => &[true, false, false, true, false, true, false, true, true, false, true, true],
-        '.' => &[true, true, false, false, true, false, true, false, true, true, false, true],
-        ' ' => &[true, false, false, true, true, false, true, false, true, true, false, true],
-        '*' => &[true, false, false, true, false, true, true, false, true, true, false, true],
-        _ => &[true, false, true, false, false, true, false, true, false, true, false, true], // fallback
+        '0' => &[
+            true, false, true, false, false, true, true, false, true, true, false, true,
+        ],
+        '1' => &[
+            true, true, false, true, false, false, true, false, true, false, true, true,
+        ],
+        '2' => &[
+            true, false, true, true, false, false, true, false, true, false, true, true,
+        ],
+        '3' => &[
+            true, true, false, true, true, false, false, true, false, true, false, true,
+        ],
+        '4' => &[
+            true, false, true, false, false, true, true, false, true, false, true, true,
+        ],
+        '5' => &[
+            true, true, false, true, false, false, true, true, false, true, false, true,
+        ],
+        '6' => &[
+            true, false, true, true, false, false, true, true, false, true, false, true,
+        ],
+        '7' => &[
+            true, false, true, false, false, true, false, true, true, false, true, true,
+        ],
+        '8' => &[
+            true, true, false, true, false, false, true, false, true, true, false, true,
+        ],
+        '9' => &[
+            true, false, true, true, false, false, true, false, true, true, false, true,
+        ],
+        'A' => &[
+            true, true, false, true, false, true, false, false, true, false, true, true,
+        ],
+        'B' => &[
+            true, false, true, true, false, true, false, false, true, false, true, true,
+        ],
+        'C' => &[
+            true, true, false, true, true, false, true, false, false, true, false, true,
+        ],
+        'D' => &[
+            true, false, true, false, true, true, false, false, true, false, true, true,
+        ],
+        'E' => &[
+            true, true, false, true, false, true, true, false, false, true, false, true,
+        ],
+        'F' => &[
+            true, false, true, true, false, true, true, false, false, true, false, true,
+        ],
+        'G' => &[
+            true, false, true, false, true, false, false, true, true, false, true, true,
+        ],
+        'H' => &[
+            true, true, false, true, false, true, false, false, true, true, false, true,
+        ],
+        'I' => &[
+            true, false, true, true, false, true, false, false, true, true, false, true,
+        ],
+        'J' => &[
+            true, false, true, false, true, true, false, false, true, true, false, true,
+        ],
+        'K' => &[
+            true, true, false, true, false, true, false, true, false, false, true, true,
+        ],
+        'L' => &[
+            true, false, true, true, false, true, false, true, false, false, true, true,
+        ],
+        'M' => &[
+            true, true, false, true, true, false, true, false, true, false, false, true,
+        ],
+        'N' => &[
+            true, false, true, false, true, true, false, true, false, false, true, true,
+        ],
+        'O' => &[
+            true, true, false, true, false, true, true, false, true, false, false, true,
+        ],
+        'P' => &[
+            true, false, true, true, false, true, true, false, true, false, false, true,
+        ],
+        'Q' => &[
+            true, false, true, false, true, false, true, true, false, false, true, true,
+        ],
+        'R' => &[
+            true, true, false, true, false, true, false, true, true, false, false, true,
+        ],
+        'S' => &[
+            true, false, true, true, false, true, false, true, true, false, false, true,
+        ],
+        'T' => &[
+            true, false, true, false, true, true, false, true, true, false, false, true,
+        ],
+        'U' => &[
+            true, true, false, false, true, false, true, false, true, false, true, true,
+        ],
+        'V' => &[
+            true, false, false, true, true, false, true, false, true, false, true, true,
+        ],
+        'W' => &[
+            true, true, false, false, true, true, false, true, false, true, false, true,
+        ],
+        'X' => &[
+            true, false, false, true, false, true, true, false, true, false, true, true,
+        ],
+        'Y' => &[
+            true, true, false, false, true, false, true, true, false, true, false, true,
+        ],
+        'Z' => &[
+            true, false, false, true, true, false, true, true, false, true, false, true,
+        ],
+        '-' => &[
+            true, false, false, true, false, true, false, true, true, false, true, true,
+        ],
+        '.' => &[
+            true, true, false, false, true, false, true, false, true, true, false, true,
+        ],
+        ' ' => &[
+            true, false, false, true, true, false, true, false, true, true, false, true,
+        ],
+        '*' => &[
+            true, false, false, true, false, true, true, false, true, true, false, true,
+        ],
+        _ => &[
+            true, false, true, false, false, true, false, true, false, true, false, true,
+        ], // fallback
     }
 }
 
@@ -408,10 +526,7 @@ pub fn generate_datamatrix(data: &str, module_size: u32) -> Result<BarcodeImage>
     }
 
     // Encode ASCII: each char becomes (value + 1), capped at 0..=127
-    let codewords: Vec<u8> = data
-        .bytes()
-        .map(|b| b.wrapping_add(1))
-        .collect();
+    let codewords: Vec<u8> = data.bytes().map(|b| b.wrapping_add(1)).collect();
 
     // Determine matrix size (including finder/timing patterns).
     // Minimum 10x10, grow as needed.
@@ -488,13 +603,13 @@ pub fn generate_pdf417(data: &str, width: u32, height: u32) -> Result<BarcodeIma
 
     // Start pattern: 8 modules (81111113)
     let start_pattern: [bool; 17] = [
-        true, true, true, true, true, true, true, true,
-        false, true, false, true, false, true, false, true, false,
+        true, true, true, true, true, true, true, true, false, true, false, true, false, true,
+        false, true, false,
     ];
     // Stop pattern
     let stop_pattern: [bool; 18] = [
-        true, true, true, true, true, true, true, false,
-        true, false, false, false, true, false, false, false, false, true,
+        true, true, true, true, true, true, true, false, true, false, false, false, true, false,
+        false, false, false, true,
     ];
 
     // Total modules per row
@@ -617,7 +732,9 @@ pub fn generate_aztec(data: &str, size: u32) -> Result<BarcodeImage> {
     // Determine grid size based on data length
     // Compact Aztec: 15x15 core, data in layers of 4 modules each side
     let core_size = 11; // Bull's eye is 11x11
-    let num_layers = ((data_bits.len() as f64 / 40.0).ceil() as usize).max(1).min(4);
+    let num_layers = ((data_bits.len() as f64 / 40.0).ceil() as usize)
+        .max(1)
+        .min(4);
     let grid_size = core_size + num_layers * 4;
 
     let mut grid = vec![vec![false; grid_size]; grid_size];
@@ -943,7 +1060,11 @@ mod tests {
 
     #[test]
     fn test_all_2d_barcode_types_via_generate_barcode() {
-        for btype in [BarcodeType::DataMatrix, BarcodeType::Pdf417, BarcodeType::Aztec] {
+        for btype in [
+            BarcodeType::DataMatrix,
+            BarcodeType::Pdf417,
+            BarcodeType::Aztec,
+        ] {
             let result = generate_barcode("Test", btype, 200, 200);
             assert!(result.is_ok(), "failed for {btype:?}");
         }

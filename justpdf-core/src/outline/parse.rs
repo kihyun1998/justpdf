@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
+use crate::annot::types::AnnotColor;
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::parser::PdfDocument;
 use crate::tree_walk::VisitBudget;
-use crate::annot::types::AnnotColor;
 
 use super::types::*;
 
@@ -136,9 +136,7 @@ fn read_outline_siblings(
 /// A name tree kid that points back at one of its ancestors is skipped, and so
 /// is a kid whose reading would, through shared nodes, take the walk past a
 /// few times the size of the tree.
-pub fn read_named_destinations(
-    doc: &PdfDocument,
-) -> Result<Vec<(String, Destination)>> {
+pub fn read_named_destinations(doc: &PdfDocument) -> Result<Vec<(String, Destination)>> {
     let catalog_ref = match doc.catalog_ref() {
         Some(r) => r.clone(),
         None => return Ok(Vec::new()),

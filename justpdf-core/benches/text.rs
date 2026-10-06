@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use justpdf_core::page::collect_pages;
 use justpdf_core::parser::PdfDocument;
 use justpdf_core::text::{extract_all_text_string, extract_page_text};

@@ -3,9 +3,9 @@
 //! FB2 is an XML-based eBook format. This module parses the XML structure,
 //! extracts metadata and text content, and provides PDF conversion.
 
+use crate::Result;
 use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
 use crate::error::FormatError;
-use crate::Result;
 
 use justpdf_core::writer::{DocumentBuilder, PageBuilder};
 
@@ -228,9 +228,7 @@ fn collect_text(node: &roxmltree::Node) -> String {
         } else {
             text.push_str(&collect_text(&child));
             // Add space after block-like elements
-            if child.has_tag_name("p")
-                || child.has_tag_name("v")
-                || child.has_tag_name("subtitle")
+            if child.has_tag_name("p") || child.has_tag_name("v") || child.has_tag_name("subtitle")
             {
                 text.push(' ');
             }
@@ -249,9 +247,7 @@ fn wrap_text(text: &str, max_chars: usize) -> Vec<String> {
             lines.push(remaining.to_string());
             break;
         }
-        let break_at = remaining[..max_chars]
-            .rfind(' ')
-            .unwrap_or(max_chars);
+        let break_at = remaining[..max_chars].rfind(' ').unwrap_or(max_chars);
         lines.push(remaining[..break_at].to_string());
         remaining = remaining[break_at..].trim_start();
     }

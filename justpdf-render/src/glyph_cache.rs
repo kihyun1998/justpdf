@@ -217,9 +217,7 @@ mod tests {
         assert_eq!(cache.len(), 2);
 
         // Second access to the None entry should still be a hit
-        let p = cache.get_or_insert(&font, 99, || {
-            panic!("should not rebuild None entry")
-        });
+        let p = cache.get_or_insert(&font, 99, || panic!("should not rebuild None entry"));
         assert!(p.is_none());
         assert_eq!(cache.hits, 1);
     }

@@ -287,9 +287,7 @@ pub enum AnnotationData {
     /// No additional data.
     None,
     /// Markup annotations (Highlight, Underline, StrikeOut, Squiggly).
-    Markup {
-        quad_points: Vec<f64>,
-    },
+    Markup { quad_points: Vec<f64> },
     /// Line annotation.
     Line {
         start: (f64, f64),
@@ -301,28 +299,21 @@ pub enum AnnotationData {
         interior_color: Option<AnnotColor>,
     },
     /// Ink annotation (freehand drawing).
-    Ink {
-        ink_list: Vec<Vec<(f64, f64)>>,
-    },
+    Ink { ink_list: Vec<Vec<(f64, f64)>> },
     /// Link annotation.
     Link {
         uri: Option<String>,
         dest: Option<PdfObject>,
     },
     /// FreeText annotation.
-    FreeText {
-        da: String,
-        justification: i64,
-    },
+    FreeText { da: String, justification: i64 },
     /// FileAttachment annotation.
     FileAttachment {
         fs_ref: Option<IndirectRef>,
         icon_name: String,
     },
     /// Stamp annotation.
-    Stamp {
-        icon_name: String,
-    },
+    Stamp { icon_name: String },
     /// Shape annotations (Square, Circle, Polygon, PolyLine).
     Shape {
         vertices: Vec<(f64, f64)>,

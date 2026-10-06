@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
+use crate::Result;
 use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
 use crate::error::FormatError;
-use crate::Result;
 
 /// A parsed SVG document.
 pub struct SvgDocument {
@@ -197,17 +197,16 @@ impl SvgDocument {
 
     /// Parse SVG from bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
-        let text = std::str::from_utf8(data)
-            .map_err(|e| FormatError::Format {
-                detail: format!("SVG is not valid UTF-8: {e}"),
-            })?;
+        let text = std::str::from_utf8(data).map_err(|e| FormatError::Format {
+            detail: format!("SVG is not valid UTF-8: {e}"),
+        })?;
         Self::from_string(text)
     }
 
     /// Parse SVG from a string.
     pub fn from_string(source: &str) -> Result<Self> {
-        let doc = roxmltree::Document::parse(source)
-            .map_err(|e| FormatError::Xml(format!("{e}")))?;
+        let doc =
+            roxmltree::Document::parse(source).map_err(|e| FormatError::Xml(format!("{e}")))?;
 
         let root = doc.root_element();
         if root.tag_name().name() != "svg" {
@@ -229,7 +228,12 @@ impl SvgDocument {
         // Parse elements and collect text
         let mut elements = Vec::new();
         let mut text_parts = Vec::new();
-        parse_node(&root, &Transform::identity(), &mut elements, &mut text_parts);
+        parse_node(
+            &root,
+            &Transform::identity(),
+            &mut elements,
+            &mut text_parts,
+        );
         let text_content = text_parts.join("\n");
 
         Ok(Self {
@@ -265,9 +269,7 @@ impl SvgDocument {
     }
 }
 
-fn parse_svg_dimensions(
-    root: &roxmltree::Node<'_, '_>,
-) -> Result<(f64, f64)> {
+fn parse_svg_dimensions(root: &roxmltree::Node<'_, '_>) -> Result<(f64, f64)> {
     // Try viewBox first
     if let Some(vb) = root.attribute("viewBox") {
         let parts: Vec<f64> = vb
@@ -301,7 +303,11 @@ fn parse_length(s: &str) -> Option<f64> {
     } else if s.ends_with("pt") {
         s[..s.len() - 2].trim().parse().ok()
     } else if s.ends_with("in") {
-        s[..s.len() - 2].trim().parse::<f64>().ok().map(|v| v * 72.0)
+        s[..s.len() - 2]
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .map(|v| v * 72.0)
     } else if s.ends_with("mm") {
         s[..s.len() - 2]
             .trim()
@@ -862,17 +868,13 @@ fn try_read_number(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Opti
     num.parse().ok()
 }
 
-fn read_coord_pair(
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-) -> Option<(f64, f64)> {
+fn read_coord_pair(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<(f64, f64)> {
     let x = try_read_number(chars)?;
     let y = try_read_number(chars)?;
     Some((x, y))
 }
 
-fn try_read_coord_pair(
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-) -> Option<(f64, f64)> {
+fn try_read_coord_pair(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<(f64, f64)> {
     skip_whitespace_and_commas(chars);
     let &c = chars.peek()?;
     if c.is_ascii_alphabetic() {
@@ -928,17 +930,7 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
             if let Some(fill) = style.fill {
                 let (tcx, tcy) = style.transform.apply(*cx * scale, *cy * scale);
                 let tr = *r * scale;
-                fill_ellipse_pixels(
-                    pixels,
-                    w,
-                    h,
-                    tcx,
-                    tcy,
-                    tr,
-                    tr,
-                    fill,
-                    style.opacity,
-                );
+                fill_ellipse_pixels(pixels, w, h, tcx, tcy, tr, tr, fill, style.opacity);
             }
         }
         SvgElement::Ellipse {
@@ -952,17 +944,7 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
                 let (tcx, tcy) = style.transform.apply(*cx * scale, *cy * scale);
                 let trx = *rx * scale;
                 let try_ = *ry * scale;
-                fill_ellipse_pixels(
-                    pixels,
-                    w,
-                    h,
-                    tcx,
-                    tcy,
-                    trx,
-                    try_,
-                    fill,
-                    style.opacity,
-                );
+                fill_ellipse_pixels(pixels, w, h, tcx, tcy, trx, try_, fill, style.opacity);
             }
         }
         SvgElement::Line {
@@ -1018,7 +1000,9 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
             commands, style, ..
         } => {
             // Simplified path rendering: just draw line segments
-            let color = style.stroke.unwrap_or_else(|| style.fill.unwrap_or((0, 0, 0, 255)));
+            let color = style
+                .stroke
+                .unwrap_or_else(|| style.fill.unwrap_or((0, 0, 0, 255)));
             let mut cx = 0.0f64;
             let mut cy = 0.0f64;
             for cmd in commands {
@@ -1028,10 +1012,8 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
                         cy = *y;
                     }
                     PathCommand::LineTo(x, y) => {
-                        let (tx1, ty1) =
-                            style.transform.apply(cx * scale, cy * scale);
-                        let (tx2, ty2) =
-                            style.transform.apply(*x * scale, *y * scale);
+                        let (tx1, ty1) = style.transform.apply(cx * scale, cy * scale);
+                        let (tx2, ty2) = style.transform.apply(*x * scale, *y * scale);
                         draw_line_pixels(
                             pixels,
                             w,
@@ -1047,10 +1029,8 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
                         cy = *y;
                     }
                     PathCommand::HorizTo(x) => {
-                        let (tx1, ty1) =
-                            style.transform.apply(cx * scale, cy * scale);
-                        let (tx2, ty2) =
-                            style.transform.apply(*x * scale, cy * scale);
+                        let (tx1, ty1) = style.transform.apply(cx * scale, cy * scale);
+                        let (tx2, ty2) = style.transform.apply(*x * scale, cy * scale);
                         draw_line_pixels(
                             pixels,
                             w,
@@ -1065,10 +1045,8 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
                         cx = *x;
                     }
                     PathCommand::VertTo(y) => {
-                        let (tx1, ty1) =
-                            style.transform.apply(cx * scale, cy * scale);
-                        let (tx2, ty2) =
-                            style.transform.apply(cx * scale, *y * scale);
+                        let (tx1, ty1) = style.transform.apply(cx * scale, cy * scale);
+                        let (tx2, ty2) = style.transform.apply(cx * scale, *y * scale);
                         draw_line_pixels(
                             pixels,
                             w,
@@ -1084,10 +1062,8 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
                     }
                     PathCommand::CurveTo(_x1, _y1, _x2, _y2, x, y) => {
                         // Simplified: draw straight line to endpoint
-                        let (tx1, ty1) =
-                            style.transform.apply(cx * scale, cy * scale);
-                        let (tx2, ty2) =
-                            style.transform.apply(*x * scale, *y * scale);
+                        let (tx1, ty1) = style.transform.apply(cx * scale, cy * scale);
+                        let (tx2, ty2) = style.transform.apply(*x * scale, *y * scale);
                         draw_line_pixels(
                             pixels,
                             w,
@@ -1103,10 +1079,8 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
                         cy = *y;
                     }
                     PathCommand::QuadTo(_x1, _y1, x, y) => {
-                        let (tx1, ty1) =
-                            style.transform.apply(cx * scale, cy * scale);
-                        let (tx2, ty2) =
-                            style.transform.apply(*x * scale, *y * scale);
+                        let (tx1, ty1) = style.transform.apply(cx * scale, cy * scale);
+                        let (tx2, ty2) = style.transform.apply(*x * scale, *y * scale);
                         draw_line_pixels(
                             pixels,
                             w,
@@ -1330,10 +1304,7 @@ impl FormatDocument for SvgDocument {
 
     fn page(&self, index: usize) -> Result<FormatPage> {
         if index != 0 {
-            return Err(FormatError::OutOfRange {
-                index,
-                count: 1,
-            });
+            return Err(FormatError::OutOfRange { index, count: 1 });
         }
         Ok(FormatPage {
             index: 0,
@@ -1344,20 +1315,14 @@ impl FormatDocument for SvgDocument {
 
     fn page_text(&self, index: usize) -> Result<String> {
         if index != 0 {
-            return Err(FormatError::OutOfRange {
-                index,
-                count: 1,
-            });
+            return Err(FormatError::OutOfRange { index, count: 1 });
         }
         Ok(self.text_content.clone())
     }
 
     fn render_page(&self, index: usize, dpi: f64) -> Result<RenderedPage> {
         if index != 0 {
-            return Err(FormatError::OutOfRange {
-                index,
-                count: 1,
-            });
+            return Err(FormatError::OutOfRange { index, count: 1 });
         }
         let scale = dpi / 72.0;
         let (data, width, height) = self.render_rgba(scale)?;
@@ -1498,17 +1463,28 @@ mod tests {
         let pages = justpdf_core::page::collect_pages(&doc).unwrap();
         let page = doc.resolve(&pages[0].page_ref).unwrap();
         let page = page.as_dict().unwrap();
-        let Some(PdfObject::Reference(contents)) = page.get(b"Contents") else { panic!("no contents") };
-        let PdfObject::Stream { dict, data } = doc.resolve(contents).unwrap() else { panic!("no stream") };
+        let Some(PdfObject::Reference(contents)) = page.get(b"Contents") else {
+            panic!("no contents")
+        };
+        let PdfObject::Stream { dict, data } = doc.resolve(contents).unwrap() else {
+            panic!("no stream")
+        };
         let ops = justpdf_core::content::parse_content_stream(
             &justpdf_core::stream::decode_stream(&data, &dict).unwrap(),
         )
         .unwrap();
         let resources = page.get_dict(b"Resources").unwrap();
         let xobjects = resources.get_dict(b"XObject").unwrap();
-        let (_, PdfObject::Reference(image)) = xobjects.iter().next().unwrap() else { panic!("no image") };
-        let PdfObject::Stream { dict, data } = doc.resolve(image).unwrap() else { panic!("no image stream") };
-        (ops, justpdf_core::stream::decode_stream(&data, &dict).unwrap())
+        let (_, PdfObject::Reference(image)) = xobjects.iter().next().unwrap() else {
+            panic!("no image")
+        };
+        let PdfObject::Stream { dict, data } = doc.resolve(image).unwrap() else {
+            panic!("no image stream")
+        };
+        (
+            ops,
+            justpdf_core::stream::decode_stream(&data, &dict).unwrap(),
+        )
     }
 
     #[test]

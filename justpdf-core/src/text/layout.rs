@@ -1,6 +1,6 @@
 //! Advanced layout analysis: multi-column detection, reading order, dehyphenation.
 
-use super::{TextLine, TextBlock, TextWord};
+use super::{TextBlock, TextLine, TextWord};
 
 /// Detect columns in a set of lines and reorder them for correct reading order.
 /// Returns blocks grouped by column, in reading order (left-to-right, top-to-bottom).
@@ -67,12 +67,7 @@ fn detect_column_boundaries(lines: &[TextLine]) -> Vec<ColumnBound> {
         let x_min = lines.iter().map(|l| l.x).fold(f64::MAX, f64::min);
         let x_max = lines
             .iter()
-            .map(|l| {
-                l.words
-                    .last()
-                    .map(|w| w.x + w.width)
-                    .unwrap_or(l.x + 100.0)
-            })
+            .map(|l| l.words.last().map(|w| w.x + w.width).unwrap_or(l.x + 100.0))
             .fold(f64::MIN, f64::max);
         return vec![ColumnBound { x_min, x_max }];
     }
@@ -131,12 +126,7 @@ fn find_max_x_for_cluster(lines: &[TextLine], cluster_x_min: f64, cluster_x_max:
     lines
         .iter()
         .filter(|l| l.x >= cluster_x_min - 5.0 && l.x <= cluster_x_max + 5.0)
-        .map(|l| {
-            l.words
-                .last()
-                .map(|w| w.x + w.width)
-                .unwrap_or(l.x + 100.0)
-        })
+        .map(|l| l.words.last().map(|w| w.x + w.width).unwrap_or(l.x + 100.0))
         .fold(cluster_x_max, f64::max)
 }
 
@@ -170,11 +160,7 @@ pub fn group_into_blocks_with_dehyphenation(lines: &[TextLine]) -> Vec<TextBlock
         let prev = &lines[i - 1];
         let curr = &lines[i];
 
-        let avg_font_size = prev
-            .words
-            .first()
-            .map(|w| w.font_size)
-            .unwrap_or(12.0);
+        let avg_font_size = prev.words.first().map(|w| w.font_size).unwrap_or(12.0);
         let line_gap = (prev.y - curr.y).abs();
         let block_threshold = avg_font_size * 2.0;
 
@@ -274,13 +260,19 @@ mod tests {
         let lines = vec![
             make_line(
                 "Hello World",
-                vec![make_word("Hello", 72.0, 720.0, 30.0, 12.0), make_word("World", 110.0, 720.0, 30.0, 12.0)],
+                vec![
+                    make_word("Hello", 72.0, 720.0, 30.0, 12.0),
+                    make_word("World", 110.0, 720.0, 30.0, 12.0),
+                ],
                 72.0,
                 720.0,
             ),
             make_line(
                 "Second line",
-                vec![make_word("Second", 72.0, 706.0, 36.0, 12.0), make_word("line", 115.0, 706.0, 20.0, 12.0)],
+                vec![
+                    make_word("Second", 72.0, 706.0, 36.0, 12.0),
+                    make_word("line", 115.0, 706.0, 20.0, 12.0),
+                ],
                 72.0,
                 706.0,
             ),
@@ -296,10 +288,50 @@ mod tests {
     fn test_two_columns() {
         // Left column at x=72, right column at x=320
         let lines = vec![
-            make_line("Left col line 1", vec![make_word("Left", 72.0, 720.0, 20.0, 12.0), make_word("col", 96.0, 720.0, 16.0, 12.0), make_word("line", 116.0, 720.0, 20.0, 12.0), make_word("1", 140.0, 720.0, 6.0, 12.0)], 72.0, 720.0),
-            make_line("Left col line 2", vec![make_word("Left", 72.0, 706.0, 20.0, 12.0), make_word("col", 96.0, 706.0, 16.0, 12.0), make_word("line", 116.0, 706.0, 20.0, 12.0), make_word("2", 140.0, 706.0, 6.0, 12.0)], 72.0, 706.0),
-            make_line("Right col line 1", vec![make_word("Right", 320.0, 720.0, 26.0, 12.0), make_word("col", 350.0, 720.0, 16.0, 12.0), make_word("line", 370.0, 720.0, 20.0, 12.0), make_word("1", 394.0, 720.0, 6.0, 12.0)], 320.0, 720.0),
-            make_line("Right col line 2", vec![make_word("Right", 320.0, 706.0, 26.0, 12.0), make_word("col", 350.0, 706.0, 16.0, 12.0), make_word("line", 370.0, 706.0, 20.0, 12.0), make_word("2", 394.0, 706.0, 6.0, 12.0)], 320.0, 706.0),
+            make_line(
+                "Left col line 1",
+                vec![
+                    make_word("Left", 72.0, 720.0, 20.0, 12.0),
+                    make_word("col", 96.0, 720.0, 16.0, 12.0),
+                    make_word("line", 116.0, 720.0, 20.0, 12.0),
+                    make_word("1", 140.0, 720.0, 6.0, 12.0),
+                ],
+                72.0,
+                720.0,
+            ),
+            make_line(
+                "Left col line 2",
+                vec![
+                    make_word("Left", 72.0, 706.0, 20.0, 12.0),
+                    make_word("col", 96.0, 706.0, 16.0, 12.0),
+                    make_word("line", 116.0, 706.0, 20.0, 12.0),
+                    make_word("2", 140.0, 706.0, 6.0, 12.0),
+                ],
+                72.0,
+                706.0,
+            ),
+            make_line(
+                "Right col line 1",
+                vec![
+                    make_word("Right", 320.0, 720.0, 26.0, 12.0),
+                    make_word("col", 350.0, 720.0, 16.0, 12.0),
+                    make_word("line", 370.0, 720.0, 20.0, 12.0),
+                    make_word("1", 394.0, 720.0, 6.0, 12.0),
+                ],
+                320.0,
+                720.0,
+            ),
+            make_line(
+                "Right col line 2",
+                vec![
+                    make_word("Right", 320.0, 706.0, 26.0, 12.0),
+                    make_word("col", 350.0, 706.0, 16.0, 12.0),
+                    make_word("line", 370.0, 706.0, 20.0, 12.0),
+                    make_word("2", 394.0, 706.0, 6.0, 12.0),
+                ],
+                320.0,
+                706.0,
+            ),
         ];
 
         let blocks = detect_columns_and_reorder(&lines);
@@ -314,13 +346,23 @@ mod tests {
         let lines = vec![
             make_line(
                 "This is a long para-",
-                vec![make_word("This", 72.0, 720.0, 20.0, 12.0), make_word("is", 96.0, 720.0, 10.0, 12.0), make_word("a", 110.0, 720.0, 5.0, 12.0), make_word("long", 119.0, 720.0, 20.0, 12.0), make_word("para-", 143.0, 720.0, 26.0, 12.0)],
+                vec![
+                    make_word("This", 72.0, 720.0, 20.0, 12.0),
+                    make_word("is", 96.0, 720.0, 10.0, 12.0),
+                    make_word("a", 110.0, 720.0, 5.0, 12.0),
+                    make_word("long", 119.0, 720.0, 20.0, 12.0),
+                    make_word("para-", 143.0, 720.0, 26.0, 12.0),
+                ],
                 72.0,
                 720.0,
             ),
             make_line(
                 "graph continues here",
-                vec![make_word("graph", 72.0, 706.0, 28.0, 12.0), make_word("continues", 104.0, 706.0, 50.0, 12.0), make_word("here", 158.0, 706.0, 20.0, 12.0)],
+                vec![
+                    make_word("graph", 72.0, 706.0, 28.0, 12.0),
+                    make_word("continues", 104.0, 706.0, 50.0, 12.0),
+                    make_word("here", 158.0, 706.0, 20.0, 12.0),
+                ],
                 72.0,
                 706.0,
             ),

@@ -49,7 +49,13 @@ pub fn pack_object_streams(
         objects,
         max_objects_per_stream,
         |obj_num, obj| {
-            is_eligible(obj_num, obj, catalog_obj_num, pages_root_obj_num, encrypt_obj_num)
+            is_eligible(
+                obj_num,
+                obj,
+                catalog_obj_num,
+                pages_root_obj_num,
+                encrypt_obj_num,
+            )
         },
         objects.iter().map(|(n, _)| *n).max().unwrap_or(0) + 1,
     )
@@ -107,7 +113,10 @@ pub(crate) fn pack_objects(
         }
     }
 
-    Ok(PackResult { objects: result, compressed })
+    Ok(PackResult {
+        objects: result,
+        compressed,
+    })
 }
 
 /// Check whether an object is eligible for packing into an object stream.
@@ -208,10 +217,7 @@ fn build_object_stream(objects: &[(u32, &PdfObject)]) -> Result<PdfObject> {
     dict.insert(b"Type".to_vec(), PdfObject::Name(b"ObjStm".to_vec()));
     dict.insert(b"N".to_vec(), PdfObject::Integer(n as i64));
     dict.insert(b"First".to_vec(), PdfObject::Integer(first as i64));
-    dict.insert(
-        b"Filter".to_vec(),
-        PdfObject::Name(b"FlateDecode".to_vec()),
-    );
+    dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
 
     Ok(PdfObject::Stream {
         dict,
@@ -281,7 +287,11 @@ pub(crate) fn write_xref_stream_with_generations(
     //   field 2: offset or obj stream number
     //   field 3: generation number or index within obj stream
     let max_offset = offsets.iter().map(|(_, o)| *o).max().unwrap_or(0);
-    let max_objstm_num = compressed.iter().map(|c| c.objstm_num as usize).max().unwrap_or(0);
+    let max_objstm_num = compressed
+        .iter()
+        .map(|c| c.objstm_num as usize)
+        .max()
+        .unwrap_or(0);
     let w2 = bytes_needed(max_offset.max(max_objstm_num) as u64);
     let w1 = 1u8;
     let max_index = compressed.iter().map(|c| c.index).max().unwrap_or(0);
@@ -336,17 +346,11 @@ pub(crate) fn write_xref_stream_with_generations(
             PdfObject::Integer(w3 as i64),
         ]),
     );
-    dict.insert(
-        b"Root".to_vec(),
-        PdfObject::Reference(catalog_ref.clone()),
-    );
+    dict.insert(b"Root".to_vec(), PdfObject::Reference(catalog_ref.clone()));
     if let Some(info) = info_ref {
         dict.insert(b"Info".to_vec(), PdfObject::Reference(info.clone()));
     }
-    dict.insert(
-        b"Filter".to_vec(),
-        PdfObject::Name(b"FlateDecode".to_vec()),
-    );
+    dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
 
     let xref_offset = buf.len();
 
@@ -463,7 +467,10 @@ mod tests {
             (2, PdfObject::Dict(pages)),
             (3, PdfObject::Integer(42)),
             (4, PdfObject::String(b"hello".to_vec())),
-            (5, PdfObject::Array(vec![PdfObject::Integer(1), PdfObject::Integer(2)])),
+            (
+                5,
+                PdfObject::Array(vec![PdfObject::Integer(1), PdfObject::Integer(2)]),
+            ),
         ];
 
         let packed = pack_object_streams(&objects, 100, 1, Some(2), None).unwrap();
@@ -514,7 +521,8 @@ mod tests {
         let packed = pack_object_streams(&objects, 2, 1, None, None).unwrap();
 
         // 5 eligible objects split into batches of 2 => 3 object streams
-        let objstm_count = packed.objects
+        let objstm_count = packed
+            .objects
             .iter()
             .filter(|(_, obj)| {
                 if let PdfObject::Stream { dict, .. } = obj {
@@ -563,11 +571,21 @@ mod tests {
             let text = String::from_utf8_lossy(&decompressed);
 
             // Should start with "10 0 20 <offset>" pattern
-            assert!(text.starts_with("10 "), "content should start with first obj num: {}", text);
-            assert!(text.contains("20 "), "content should contain second obj num");
+            assert!(
+                text.starts_with("10 "),
+                "content should start with first obj num: {}",
+                text
+            );
+            assert!(
+                text.contains("20 "),
+                "content should contain second obj num"
+            );
             // Should contain the serialized objects
             assert!(text.contains("42"), "content should contain integer 42");
-            assert!(text.contains("(test)"), "content should contain string (test)");
+            assert!(
+                text.contains("(test)"),
+                "content should contain string (test)"
+            );
         } else {
             panic!("expected stream object");
         }
@@ -606,7 +624,10 @@ mod tests {
         buf.extend_from_slice(b"%PDF-1.5\n");
 
         let offsets = vec![(1, 20), (2, 100)];
-        let catalog_ref = IndirectRef { obj_num: 1, gen_num: 0 };
+        let catalog_ref = IndirectRef {
+            obj_num: 1,
+            gen_num: 0,
+        };
 
         write_xref_stream(&mut buf, &offsets, &[], &catalog_ref, None, 3).unwrap();
 

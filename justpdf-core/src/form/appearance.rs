@@ -57,7 +57,12 @@ fn text_field_appearance(field: &FormField, w: f64, h: f64) -> String {
     buf.push_str("0.75 g\n");
     let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
     buf.push_str("0 G\n0.5 w\n");
-    let _ = write!(buf, "0.5 0.5 {} {} re\nS\n", Number(w - 1.0), Number(h - 1.0));
+    let _ = write!(
+        buf,
+        "0.5 0.5 {} {} re\nS\n",
+        Number(w - 1.0),
+        Number(h - 1.0)
+    );
 
     // Text value
     if let Some(text) = field.value_as_string() {
@@ -83,7 +88,12 @@ fn checkbox_appearance(field: &FormField, w: f64, h: f64) -> String {
     buf.push_str("1 g\n");
     let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
     buf.push_str("0 G\n0.5 w\n");
-    let _ = write!(buf, "0.5 0.5 {} {} re\nS\n", Number(w - 1.0), Number(h - 1.0));
+    let _ = write!(
+        buf,
+        "0.5 0.5 {} {} re\nS\n",
+        Number(w - 1.0),
+        Number(h - 1.0)
+    );
 
     // Checkmark if checked
     if field.is_checked() {
@@ -91,9 +101,12 @@ fn checkbox_appearance(field: &FormField, w: f64, h: f64) -> String {
         let _ = write!(
             buf,
             "{} {} m\n{} {} l\n{} {} l\nS\n",
-            Number(w * 0.2), Number(h * 0.5),
-            Number(w * 0.4), Number(h * 0.2),
-            Number(w * 0.8), Number(h * 0.8),
+            Number(w * 0.2),
+            Number(h * 0.5),
+            Number(w * 0.4),
+            Number(h * 0.2),
+            Number(w * 0.8),
+            Number(h * 0.8),
         );
     }
     buf
@@ -131,21 +144,35 @@ fn combo_appearance(field: &FormField, w: f64, h: f64) -> String {
     buf.push_str("1 g\n");
     let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
     buf.push_str("0 G\n0.5 w\n");
-    let _ = write!(buf, "0.5 0.5 {} {} re\nS\n", Number(w - 1.0), Number(h - 1.0));
+    let _ = write!(
+        buf,
+        "0.5 0.5 {} {} re\nS\n",
+        Number(w - 1.0),
+        Number(h - 1.0)
+    );
 
     // Dropdown arrow area
     let arrow_w = h.min(20.0);
     buf.push_str("0.9 g\n");
-    let _ = write!(buf, "{} 0 {} {} re\nf\n", Number(w - arrow_w), Number(arrow_w), Number(h));
+    let _ = write!(
+        buf,
+        "{} 0 {} {} re\nf\n",
+        Number(w - arrow_w),
+        Number(arrow_w),
+        Number(h)
+    );
     // Arrow triangle
     buf.push_str("0 g\n");
     let ax = w - arrow_w / 2.0;
     let _ = write!(
         buf,
         "{} {} m\n{} {} l\n{} {} l\nf\n",
-        Number(ax - 3.0), Number(h * 0.6),
-        Number(ax + 3.0), Number(h * 0.6),
-        Number(ax), Number(h * 0.3),
+        Number(ax - 3.0),
+        Number(h * 0.6),
+        Number(ax + 3.0),
+        Number(h * 0.6),
+        Number(ax),
+        Number(h * 0.3),
     );
 
     // Selected value text
@@ -166,7 +193,12 @@ fn list_appearance(field: &FormField, w: f64, h: f64) -> String {
     buf.push_str("1 g\n");
     let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
     buf.push_str("0 G\n0.5 w\n");
-    let _ = write!(buf, "0.5 0.5 {} {} re\nS\n", Number(w - 1.0), Number(h - 1.0));
+    let _ = write!(
+        buf,
+        "0.5 0.5 {} {} re\nS\n",
+        Number(w - 1.0),
+        Number(h - 1.0)
+    );
 
     // List items
     let line_height = 12.0;
@@ -179,7 +211,13 @@ fn list_appearance(field: &FormField, w: f64, h: f64) -> String {
         // Highlight selected
         if *opt == selected {
             buf.push_str("0.6 0.75 1 rg\n");
-            let _ = write!(buf, "1 {} {} {} re\nf\n", Number(y), Number(w - 2.0), Number(line_height));
+            let _ = write!(
+                buf,
+                "1 {} {} {} re\nf\n",
+                Number(y),
+                Number(w - 2.0),
+                Number(line_height)
+            );
         }
         buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
         let _ = write!(buf, "3 {} Td\n", Number(y + 2.0));
@@ -196,9 +234,21 @@ fn button_appearance(field: &FormField, w: f64, h: f64) -> String {
     buf.push_str("0.85 g\n");
     let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
     buf.push_str("1 G\n1 w\n");
-    let _ = write!(buf, "0 0 m\n0 {} l\n{} {} l\nS\n", Number(h), Number(w), Number(h));
+    let _ = write!(
+        buf,
+        "0 0 m\n0 {} l\n{} {} l\nS\n",
+        Number(h),
+        Number(w),
+        Number(h)
+    );
     buf.push_str("0.5 G\n");
-    let _ = write!(buf, "{} {} m\n{} 0 l\n0 0 l\nS\n", Number(w), Number(h), Number(w));
+    let _ = write!(
+        buf,
+        "{} {} m\n{} 0 l\n0 0 l\nS\n",
+        Number(w),
+        Number(h),
+        Number(w)
+    );
 
     // Button caption
     if let Some(text) = field.value_as_string() {
@@ -216,30 +266,42 @@ fn append_circle(buf: &mut String, cx: f64, cy: f64, r: f64, k: f64) {
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        Number(cx + r), Number(cy + r * k),
-        Number(cx + r * k), Number(cy + r),
-        Number(cx), Number(cy + r)
+        Number(cx + r),
+        Number(cy + r * k),
+        Number(cx + r * k),
+        Number(cy + r),
+        Number(cx),
+        Number(cy + r)
     );
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        Number(cx - r * k), Number(cy + r),
-        Number(cx - r), Number(cy + r * k),
-        Number(cx - r), Number(cy)
+        Number(cx - r * k),
+        Number(cy + r),
+        Number(cx - r),
+        Number(cy + r * k),
+        Number(cx - r),
+        Number(cy)
     );
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        Number(cx - r), Number(cy - r * k),
-        Number(cx - r * k), Number(cy - r),
-        Number(cx), Number(cy - r)
+        Number(cx - r),
+        Number(cy - r * k),
+        Number(cx - r * k),
+        Number(cy - r),
+        Number(cx),
+        Number(cy - r)
     );
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        Number(cx + r * k), Number(cy - r),
-        Number(cx + r), Number(cy - r * k),
-        Number(cx + r), Number(cy)
+        Number(cx + r * k),
+        Number(cy - r),
+        Number(cx + r),
+        Number(cy - r * k),
+        Number(cx + r),
+        Number(cy)
     );
 }
 
@@ -255,7 +317,9 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|op| op.operator)
-            .filter(|op| op.starts_with(b"NaN") || op.starts_with(b"inf") || op.starts_with(b"-inf"))
+            .filter(|op| {
+                op.starts_with(b"NaN") || op.starts_with(b"inf") || op.starts_with(b"-inf")
+            })
             .collect()
     }
 
@@ -271,7 +335,10 @@ mod tests {
             options: vec!["one".to_string()],
             rect: None,
             default_appearance: None,
-            field_ref: IndirectRef { obj_num: 1, gen_num: 0 },
+            field_ref: IndirectRef {
+                obj_num: 1,
+                gen_num: 0,
+            },
             page_obj_num: None,
         };
         let text = PdfObject::String(b"x".to_vec());
@@ -286,7 +353,11 @@ mod tests {
             button_appearance(&field(FieldType::PushButton, text), w, h),
         ];
         for (i, content) in contents.iter().enumerate() {
-            assert_eq!(non_finite_operators(content.as_bytes()), Vec::<Vec<u8>>::new(), "generator {i}: {content}");
+            assert_eq!(
+                non_finite_operators(content.as_bytes()),
+                Vec::<Vec<u8>>::new(),
+                "generator {i}: {content}"
+            );
         }
     }
 
@@ -300,9 +371,17 @@ mod tests {
             default_value: None,
             flags: FieldFlags::default(),
             options: Vec::new(),
-            rect: Some(Rect { llx: 0.0, lly: 0.0, urx: 200.0, ury: 20.0 }),
+            rect: Some(Rect {
+                llx: 0.0,
+                lly: 0.0,
+                urx: 200.0,
+                ury: 20.0,
+            }),
             default_appearance: None,
-            field_ref: IndirectRef { obj_num: 1, gen_num: 0 },
+            field_ref: IndirectRef {
+                obj_num: 1,
+                gen_num: 0,
+            },
             page_obj_num: None,
         };
         let content = text_field_appearance(&field, 200.0, 20.0);
@@ -321,9 +400,17 @@ mod tests {
             default_value: None,
             flags: FieldFlags::default(),
             options: Vec::new(),
-            rect: Some(Rect { llx: 0.0, lly: 0.0, urx: 14.0, ury: 14.0 }),
+            rect: Some(Rect {
+                llx: 0.0,
+                lly: 0.0,
+                urx: 14.0,
+                ury: 14.0,
+            }),
             default_appearance: None,
-            field_ref: IndirectRef { obj_num: 1, gen_num: 0 },
+            field_ref: IndirectRef {
+                obj_num: 1,
+                gen_num: 0,
+            },
             page_obj_num: None,
         };
         let content = checkbox_appearance(&field, 14.0, 14.0);
@@ -342,9 +429,17 @@ mod tests {
             default_value: None,
             flags: FieldFlags::default(),
             options: Vec::new(),
-            rect: Some(Rect { llx: 0.0, lly: 0.0, urx: 14.0, ury: 14.0 }),
+            rect: Some(Rect {
+                llx: 0.0,
+                lly: 0.0,
+                urx: 14.0,
+                ury: 14.0,
+            }),
             default_appearance: None,
-            field_ref: IndirectRef { obj_num: 1, gen_num: 0 },
+            field_ref: IndirectRef {
+                obj_num: 1,
+                gen_num: 0,
+            },
             page_obj_num: None,
         };
         let content = checkbox_appearance(&field, 14.0, 14.0);

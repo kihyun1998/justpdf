@@ -112,7 +112,9 @@ mod tests {
 
     #[test]
     fn test_contains_rtl_true() {
-        assert!(contains_rtl("Hello \u{0627}\u{0644}\u{0639}\u{0631}\u{0628}\u{064A}\u{0629}"));
+        assert!(contains_rtl(
+            "Hello \u{0627}\u{0644}\u{0639}\u{0631}\u{0628}\u{064A}\u{0629}"
+        ));
     }
 
     #[test]

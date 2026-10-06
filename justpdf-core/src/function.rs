@@ -126,10 +126,7 @@ impl PdfFunction {
             .get_array(b"C1")
             .map(|a| a.iter().filter_map(|o| o.as_f64()).collect())
             .unwrap_or_else(|| vec![1.0]);
-        let n = dict
-            .get(b"N")
-            .and_then(|o| o.as_f64())
-            .unwrap_or(1.0);
+        let n = dict.get(b"N").and_then(|o| o.as_f64()).unwrap_or(1.0);
 
         Some(PdfFunction::Exponential {
             domain,
@@ -181,11 +178,7 @@ impl PdfFunction {
         let code = std::str::from_utf8(stream_data).ok()?;
         let ops = parse_ps_code(code)?;
 
-        Some(PdfFunction::PostScript {
-            domain,
-            range,
-            ops,
-        })
+        Some(PdfFunction::PostScript { domain, range, ops })
     }
 
     /// Evaluate the function with given input values.
@@ -234,12 +227,14 @@ impl PdfFunction {
                 idx = idx.min(functions.len() - 1);
 
                 // Encode x into sub-function's domain
-                let sub_domain_start = bounds.get(idx.wrapping_sub(1)).copied().unwrap_or_else(|| {
-                    domain.first().map(|d| d.0).unwrap_or(0.0)
-                });
-                let sub_domain_end = bounds.get(idx).copied().unwrap_or_else(|| {
-                    domain.first().map(|d| d.1).unwrap_or(1.0)
-                });
+                let sub_domain_start = bounds
+                    .get(idx.wrapping_sub(1))
+                    .copied()
+                    .unwrap_or_else(|| domain.first().map(|d| d.0).unwrap_or(0.0));
+                let sub_domain_end = bounds
+                    .get(idx)
+                    .copied()
+                    .unwrap_or_else(|| domain.first().map(|d| d.1).unwrap_or(1.0));
 
                 let enc_start = encode.get(idx * 2).copied().unwrap_or(0.0);
                 let enc_end = encode.get(idx * 2 + 1).copied().unwrap_or(1.0);
@@ -258,15 +253,14 @@ impl PdfFunction {
                     .map(|(i, &v)| clamp_output(v, range, i))
                     .collect()
             }
-            PdfFunction::PostScript {
-                domain,
-                range,
-                ops,
-            } => {
+            PdfFunction::PostScript { domain, range, ops } => {
                 let mut stack: Vec<f64> = Vec::new();
                 // Push clamped inputs onto stack
                 for (i, &val) in input.iter().enumerate() {
-                    stack.push(clamp_input(val, &domain[i..i + 1].iter().copied().collect::<Vec<_>>()));
+                    stack.push(clamp_input(
+                        val,
+                        &domain[i..i + 1].iter().copied().collect::<Vec<_>>(),
+                    ));
                 }
 
                 execute_ps_ops(&mut stack, ops);
@@ -779,7 +773,10 @@ mod tests {
                 PsOp::Dup,
                 PsOp::Num(0.5),
                 PsOp::Gt,
-                PsOp::IfElse(vec![PsOp::Pop, PsOp::Num(1.0)], vec![PsOp::Pop, PsOp::Num(0.0)]),
+                PsOp::IfElse(
+                    vec![PsOp::Pop, PsOp::Num(1.0)],
+                    vec![PsOp::Pop, PsOp::Num(0.0)],
+                ),
             ],
         };
         assert!((func.evaluate(&[0.8])[0] - 1.0).abs() < 0.001);

@@ -438,8 +438,9 @@ fn evaluate_parametric(params: &[f64], x: f64) -> f64 {
         }
         // Type 4: y = (a*x + b)^g + e  if x >= d, else c*x + f
         7 => {
-            let (g, a, b, c, d, e, f) =
-                (params[0], params[1], params[2], params[3], params[4], params[5], params[6]);
+            let (g, a, b, c, d, e, f) = (
+                params[0], params[1], params[2], params[3], params[4], params[5], params[6],
+            );
             if x >= d {
                 (a * x + b).max(0.0).powf(g) + e
             } else {
@@ -471,9 +472,21 @@ fn chromatic_adapt(xyz: &[f64; 3], src_wp: &[f64; 3], dst_wp: &[f64; 3]) -> [f64
 
     // Diagonal scaling matrix in LMS space
     let scale = [
-        if src_lms[0].abs() > 1e-10 { dst_lms[0] / src_lms[0] } else { 1.0 },
-        if src_lms[1].abs() > 1e-10 { dst_lms[1] / src_lms[1] } else { 1.0 },
-        if src_lms[2].abs() > 1e-10 { dst_lms[2] / src_lms[2] } else { 1.0 },
+        if src_lms[0].abs() > 1e-10 {
+            dst_lms[0] / src_lms[0]
+        } else {
+            1.0
+        },
+        if src_lms[1].abs() > 1e-10 {
+            dst_lms[1] / src_lms[1]
+        } else {
+            1.0
+        },
+        if src_lms[2].abs() > 1e-10 {
+            dst_lms[2] / src_lms[2]
+        } else {
+            1.0
+        },
     ];
 
     // M^-1 * diag(scale) * M
@@ -488,9 +501,12 @@ fn chromatic_adapt(xyz: &[f64; 3], src_wp: &[f64; 3], dst_wp: &[f64; 3]) -> [f64
 
 /// Convert CIE XYZ to sRGB [0..1]^3 (clamped).
 fn xyz_to_srgb(xyz: &[f64; 3]) -> [f64; 3] {
-    let r_lin = XYZ_TO_SRGB[0][0] * xyz[0] + XYZ_TO_SRGB[0][1] * xyz[1] + XYZ_TO_SRGB[0][2] * xyz[2];
-    let g_lin = XYZ_TO_SRGB[1][0] * xyz[0] + XYZ_TO_SRGB[1][1] * xyz[1] + XYZ_TO_SRGB[1][2] * xyz[2];
-    let b_lin = XYZ_TO_SRGB[2][0] * xyz[0] + XYZ_TO_SRGB[2][1] * xyz[1] + XYZ_TO_SRGB[2][2] * xyz[2];
+    let r_lin =
+        XYZ_TO_SRGB[0][0] * xyz[0] + XYZ_TO_SRGB[0][1] * xyz[1] + XYZ_TO_SRGB[0][2] * xyz[2];
+    let g_lin =
+        XYZ_TO_SRGB[1][0] * xyz[0] + XYZ_TO_SRGB[1][1] * xyz[1] + XYZ_TO_SRGB[1][2] * xyz[2];
+    let b_lin =
+        XYZ_TO_SRGB[2][0] * xyz[0] + XYZ_TO_SRGB[2][1] * xyz[1] + XYZ_TO_SRGB[2][2] * xyz[2];
 
     [
         srgb_gamma(r_lin).clamp(0.0, 1.0),
@@ -788,7 +804,10 @@ mod tests {
         let trc = ToneCurve::Gamma(2.2);
         let out = apply_trc(Some(&trc), 0.5);
         let expected = 0.5_f64.powf(2.2);
-        assert!((out - expected).abs() < 1e-6, "got {out}, expected {expected}");
+        assert!(
+            (out - expected).abs() < 1e-6,
+            "got {out}, expected {expected}"
+        );
     }
 
     #[test]

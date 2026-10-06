@@ -1,6 +1,6 @@
 use crate::object::{ByteSink, IndirectRef, Number, PdfDict, PdfObject, name_syntax, write_string};
-use crate::writer::encode::make_stream;
 use crate::writer::PdfWriter;
+use crate::writer::encode::make_stream;
 
 /// Builder for constructing a single PDF page with content streams.
 pub struct PageBuilder {
@@ -68,13 +68,27 @@ impl PageBuilder {
     /// Set fill color in RGB: `r g b rg`.
     pub fn set_fill_rgb(&mut self, r: f64, g: f64, b: f64) {
         use std::io::Write;
-        write!(self.content, "{} {} {} rg\n", Number(r), Number(g), Number(b)).unwrap();
+        write!(
+            self.content,
+            "{} {} {} rg\n",
+            Number(r),
+            Number(g),
+            Number(b)
+        )
+        .unwrap();
     }
 
     /// Set stroke color in RGB: `r g b RG`.
     pub fn set_stroke_rgb(&mut self, r: f64, g: f64, b: f64) {
         use std::io::Write;
-        write!(self.content, "{} {} {} RG\n", Number(r), Number(g), Number(b)).unwrap();
+        write!(
+            self.content,
+            "{} {} {} RG\n",
+            Number(r),
+            Number(g),
+            Number(b)
+        )
+        .unwrap();
     }
 
     /// Draw a line from (x1,y1) to (x2,y2) and stroke: `x1 y1 m x2 y2 l S`.
@@ -87,7 +101,8 @@ impl PageBuilder {
             Number(y1),
             Number(x2),
             Number(y2)
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     /// Draw a stroked rectangle: `x y w h re S`.
@@ -100,7 +115,8 @@ impl PageBuilder {
             Number(y),
             Number(w),
             Number(h)
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     /// Draw a filled rectangle: `x y w h re f`.
@@ -113,7 +129,8 @@ impl PageBuilder {
             Number(y),
             Number(w),
             Number(h)
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     /// Draw an image with transformation: `q w 0 0 h x y cm /name Do Q`.
@@ -168,8 +185,7 @@ impl PageBuilder {
     /// Register an embedded font resource by indirect reference.
     /// Used for TrueType and other embedded fonts.
     pub fn add_font_ref(&mut self, resource_name: &str, font_ref: IndirectRef) {
-        self.font_refs
-            .push((resource_name.to_string(), font_ref));
+        self.font_refs.push((resource_name.to_string(), font_ref));
     }
 
     /// Register an image resource for this page.
@@ -211,10 +227,7 @@ impl PageBuilder {
                     b"BaseFont".to_vec(),
                     PdfObject::Name(base_font.into_bytes()),
                 );
-                font_dict.insert(
-                    res_name.as_bytes().to_vec(),
-                    PdfObject::Dict(f),
-                );
+                font_dict.insert(res_name.as_bytes().to_vec(), PdfObject::Dict(f));
             }
             // Add embedded font references
             for (res_name, font_ref) in &self.font_refs {
@@ -241,10 +254,7 @@ impl PageBuilder {
         // Build Page dictionary
         let mut page_dict = PdfDict::new();
         page_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Page".to_vec()));
-        page_dict.insert(
-            b"Parent".to_vec(),
-            PdfObject::Reference(pages_ref.clone()),
-        );
+        page_dict.insert(b"Parent".to_vec(), PdfObject::Reference(pages_ref.clone()));
         page_dict.insert(
             b"MediaBox".to_vec(),
             PdfObject::Array(vec![
@@ -254,10 +264,7 @@ impl PageBuilder {
                 PdfObject::Real(self.height),
             ]),
         );
-        page_dict.insert(
-            b"Contents".to_vec(),
-            PdfObject::Reference(content_ref),
-        );
+        page_dict.insert(b"Contents".to_vec(), PdfObject::Reference(content_ref));
         page_dict.insert(b"Resources".to_vec(), PdfObject::Dict(resources));
 
         writer.add_object(PdfObject::Dict(page_dict))
@@ -292,16 +299,27 @@ mod tests {
         let max = f64::from(f32::MAX);
         let ops = parse_content_stream(&page.content).unwrap();
         let operands = |operator: &[u8]| {
-            ops.iter().find(|op| op.operator == operator).unwrap().operands.clone()
+            ops.iter()
+                .find(|op| op.operator == operator)
+                .unwrap()
+                .operands
+                .clone()
         };
         use Operand::{Integer, Real};
         assert_eq!(operands(b"rg"), vec![Integer(0), Integer(0), Integer(1)]);
         assert_eq!(operands(b"RG"), vec![Real(0.25), Real(max), Integer(1)]);
-        assert_eq!(operands(b"Tf"), vec![Operand::Name(b"F1".to_vec()), Real(1e20)]);
+        assert_eq!(
+            operands(b"Tf"),
+            vec![Operand::Name(b"F1".to_vec()), Real(1e20)]
+        );
         assert_eq!(operands(b"Td"), vec![Integer(0), Real(-max)]);
         assert_eq!(operands(b"m"), vec![Integer(0), Integer(612)]);
         assert_eq!(operands(b"l"), vec![Real(0.5), Real(2147483648.0)]);
-        let rects: Vec<_> = ops.iter().filter(|op| op.operator == b"re").map(|op| op.operands.clone()).collect();
+        let rects: Vec<_> = ops
+            .iter()
+            .filter(|op| op.operator == b"re")
+            .map(|op| op.operands.clone())
+            .collect();
         assert_eq!(
             rects,
             vec![
@@ -309,7 +327,17 @@ mod tests {
                 vec![Integer(1), Real(max), Integer(2), Integer(3)],
             ]
         );
-        assert_eq!(operands(b"cm"), vec![Integer(10), Integer(0), Integer(0), Integer(10), Integer(0), Integer(0)]);
+        assert_eq!(
+            operands(b"cm"),
+            vec![
+                Integer(10),
+                Integer(0),
+                Integer(0),
+                Integer(10),
+                Integer(0),
+                Integer(0)
+            ]
+        );
     }
 
     #[test]

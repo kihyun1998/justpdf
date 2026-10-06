@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use justpdf_core::PdfDocument;
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
 use justpdf_core::font::{FontInfo, ToUnicodeCMap, parse_font_info};
@@ -7,7 +8,6 @@ use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::ocg::{self, OCConfig};
 use justpdf_core::page::PageInfo;
-use justpdf_core::PdfDocument;
 use tiny_skia::{FillRule, Mask, PathBuilder, Pixmap, Transform};
 
 use crate::device::PixmapDevice;
@@ -59,11 +59,7 @@ pub struct RenderInterpreter<'a> {
 }
 
 impl<'a> RenderInterpreter<'a> {
-    pub fn new(
-        doc: &'a PdfDocument,
-        device: &'a mut PixmapDevice,
-        page_transform: Matrix,
-    ) -> Self {
+    pub fn new(doc: &'a PdfDocument, device: &'a mut PixmapDevice, page_transform: Matrix) -> Self {
         // Load optional content config for layer visibility
         let oc_config = ocg::read_oc_properties(doc)
             .ok()
@@ -139,9 +135,7 @@ impl<'a> RenderInterpreter<'a> {
             };
 
             // Skip hidden/no-view annotations
-            let flags = annot_dict
-                .get_i64(b"F")
-                .unwrap_or(0) as u32;
+            let flags = annot_dict.get_i64(b"F").unwrap_or(0) as u32;
             if flags & 0x02 != 0 || flags & 0x20 != 0 {
                 // Hidden or NoView
                 continue;
@@ -577,8 +571,7 @@ impl<'a> RenderInterpreter<'a> {
                 // [array] phase
                 if operands.len() >= 2 {
                     if let Some(arr) = operands[0].as_array() {
-                        self.state.dash_pattern =
-                            arr.iter().filter_map(|o| o.as_f64()).collect();
+                        self.state.dash_pattern = arr.iter().filter_map(|o| o.as_f64()).collect();
                     }
                     self.state.dash_phase = f(operands, 1);
                 }
@@ -844,7 +837,8 @@ impl<'a> RenderInterpreter<'a> {
                 }
             }
             "Tr" => {
-                self.state.text.render_mode = operands.first().and_then(|o| o.as_i64()).unwrap_or(0);
+                self.state.text.render_mode =
+                    operands.first().and_then(|o| o.as_i64()).unwrap_or(0);
             }
             "Ts" => {
                 self.state.text.text_rise = f(operands, 0);
@@ -1048,7 +1042,8 @@ impl<'a> RenderInterpreter<'a> {
                 let color = self.state.stroke_color_rgba();
                 let bm = self.blend_mode();
                 self.apply_soft_mask_to_device();
-                self.device.stroke_path(&path, transform, color, &self.state, bm);
+                self.device
+                    .stroke_path(&path, transform, color, &self.state, bm);
                 self.restore_clip_after_soft_mask();
             }
         }
@@ -1205,10 +1200,7 @@ impl<'a> RenderInterpreter<'a> {
                 let glyph_id = if is_cid {
                     // For CID fonts: apply CIDToGIDMap if available
                     if let Some(map) = cid_to_gid_map {
-                        let gid = map
-                            .get(code as usize)
-                            .copied()
-                            .unwrap_or(code as u16);
+                        let gid = map.get(code as usize).copied().unwrap_or(code as u16);
                         ttf_parser::GlyphId(gid)
                     } else {
                         // Identity mapping: CID == GID
@@ -1219,9 +1211,12 @@ impl<'a> RenderInterpreter<'a> {
                 };
 
                 let gid_raw = glyph_id.0;
-                let cached_path = self.glyph_cache.get_or_insert(data, gid_raw, || {
-                    crate::glyph::glyph_outline(&face, glyph_id)
-                }).cloned();
+                let cached_path = self
+                    .glyph_cache
+                    .get_or_insert(data, gid_raw, || {
+                        crate::glyph::glyph_outline(&face, glyph_id)
+                    })
+                    .cloned();
 
                 if let Some(path) = cached_path {
                     let upem = crate::glyph::units_per_em(&face);
@@ -1392,16 +1387,14 @@ impl<'a> RenderInterpreter<'a> {
                             data: image_data,
                         }))
                     }
-                    b"Form" => {
-                        match self.doc.decode_stream(&dict, &data) {
-                            Ok(decoded) => Ok(Some(XObjectData::Form {
-                                obj_ref: xobj_ref,
-                                dict,
-                                data: decoded,
-                            })),
-                            Err(_) => Ok(None),
-                        }
-                    }
+                    b"Form" => match self.doc.decode_stream(&dict, &data) {
+                        Ok(decoded) => Ok(Some(XObjectData::Form {
+                            obj_ref: xobj_ref,
+                            dict,
+                            data: decoded,
+                        })),
+                        Err(_) => Ok(None),
+                    },
                     _ => Ok(None),
                 }
             }
@@ -1435,13 +1428,7 @@ impl<'a> RenderInterpreter<'a> {
                     data: smask_data,
                 } = smask_obj
                 {
-                    self.apply_image_smask(
-                        &mut rgba_data,
-                        w,
-                        h,
-                        &smask_dict,
-                        &smask_data,
-                    );
+                    self.apply_image_smask(&mut rgba_data, w, h, &smask_dict, &smask_data);
                 }
             }
         }
@@ -1455,23 +1442,18 @@ impl<'a> RenderInterpreter<'a> {
                     data: mask_data,
                 } = mask_obj
                 {
-                    self.apply_image_explicit_mask(
-                        &mut rgba_data,
-                        w,
-                        h,
-                        &mask_dict,
-                        &mask_data,
-                    );
+                    self.apply_image_explicit_mask(&mut rgba_data, w, h, &mask_dict, &mask_data);
                 }
             }
         }
 
-        let img_pixmap =
-            match tiny_skia::Pixmap::from_vec(rgba_data, tiny_skia::IntSize::from_wh(w, h).unwrap())
-            {
-                Some(p) => p,
-                None => return Ok(()),
-            };
+        let img_pixmap = match tiny_skia::Pixmap::from_vec(
+            rgba_data,
+            tiny_skia::IntSize::from_wh(w, h).unwrap(),
+        ) {
+            Some(p) => p,
+            None => return Ok(()),
+        };
 
         // PDF images are placed in a 1x1 unit square, scaled by the CTM
         let image_transform = Matrix {
@@ -1514,12 +1496,10 @@ impl<'a> RenderInterpreter<'a> {
 
         // Decode the mask data if it has filters
         let decoded_data = match dict.get(b"Filter") {
-            Some(_) => {
-                match image::decode_image(data, dict) {
-                    Ok(img) => img.data,
-                    Err(_) => data.to_vec(),
-                }
-            }
+            Some(_) => match image::decode_image(data, dict) {
+                Ok(img) => img.data,
+                Err(_) => data.to_vec(),
+            },
             None => data.to_vec(),
         };
 
@@ -1706,11 +1686,7 @@ impl<'a> RenderInterpreter<'a> {
         }
     }
 
-    fn render_inline_image(
-        &mut self,
-        _dict: &[(Vec<u8>, Operand)],
-        _data: &[u8],
-    ) -> Result<()> {
+    fn render_inline_image(&mut self, _dict: &[(Vec<u8>, Operand)], _data: &[u8]) -> Result<()> {
         // TODO: implement inline image rendering
         Ok(())
     }
@@ -1868,12 +1844,8 @@ impl<'a> RenderInterpreter<'a> {
         // Composite the group result onto the main pixmap
         let alpha = self.state.fill_alpha as f32;
         let bm = self.blend_mode();
-        self.device.draw_pixmap(
-            &temp_pixmap.as_ref(),
-            Transform::identity(),
-            alpha,
-            bm,
-        );
+        self.device
+            .draw_pixmap(&temp_pixmap.as_ref(), Transform::identity(), alpha, bm);
 
         Ok(())
     }
@@ -2090,9 +2062,7 @@ impl<'a> RenderInterpreter<'a> {
                     let b = src_data[idx + 2] as f32 / 255.0;
                     (0.2126 * r + 0.7152 * g + 0.0722 * b).clamp(0.0, 1.0) * 255.0
                 }
-                SoftMaskSubtype::Alpha => {
-                    src_data[idx + 3] as f32
-                }
+                SoftMaskSubtype::Alpha => src_data[idx + 3] as f32,
             };
             mask_data[i] = value as u8;
         }
@@ -2161,10 +2131,7 @@ impl<'a> RenderInterpreter<'a> {
 
         // Build the transform for rendering the pattern cell:
         // Pattern coords -> pattern matrix -> scale to device pixels
-        let scale_to_device = Matrix::scale(
-            cell_w as f64 / xstep,
-            cell_h as f64 / ystep,
-        );
+        let scale_to_device = Matrix::scale(cell_w as f64 / xstep, cell_h as f64 / ystep);
         let cell_transform = pattern_matrix.concat(&scale_to_device);
 
         // Swap in the cell pixmap

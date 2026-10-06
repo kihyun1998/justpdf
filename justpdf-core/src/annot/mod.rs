@@ -4,6 +4,6 @@ pub mod parse;
 pub mod redact;
 pub mod types;
 
-pub use builder::{add_annotation, delete_annotation, AnnotationBuilder};
+pub use builder::{AnnotationBuilder, add_annotation, delete_annotation};
 pub use parse::{get_all_annotations, get_annotations};
 pub use types::*;

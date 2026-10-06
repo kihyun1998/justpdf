@@ -13,10 +13,7 @@ pub enum PdfAction {
         new_window: Option<bool>,
     },
     /// URI: open a URI.
-    URI {
-        uri: String,
-        is_map: bool,
-    },
+    URI { uri: String, is_map: bool },
     /// Named action (NextPage, PrevPage, FirstPage, LastPage).
     Named { name: NamedAction },
     /// Launch an application or open a file.

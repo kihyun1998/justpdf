@@ -214,11 +214,7 @@ fn parse_obj_stream_offsets(decoded: &[u8], first: i64, n: u64) -> Vec<Option<us
 
 impl std::fmt::Debug for PdfDocument {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let obj_cache_len = self
-            .objects
-            .read()
-            .map(|c| c.len())
-            .unwrap_or(0);
+        let obj_cache_len = self.objects.read().map(|c| c.len()).unwrap_or(0);
         f.debug_struct("PdfDocument")
             .field("version", &self.version)
             .field("xref", &self.xref)
@@ -335,8 +331,7 @@ impl PdfDocument {
         // Extract file ID from trailer
         let file_id = self.extract_file_id();
 
-        let mut state =
-            SecurityState::new(ed, file_id, Some(encrypt_ref.obj_num));
+        let mut state = SecurityState::new(ed, file_id, Some(encrypt_ref.obj_num));
 
         // Try empty password (very common for user-password-only PDFs)
         if let Ok(key) = crypto::auth::authenticate(&state, b"") {
@@ -1211,7 +1206,10 @@ mod tests {
 
         // Resolve all 3 objects to fill the cache.
         for obj_num in 1..=3u32 {
-            let iref = IndirectRef { obj_num, gen_num: 0 };
+            let iref = IndirectRef {
+                obj_num,
+                gen_num: 0,
+            };
             doc.resolve(&iref).unwrap();
         }
         assert_eq!(doc.cached_object_count(), 3);
@@ -1227,9 +1225,18 @@ mod tests {
         let mut doc = PdfDocument::from_bytes(data).unwrap();
         doc.set_cache_capacity(2);
 
-        let ref1 = IndirectRef { obj_num: 1, gen_num: 0 };
-        let ref2 = IndirectRef { obj_num: 2, gen_num: 0 };
-        let ref3 = IndirectRef { obj_num: 3, gen_num: 0 };
+        let ref1 = IndirectRef {
+            obj_num: 1,
+            gen_num: 0,
+        };
+        let ref2 = IndirectRef {
+            obj_num: 2,
+            gen_num: 0,
+        };
+        let ref3 = IndirectRef {
+            obj_num: 3,
+            gen_num: 0,
+        };
 
         // Resolve 1 and 2 — both cached.
         doc.resolve(&ref1).unwrap();

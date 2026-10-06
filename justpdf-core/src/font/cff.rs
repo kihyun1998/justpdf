@@ -103,19 +103,19 @@ pub fn parse_cff(data: &[u8]) -> Option<CffFont> {
     };
 
     // 7. Private DICT -> widths
-    let (default_width, nominal_width) =
-        if top_dict.private_size > 0 && top_dict.private_offset > 0 {
-            let priv_start = top_dict.private_offset as usize;
-            let priv_end = priv_start + top_dict.private_size as usize;
-            if priv_end <= data.len() {
-                let priv_data = &data[priv_start..priv_end];
-                parse_private_dict(priv_data)
-            } else {
-                (0.0, 0.0)
-            }
+    let (default_width, nominal_width) = if top_dict.private_size > 0 && top_dict.private_offset > 0
+    {
+        let priv_start = top_dict.private_offset as usize;
+        let priv_end = priv_start + top_dict.private_size as usize;
+        if priv_end <= data.len() {
+            let priv_data = &data[priv_start..priv_end];
+            parse_private_dict(priv_data)
         } else {
             (0.0, 0.0)
-        };
+        }
+    } else {
+        (0.0, 0.0)
+    };
 
     // 8. Charset
     let charset = parse_charset(data, top_dict.charset_offset, char_strings_count);
@@ -1116,7 +1116,7 @@ mod tests {
         // Encode "3.14" -> nibbles: 3, A(.), 1, 4, F(end), F(pad)
         let data = vec![
             30, 0x3A, 0x14, 0xFF, // real: 3.14
-            0,  // operator 0
+            0,    // operator 0
         ];
         let entries = parse_dict(&data).unwrap();
         let val = entries[0].operands[0].as_f64();
@@ -1128,7 +1128,7 @@ mod tests {
         // Encode "-2.5" -> nibbles: E(-), 2, A(.), 5, F(end), F(pad)
         let data = vec![
             30, 0xE2, 0xA5, 0xFF, // real: -2.5
-            0,  // operator 0
+            0,    // operator 0
         ];
         let entries = parse_dict(&data).unwrap();
         let val = entries[0].operands[0].as_f64();
@@ -1140,7 +1140,7 @@ mod tests {
         // Encode "1E3" = 1000.0 -> nibbles: 1, B(E), 3, F(end)
         let data = vec![
             30, 0x1B, 0x3F, // real: 1E3
-            0, // operator 0
+            0,    // operator 0
         ];
         let entries = parse_dict(&data).unwrap();
         let val = entries[0].operands[0].as_f64();
@@ -1226,7 +1226,9 @@ mod tests {
     #[test]
     fn test_encode_decode_roundtrip() {
         // Test that our test helpers produce values the parser decodes correctly.
-        for val in &[0i64, 1, -1, 107, -107, 108, -108, 1131, -1131, 32767, -32768, 100_000] {
+        for val in &[
+            0i64, 1, -1, 107, -107, 108, -108, 1131, -1131, 32767, -32768, 100_000,
+        ] {
             let mut encoded = encode_dict_int(*val);
             encoded.push(0); // operator
             let entries = parse_dict(&encoded).unwrap();

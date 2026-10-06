@@ -1,8 +1,7 @@
 mod types;
 
 pub(crate) use types::{
-    ByteSink, Number, name_syntax, real_syntax, string_syntax, write_name, write_real,
-    write_string,
+    ByteSink, Number, name_syntax, real_syntax, string_syntax, write_name, write_real, write_string,
 };
 pub use types::{IndirectRef, PdfDict, PdfObject};
 

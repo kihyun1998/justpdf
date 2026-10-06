@@ -12,9 +12,8 @@ use super::types::EncryptionDict;
 
 /// The PDF "password padding" constant (32 bytes) from Table 3.18 / ISO 32000.
 pub const PADDING: [u8; 32] = [
-    0x28, 0xBF, 0x4E, 0x5E, 0x4E, 0x75, 0x8A, 0x41, 0x64, 0x00, 0x4E, 0x56, 0xFF, 0xFA, 0x01,
-    0x08, 0x2E, 0x2E, 0x00, 0xB6, 0xD0, 0x68, 0x3E, 0x80, 0x2F, 0x0C, 0xA9, 0xFE, 0x64, 0x53,
-    0x69, 0x7A,
+    0x28, 0xBF, 0x4E, 0x5E, 0x4E, 0x75, 0x8A, 0x41, 0x64, 0x00, 0x4E, 0x56, 0xFF, 0xFA, 0x01, 0x08,
+    0x2E, 0x2E, 0x00, 0xB6, 0xD0, 0x68, 0x3E, 0x80, 0x2F, 0x0C, 0xA9, 0xFE, 0x64, 0x53, 0x69, 0x7A,
 ];
 
 /// Pad a password to 32 bytes using the PDF padding constant.
@@ -103,11 +102,7 @@ pub fn compute_o_value_r234(
 }
 
 /// Algorithm 4/5: Compute the user password value /U (R=2/3/4).
-pub fn compute_u_value_r234(
-    file_key: &[u8],
-    ed: &EncryptionDict,
-    file_id: &[u8],
-) -> Vec<u8> {
+pub fn compute_u_value_r234(file_key: &[u8], ed: &EncryptionDict, file_id: &[u8]) -> Vec<u8> {
     if ed.r == 2 {
         // Algorithm 4: Simple RC4 encryption of the padding
         super::rc4::rc4(file_key, &PADDING)
@@ -227,11 +222,7 @@ pub fn compute_file_key_r5(
 ///
 /// Uses SHA-256/384/512 rotation based on the last byte of each round.
 /// 64 rounds minimum, continues while round number < last_byte + 32.
-pub fn compute_hash_r6(
-    password: &[u8],
-    salt: &[u8],
-    u_bytes: &[u8],
-) -> [u8; 32] {
+pub fn compute_hash_r6(password: &[u8], salt: &[u8], u_bytes: &[u8]) -> [u8; 32] {
     let pw = if password.len() > 127 {
         &password[..127]
     } else {
@@ -362,12 +353,7 @@ pub fn compute_file_key_r6_owner(
 /// Per-object key derivation for R=2/3/4.
 ///
 /// PDF spec Algorithm 1: key = MD5(file_key + obj_num_le + gen_num_le [+ "sAlT" for AES]).
-pub fn compute_object_key(
-    file_key: &[u8],
-    obj_num: u32,
-    gen_num: u16,
-    is_aes: bool,
-) -> Vec<u8> {
+pub fn compute_object_key(file_key: &[u8], obj_num: u32, gen_num: u16, is_aes: bool) -> Vec<u8> {
     let mut hasher = Md5::new();
     hasher.update(file_key);
     hasher.update(&obj_num.to_le_bytes()[..3]);
@@ -491,7 +477,13 @@ pub fn generate_values_r6(
 
     let perms_value = super::aes_cipher::encrypt_aes256_ecb_block(file_key, &perms_block);
 
-    (o_value, u_value, oe_value.to_vec(), ue_value.to_vec(), perms_value.to_vec())
+    (
+        o_value,
+        u_value,
+        oe_value.to_vec(),
+        ue_value.to_vec(),
+        perms_value.to_vec(),
+    )
 }
 
 /// AES-256-CBC encrypt without padding (for R=6 key generation).

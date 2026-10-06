@@ -1,7 +1,7 @@
 //! Plain text to PDF conversion.
 
-use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
 use crate::Result;
+use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
 use crate::error::FormatError;
 
 use justpdf_core::writer::{DocumentBuilder, PageBuilder};
@@ -144,7 +144,10 @@ impl FormatDocument for PlainTextDocument {
 
     fn page(&self, index: usize) -> Result<FormatPage> {
         if index >= self.pages.len() {
-            return Err(FormatError::OutOfRange { index, count: self.pages.len() });
+            return Err(FormatError::OutOfRange {
+                index,
+                count: self.pages.len(),
+            });
         }
         Ok(FormatPage {
             index,
@@ -155,14 +158,20 @@ impl FormatDocument for PlainTextDocument {
 
     fn page_text(&self, index: usize) -> Result<String> {
         if index >= self.pages.len() {
-            return Err(FormatError::OutOfRange { index, count: self.pages.len() });
+            return Err(FormatError::OutOfRange {
+                index,
+                count: self.pages.len(),
+            });
         }
         Ok(self.pages[index].join("\n"))
     }
 
     fn render_page(&self, index: usize, dpi: f64) -> Result<RenderedPage> {
         if index >= self.pages.len() {
-            return Err(FormatError::OutOfRange { index, count: self.pages.len() });
+            return Err(FormatError::OutOfRange {
+                index,
+                count: self.pages.len(),
+            });
         }
         let pdf_bytes = self.build_page_pdf(&self.pages[index])?;
         let doc = justpdf_core::PdfDocument::from_bytes(pdf_bytes)?;
@@ -181,7 +190,10 @@ impl FormatDocument for PlainTextDocument {
 
     fn render_page_png(&self, index: usize, dpi: f64) -> Result<Vec<u8>> {
         if index >= self.pages.len() {
-            return Err(FormatError::OutOfRange { index, count: self.pages.len() });
+            return Err(FormatError::OutOfRange {
+                index,
+                count: self.pages.len(),
+            });
         }
         let pdf_bytes = self.build_page_pdf(&self.pages[index])?;
         let doc = justpdf_core::PdfDocument::from_bytes(pdf_bytes)?;

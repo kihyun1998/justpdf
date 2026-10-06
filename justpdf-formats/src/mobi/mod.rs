@@ -4,9 +4,9 @@
 //! PalmDOC text (LZ77-style compression), strips HTML tags, and provides
 //! PDF conversion.
 
+use crate::Result;
 use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
 use crate::error::FormatError;
-use crate::Result;
 
 use justpdf_core::writer::{DocumentBuilder, PageBuilder};
 
@@ -70,9 +70,12 @@ impl MobiDocument {
         }
 
         let compression = u16::from_be_bytes([data[rec0_offset], data[rec0_offset + 1]]);
-        let text_length =
-            u32::from_be_bytes([data[rec0_offset + 4], data[rec0_offset + 5], data[rec0_offset + 6], data[rec0_offset + 7]])
-                as usize;
+        let text_length = u32::from_be_bytes([
+            data[rec0_offset + 4],
+            data[rec0_offset + 5],
+            data[rec0_offset + 6],
+            data[rec0_offset + 7],
+        ]) as usize;
         let text_record_count =
             u16::from_be_bytes([data[rec0_offset + 8], data[rec0_offset + 9]]) as usize;
 

@@ -136,11 +136,26 @@ mod tests {
 
     #[test]
     fn test_visibility_policy_from_name() {
-        assert_eq!(VisibilityPolicy::from_name(b"AllOn"), VisibilityPolicy::AllOn);
-        assert_eq!(VisibilityPolicy::from_name(b"AnyOn"), VisibilityPolicy::AnyOn);
-        assert_eq!(VisibilityPolicy::from_name(b"AllOff"), VisibilityPolicy::AllOff);
-        assert_eq!(VisibilityPolicy::from_name(b"AnyOff"), VisibilityPolicy::AnyOff);
-        assert_eq!(VisibilityPolicy::from_name(b"Unknown"), VisibilityPolicy::AnyOn);
+        assert_eq!(
+            VisibilityPolicy::from_name(b"AllOn"),
+            VisibilityPolicy::AllOn
+        );
+        assert_eq!(
+            VisibilityPolicy::from_name(b"AnyOn"),
+            VisibilityPolicy::AnyOn
+        );
+        assert_eq!(
+            VisibilityPolicy::from_name(b"AllOff"),
+            VisibilityPolicy::AllOff
+        );
+        assert_eq!(
+            VisibilityPolicy::from_name(b"AnyOff"),
+            VisibilityPolicy::AnyOff
+        );
+        assert_eq!(
+            VisibilityPolicy::from_name(b"Unknown"),
+            VisibilityPolicy::AnyOn
+        );
     }
 
     #[test]

@@ -11,7 +11,11 @@ pub fn build_action(action: &PdfAction) -> PdfDict {
             dict.insert(b"S".to_vec(), PdfObject::Name(b"GoTo".to_vec()));
             dict.insert(b"D".to_vec(), dest.to_pdf_array());
         }
-        PdfAction::GoToR { file, dest, new_window } => {
+        PdfAction::GoToR {
+            file,
+            dest,
+            new_window,
+        } => {
             dict.insert(b"S".to_vec(), PdfObject::Name(b"GoToR".to_vec()));
             dict.insert(b"F".to_vec(), PdfObject::String(file.as_bytes().to_vec()));
             dict.insert(b"D".to_vec(), dest.to_pdf_array());
@@ -39,7 +43,10 @@ pub fn build_action(action: &PdfAction) -> PdfDict {
         }
         PdfAction::JavaScript { script } => {
             dict.insert(b"S".to_vec(), PdfObject::Name(b"JavaScript".to_vec()));
-            dict.insert(b"JS".to_vec(), PdfObject::String(script.as_bytes().to_vec()));
+            dict.insert(
+                b"JS".to_vec(),
+                PdfObject::String(script.as_bytes().to_vec()),
+            );
         }
         PdfAction::SubmitForm { url, flags } => {
             dict.insert(b"S".to_vec(), PdfObject::Name(b"SubmitForm".to_vec()));
@@ -68,7 +75,10 @@ mod tests {
     use crate::object::IndirectRef;
 
     fn page_ref(num: u32) -> IndirectRef {
-        IndirectRef { obj_num: num, gen_num: 0 }
+        IndirectRef {
+            obj_num: num,
+            gen_num: 0,
+        }
     }
 
     #[test]
@@ -127,10 +137,7 @@ mod tests {
         };
         let dict = build_action(&action);
         assert_eq!(dict.get_name(b"S"), Some(b"Launch".as_slice()));
-        assert_eq!(
-            dict.get_string(b"F"),
-            Some(b"readme.txt".as_slice())
-        );
+        assert_eq!(dict.get_string(b"F"), Some(b"readme.txt".as_slice()));
         assert_eq!(dict.get_bool(b"NewWindow"), Some(true));
     }
 

@@ -17,7 +17,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = args.get(4).map(|s| s.as_str()).unwrap_or("output.png");
 
     let page = doc.page(page_idx)?;
-    println!("Page {}: {:.0}x{:.0} pt, rotation {}", page_idx + 1, page.width(), page.height(), page.rotation());
+    println!(
+        "Page {}: {:.0}x{:.0} pt, rotation {}",
+        page_idx + 1,
+        page.width(),
+        page.height(),
+        page.rotation()
+    );
 
     let png = page.render_png(dpi)?;
     std::fs::write(output, &png)?;

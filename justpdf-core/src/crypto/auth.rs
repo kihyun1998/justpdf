@@ -25,11 +25,7 @@ pub fn authenticate(state: &SecurityState, password: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Authenticate for R=2/3/4 (RC4 and AES-128).
-fn authenticate_r234(
-    ed: &EncryptionDict,
-    file_id: &[u8],
-    password: &[u8],
-) -> Result<Vec<u8>> {
+fn authenticate_r234(ed: &EncryptionDict, file_id: &[u8], password: &[u8]) -> Result<Vec<u8>> {
     // Try as user password
     let file_key = key::compute_file_encryption_key_r234(password, ed, file_id);
     let computed_u = key::compute_u_value_r234(&file_key, ed, file_id);
@@ -83,8 +79,7 @@ fn authenticate_r5(ed: &EncryptionDict, password: &[u8]) -> Result<Vec<u8>> {
         let o_key_salt = &ed.o[40..48];
 
         if verify_password_r5(password, o_validation_salt, &ed.u[..48], &ed.o[..32]) {
-            if let Some(file_key) =
-                key::compute_file_key_r5(password, o_key_salt, &ed.u[..48], oe)
+            if let Some(file_key) = key::compute_file_key_r5(password, o_key_salt, &ed.u[..48], oe)
             {
                 return Ok(file_key);
             }
@@ -155,16 +150,10 @@ fn authenticate_r6(ed: &EncryptionDict, password: &[u8]) -> Result<Vec<u8>> {
         let o_validation_salt = &ed.o[32..40];
         let o_stored_hash = &ed.o[..32];
 
-        let u_trunc = if ed.u.len() >= 48 {
-            &ed.u[..48]
-        } else {
-            &ed.u
-        };
+        let u_trunc = if ed.u.len() >= 48 { &ed.u[..48] } else { &ed.u };
         let computed_hash = key::compute_hash_r6(password, o_validation_salt, u_trunc);
         if computed_hash == o_stored_hash {
-            if let Some(file_key) =
-                key::compute_file_key_r6_owner(password, &ed.o, oe, &ed.u)
-            {
+            if let Some(file_key) = key::compute_file_key_r6_owner(password, &ed.o, oe, &ed.u) {
                 if let Some(ref perms) = ed.perms {
                     verify_perms_r6(&file_key, perms, ed.p, ed.encrypt_metadata)?;
                 }
@@ -177,12 +166,7 @@ fn authenticate_r6(ed: &EncryptionDict, password: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Verify the /Perms entry for R=6.
-fn verify_perms_r6(
-    file_key: &[u8],
-    perms: &[u8],
-    p: i32,
-    encrypt_metadata: bool,
-) -> Result<()> {
+fn verify_perms_r6(file_key: &[u8], perms: &[u8], p: i32, encrypt_metadata: bool) -> Result<()> {
     if perms.len() < 16 || file_key.len() < 32 {
         return Ok(()); // Can't verify, skip
     }
@@ -239,8 +223,7 @@ mod tests {
             str_f: None,
         };
 
-        let (o, u, expected_key) =
-            key::generate_o_u_values_r234(user_pw, owner_pw, &ed, file_id);
+        let (o, u, expected_key) = key::generate_o_u_values_r234(user_pw, owner_pw, &ed, file_id);
         ed.o = o;
         ed.u = u;
 
@@ -274,8 +257,7 @@ mod tests {
             str_f: None,
         };
 
-        let (o, u, expected_key) =
-            key::generate_o_u_values_r234(user_pw, owner_pw, &ed, file_id);
+        let (o, u, expected_key) = key::generate_o_u_values_r234(user_pw, owner_pw, &ed, file_id);
         ed.o = o;
         ed.u = u;
 
@@ -343,8 +325,7 @@ mod tests {
             str_f: None,
         };
 
-        let (o, u, expected_key) =
-            key::generate_o_u_values_r234(user_pw, owner_pw, &ed, file_id);
+        let (o, u, expected_key) = key::generate_o_u_values_r234(user_pw, owner_pw, &ed, file_id);
         ed.o = o;
         ed.u = u;
 

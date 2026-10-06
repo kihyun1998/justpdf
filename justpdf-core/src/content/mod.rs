@@ -34,10 +34,7 @@ pub fn parse_content_stream_arena(data: &[u8]) -> Result<Vec<ContentOp>> {
 }
 
 #[cfg(feature = "arena")]
-fn parse_content_stream_with_arena(
-    data: &[u8],
-    arena: &bumpalo::Bump,
-) -> Result<Vec<ContentOp>> {
+fn parse_content_stream_with_arena(data: &[u8], arena: &bumpalo::Bump) -> Result<Vec<ContentOp>> {
     let mut ops = Vec::new();
     let mut parser = ArenaContentParser::new(data, arena);
 
@@ -59,7 +56,11 @@ struct ArenaContentParser<'a> {
 #[cfg(feature = "arena")]
 impl<'a> ArenaContentParser<'a> {
     fn new(data: &'a [u8], arena: &'a bumpalo::Bump) -> Self {
-        Self { data, pos: 0, arena }
+        Self {
+            data,
+            pos: 0,
+            arena,
+        }
     }
 
     fn skip_whitespace_and_comments(&mut self) {

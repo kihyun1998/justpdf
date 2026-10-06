@@ -27,8 +27,7 @@ pub struct SearchResult {
 }
 
 /// Search options.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SearchOptions {
     /// Case-insensitive search.
     pub case_insensitive: bool,
@@ -37,7 +36,6 @@ pub struct SearchOptions {
     /// Maximum number of results (0 = unlimited).
     pub max_results: usize,
 }
-
 
 /// Search for a text pattern in a single page's extracted text.
 pub fn search_page(
@@ -87,7 +85,10 @@ fn search_page_exact(
         let char_start = byte_pos_to_char_index(&char_indices, abs_byte_pos);
         let char_end = byte_pos_to_char_index(&char_indices, match_end_byte);
 
-        if char_start < page_text.chars.len() && char_end <= page_text.chars.len() && char_start < char_end {
+        if char_start < page_text.chars.len()
+            && char_end <= page_text.chars.len()
+            && char_start < char_end
+        {
             let matched = &flat_text[abs_byte_pos..match_end_byte];
             let quad = compute_quad(&page_text.chars[char_start..char_end]);
 
@@ -129,7 +130,7 @@ fn search_page_regex(
     // Simple regex implementation using basic pattern matching
     // For a full implementation, we'd use the `regex` crate.
     // Here we implement a subset: literal, ., *, +, ?, \d, \w, \s, character classes [...], and alternation |
-    
+
     match_regex(&regex_pattern, page_text, options.max_results)
 }
 
@@ -176,18 +177,9 @@ fn compute_quad(chars: &[TextChar]) -> TextQuad {
         };
     }
 
-    let x0 = chars
-        .iter()
-        .map(|c| c.x)
-        .fold(f64::MAX, f64::min);
-    let y0 = chars
-        .iter()
-        .map(|c| c.y)
-        .fold(f64::MAX, f64::min);
-    let x1 = chars
-        .iter()
-        .map(|c| c.x + c.width)
-        .fold(f64::MIN, f64::max);
+    let x0 = chars.iter().map(|c| c.x).fold(f64::MAX, f64::min);
+    let y0 = chars.iter().map(|c| c.y).fold(f64::MAX, f64::min);
+    let x1 = chars.iter().map(|c| c.x + c.width).fold(f64::MIN, f64::max);
     let y1 = chars
         .iter()
         .map(|c| c.y + c.font_size)
@@ -198,11 +190,7 @@ fn compute_quad(chars: &[TextChar]) -> TextQuad {
 
 /// Simple regex matching without the regex crate.
 /// Supports basic patterns using Rust's built-in str::contains and manual matching.
-fn match_regex(
-    pattern: &str,
-    page_text: &PageText,
-    max_results: usize,
-) -> Vec<SearchResult> {
+fn match_regex(pattern: &str, page_text: &PageText, max_results: usize) -> Vec<SearchResult> {
     // We'll implement a basic NFA-style regex matcher for common patterns
     // For now, convert common regex patterns to string searches where possible
 
@@ -227,7 +215,10 @@ fn match_regex(
             let char_start = byte_pos_to_char_index(&char_indices, match_start);
             let char_end = byte_pos_to_char_index(&char_indices, match_end);
 
-            if char_start < page_text.chars.len() && char_end <= page_text.chars.len() && char_start < char_end {
+            if char_start < page_text.chars.len()
+                && char_end <= page_text.chars.len()
+                && char_start < char_end
+            {
                 let matched = &flat_text[match_start..match_end];
                 let quad = compute_quad(&page_text.chars[char_start..char_end]);
 
@@ -260,21 +251,21 @@ fn match_regex(
 #[derive(Debug)]
 enum RegexNode {
     Literal(char),
-    AnyChar,                    // .
-    Digit,                      // \d
-    Word,                       // \w
-    Whitespace,                 // \s
-    CharClass(Vec<CharRange>),  // [...]
+    AnyChar,                      // .
+    Digit,                        // \d
+    Word,                         // \w
+    Whitespace,                   // \s
+    CharClass(Vec<CharRange>),    // [...]
     NegCharClass(Vec<CharRange>), // [^...]
 }
 
 #[derive(Debug)]
 enum Quantifier {
     One,
-    ZeroOrMore,  // *
-    OneOrMore,   // +
-    ZeroOrOne,   // ?
-    Exact(usize),      // {n}
+    ZeroOrMore,                  // *
+    OneOrMore,                   // +
+    ZeroOrOne,                   // ?
+    Exact(usize),                // {n}
     Range(usize, Option<usize>), // {n,m}
 }
 
@@ -413,9 +404,10 @@ impl SimpleRegex {
             }
             Quantifier::ZeroOrOne => {
                 if self.matches_node(&part.node, text, pos)
-                    && let Some(end) = self.try_match_parts(parts, part_idx + 1, text, pos + 1) {
-                        return Some(end);
-                    }
+                    && let Some(end) = self.try_match_parts(parts, part_idx + 1, text, pos + 1)
+                {
+                    return Some(end);
+                }
                 self.try_match_parts(parts, part_idx + 1, text, pos)
             }
             Quantifier::Exact(n) => {
@@ -534,21 +526,48 @@ fn compile_sequence(pattern: &str) -> Option<Vec<RegexPart>> {
                     'd' => RegexNode::Digit,
                     'w' => RegexNode::Word,
                     's' => RegexNode::Whitespace,
-                    'D' => RegexNode::NegCharClass(vec![CharRange { start: '0', end: '9' }]),
+                    'D' => RegexNode::NegCharClass(vec![CharRange {
+                        start: '0',
+                        end: '9',
+                    }]),
                     'W' => {
                         // Non-word: we'll approximate
                         RegexNode::NegCharClass(vec![
-                            CharRange { start: 'a', end: 'z' },
-                            CharRange { start: 'A', end: 'Z' },
-                            CharRange { start: '0', end: '9' },
-                            CharRange { start: '_', end: '_' },
+                            CharRange {
+                                start: 'a',
+                                end: 'z',
+                            },
+                            CharRange {
+                                start: 'A',
+                                end: 'Z',
+                            },
+                            CharRange {
+                                start: '0',
+                                end: '9',
+                            },
+                            CharRange {
+                                start: '_',
+                                end: '_',
+                            },
                         ])
                     }
                     'S' => RegexNode::NegCharClass(vec![
-                        CharRange { start: ' ', end: ' ' },
-                        CharRange { start: '\t', end: '\t' },
-                        CharRange { start: '\n', end: '\n' },
-                        CharRange { start: '\r', end: '\r' },
+                        CharRange {
+                            start: ' ',
+                            end: ' ',
+                        },
+                        CharRange {
+                            start: '\t',
+                            end: '\t',
+                        },
+                        CharRange {
+                            start: '\n',
+                            end: '\n',
+                        },
+                        CharRange {
+                            start: '\r',
+                            end: '\r',
+                        },
                     ]),
                     c => RegexNode::Literal(c), // Escaped literal
                 }
@@ -716,7 +735,10 @@ pub fn search_case_insensitive(pages: &[PageText], query: &str) -> Vec<SearchRes
 }
 
 /// Regex search across multiple pages.
-pub fn search_regex(pages: &[PageText], pattern: &str) -> std::result::Result<Vec<SearchResult>, String> {
+pub fn search_regex(
+    pages: &[PageText],
+    pattern: &str,
+) -> std::result::Result<Vec<SearchResult>, String> {
     // Validate pattern by trying to compile
     if SimpleRegex::compile(pattern).is_none() {
         return Err(format!("Invalid regex pattern: {}", pattern));

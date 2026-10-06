@@ -169,9 +169,7 @@ fn decode_single(data: &[u8], filter: &[u8], params: Option<&PdfDict>) -> Result
             // JBIG2: passed through raw; pixels are decoded at the image layer (image::decode_image)
             Ok(data.to_vec())
         }
-        b"CCITTFaxDecode" | b"CCF" => {
-            ccitt::decode(data, params)
-        }
+        b"CCITTFaxDecode" | b"CCF" => ccitt::decode(data, params),
         b"Crypt" => {
             // Crypt filter is handled at the document level (transparent decryption).
             // By the time we reach here, the data has already been decrypted.
@@ -575,10 +573,7 @@ mod tests {
     #[test]
     fn test_cow_dct_passthrough_returns_borrowed() {
         let mut dict = PdfDict::new();
-        dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"DCTDecode".to_vec()),
-        );
+        dict.insert(b"Filter".to_vec(), PdfObject::Name(b"DCTDecode".to_vec()));
         let data = b"\xFF\xD8\xFF\xE0fake jpeg";
         let result = decode_stream_cow(data, &dict).unwrap();
         assert!(matches!(result, Cow::Borrowed(_)));
@@ -588,10 +583,7 @@ mod tests {
     #[test]
     fn test_cow_jpx_passthrough_returns_borrowed() {
         let mut dict = PdfDict::new();
-        dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"JPXDecode".to_vec()),
-        );
+        dict.insert(b"Filter".to_vec(), PdfObject::Name(b"JPXDecode".to_vec()));
         let data = b"fake jp2 data";
         let result = decode_stream_cow(data, &dict).unwrap();
         assert!(matches!(result, Cow::Borrowed(_)));
@@ -601,10 +593,7 @@ mod tests {
     #[test]
     fn test_cow_jbig2_passthrough_returns_borrowed() {
         let mut dict = PdfDict::new();
-        dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"JBIG2Decode".to_vec()),
-        );
+        dict.insert(b"Filter".to_vec(), PdfObject::Name(b"JBIG2Decode".to_vec()));
         let data = b"fake jbig2 data";
         let result = decode_stream_cow(data, &dict).unwrap();
         assert!(matches!(result, Cow::Borrowed(_)));
@@ -613,10 +602,7 @@ mod tests {
     #[test]
     fn test_cow_crypt_passthrough_returns_borrowed() {
         let mut dict = PdfDict::new();
-        dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"Crypt".to_vec()),
-        );
+        dict.insert(b"Filter".to_vec(), PdfObject::Name(b"Crypt".to_vec()));
         let data = b"already decrypted data";
         let result = decode_stream_cow(data, &dict).unwrap();
         assert!(matches!(result, Cow::Borrowed(_)));
@@ -634,10 +620,7 @@ mod tests {
         let compressed = encoder.finish().unwrap();
 
         let mut dict = PdfDict::new();
-        dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"FlateDecode".to_vec()),
-        );
+        dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
 
         let result = decode_stream_cow(&compressed, &dict).unwrap();
         assert!(matches!(result, Cow::Owned(_)));

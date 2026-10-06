@@ -4,7 +4,7 @@
 //! parameters from the linearization dictionary, and parses page offset hint tables.
 //! Linearized PDF generation is in [`crate::writer::linearize`].
 
-use crate::object::{parse_indirect_object, PdfObject};
+use crate::object::{PdfObject, parse_indirect_object};
 use crate::parser::PdfDocument;
 use crate::tokenizer::Tokenizer;
 
@@ -571,11 +571,11 @@ mod tests {
         // 2 pages: page0 has 3+1=4 objects, 100+5=105 bytes; page1 has 3+2=5 objects, 100+3=103 bytes.
         let mut buf = Vec::new();
         // Header
-        buf.extend_from_slice(&3u32.to_be_bytes());    // min objects = 3
-        buf.extend_from_slice(&500u32.to_be_bytes());   // first page offset
-        buf.extend_from_slice(&2u32.to_be_bytes());     // bits for delta-objects = 2
-        buf.extend_from_slice(&100u32.to_be_bytes());   // min page length = 100
-        buf.extend_from_slice(&3u32.to_be_bytes());     // bits for delta-length = 3
+        buf.extend_from_slice(&3u32.to_be_bytes()); // min objects = 3
+        buf.extend_from_slice(&500u32.to_be_bytes()); // first page offset
+        buf.extend_from_slice(&2u32.to_be_bytes()); // bits for delta-objects = 2
+        buf.extend_from_slice(&100u32.to_be_bytes()); // min page length = 100
+        buf.extend_from_slice(&3u32.to_be_bytes()); // bits for delta-length = 3
         // Items 6-9: zeros
         for _ in 0..4 {
             buf.extend_from_slice(&0u32.to_be_bytes());
@@ -607,9 +607,9 @@ mod tests {
         assert_eq!(hints.len(), 2);
         assert_eq!(hints[0].num_objects, 4); // 3 + 1
         assert_eq!(hints[1].num_objects, 5); // 3 + 2
-        assert_eq!(hints[0].length, 105);    // 100 + 5
-        assert_eq!(hints[1].length, 103);    // 100 + 3
+        assert_eq!(hints[0].length, 105); // 100 + 5
+        assert_eq!(hints[1].length, 103); // 100 + 3
         assert_eq!(hints[0].offset, 500);
-        assert_eq!(hints[1].offset, 605);    // 500 + 105
+        assert_eq!(hints[1].offset, 605); // 500 + 105
     }
 }

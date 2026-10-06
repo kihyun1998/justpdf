@@ -1,7 +1,7 @@
 //! Font recovery: substitution of missing or damaged fonts with Standard 14 equivalents.
 
-use super::{FontDescriptor, FontInfo, FontWidths, Encoding};
 use super::standard14::standard14_widths;
+use super::{Encoding, FontDescriptor, FontInfo, FontWidths};
 
 /// Case-insensitive check whether `haystack` contains `needle` (ASCII only).
 fn contains_ci(haystack: &[u8], needle: &[u8]) -> bool {
@@ -137,9 +137,15 @@ pub fn find_substitute(font_name: &[u8]) -> &'static [u8] {
     if super::standard14::is_standard14(font_name) {
         // Return the canonical name. We match on the stripped name.
         return match name {
-            n if n.starts_with(b"Courier") => select_variant("Courier", is_bold_name(n), is_italic_name(n)),
-            n if n.starts_with(b"Helvetica") => select_variant("Helvetica", is_bold_name(n), is_italic_name(n)),
-            n if n.starts_with(b"Times") => select_variant("Times", is_bold_name(n), is_italic_name(n)),
+            n if n.starts_with(b"Courier") => {
+                select_variant("Courier", is_bold_name(n), is_italic_name(n))
+            }
+            n if n.starts_with(b"Helvetica") => {
+                select_variant("Helvetica", is_bold_name(n), is_italic_name(n))
+            }
+            n if n.starts_with(b"Times") => {
+                select_variant("Times", is_bold_name(n), is_italic_name(n))
+            }
             b"Symbol" => b"Symbol",
             b"ZapfDingbats" => b"ZapfDingbats",
             _ => b"Helvetica",
@@ -204,7 +210,10 @@ pub fn find_substitute(font_name: &[u8]) -> &'static [u8] {
     }
 
     // PDF-specific name variants: ArialMT, TimesNewRomanPSMT, CourierNewPSMT, etc.
-    if contains_ci(name, b"ArialMT") || contains_ci(name, b"Arial-") || contains_ci(name, b"ArialNarrow") {
+    if contains_ci(name, b"ArialMT")
+        || contains_ci(name, b"Arial-")
+        || contains_ci(name, b"ArialNarrow")
+    {
         return select_variant("Helvetica", bold, italic);
     }
     if contains_ci(name, b"TimesNewRoman") || contains_ci(name, b"TimesNewRomanPS") {
@@ -313,7 +322,10 @@ mod tests {
 
     #[test]
     fn test_arial_bold_italic() {
-        assert_eq!(find_substitute(b"Arial-BoldItalic"), b"Helvetica-BoldOblique");
+        assert_eq!(
+            find_substitute(b"Arial-BoldItalic"),
+            b"Helvetica-BoldOblique"
+        );
     }
 
     #[test]
@@ -346,7 +358,10 @@ mod tests {
 
     #[test]
     fn test_times_new_roman_bold_italic() {
-        assert_eq!(find_substitute(b"TimesNewRoman-BoldItalic"), b"Times-BoldItalic");
+        assert_eq!(
+            find_substitute(b"TimesNewRoman-BoldItalic"),
+            b"Times-BoldItalic"
+        );
     }
 
     #[test]
@@ -471,7 +486,10 @@ mod tests {
 
     #[test]
     fn test_unknown_bold_italic_font_fallback() {
-        assert_eq!(find_substitute(b"SomeFont-BoldOblique"), b"Helvetica-BoldOblique");
+        assert_eq!(
+            find_substitute(b"SomeFont-BoldOblique"),
+            b"Helvetica-BoldOblique"
+        );
     }
 
     // ---------------------------------------------------------------
@@ -582,7 +600,10 @@ mod tests {
 
     #[test]
     fn test_hyphenated_names() {
-        assert_eq!(find_substitute(b"Courier-BoldOblique"), b"Courier-BoldOblique");
+        assert_eq!(
+            find_substitute(b"Courier-BoldOblique"),
+            b"Courier-BoldOblique"
+        );
         assert_eq!(find_substitute(b"Helvetica-Bold"), b"Helvetica-Bold");
         assert_eq!(find_substitute(b"Times-BoldItalic"), b"Times-BoldItalic");
     }
