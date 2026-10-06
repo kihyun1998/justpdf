@@ -26,4 +26,4 @@ Sets a value on a field (`/V`; `/AS` for buttons). Refuses read-only fields.
 
 ## Known holes / open
 - A filled value does not show on screen (above, inferred; no test checks it by rendering).
-- Tracked: #40 (form fill and flatten)
+- Tracked: #204 (form fill; appearance regeneration waits on #178)
