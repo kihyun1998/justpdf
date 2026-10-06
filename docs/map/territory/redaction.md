@@ -4,7 +4,7 @@
 Strips the page content inside Redact annotation areas, draws filled rectangles, then deletes the Redact annotations. Its promise is not "erase what is visible" but "remove the information from the file".
 
 ## Governing decisions
-**None.**
+- [ADR 0004 — Redaction never under-erases](../../adr/0004-redaction-never-under-erases.md): the promise and the rules for text, paths, images, Form XObjects, other annotations and incremental save. The design model below is the code **before** that ADR. Each gap is tracked under #203.
 
 ## Design model
 The actual rules of the content filter (`filter_content_ops`):
@@ -20,7 +20,7 @@ The actual rules of the content filter (`filter_content_ops`):
 - `justpdf-core/src/annot/redact.rs` — `apply_redactions`, `filter_content_ops`, `get_page_content_data`, `RedactInfo`
 
 ## Reference behaviour
-**None.**
+- MuPDF `pdf_redact_page` (per-glyph filtering with full graphics state; options for images and line art). ADR 0004 departs from it on partially covered line art: removed, not kept.
 
 ## Cross-cutting invariants
 - [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md)
@@ -35,4 +35,4 @@ The actual rules of the content filter (`filter_content_ops`):
 ## Known holes / open
 - `test_redaction_apply` only checks that the Redact annotation is gone, not that the text was deleted.
 - On a page with no content, Redact annotations are not removed. A Redact without `/Rect` is silently dropped. `overlay_text` is `dead_code`.
-- Tracked: #39 (redaction leftovers), #150 (a page index out of range is `AnnotationError`)
+- Tracked: #39 (erased content left in the output file), #203 (implementing ADR 0004: #207 shared interpreter, #209 text, #210 paths, #211 images, #214 Form XObjects, #212 other annotations and `/Thumb`, #213 incremental save, #215 structure tree), #150 (a page index out of range is `AnnotationError`)
