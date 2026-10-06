@@ -32,5 +32,5 @@ Turns the character codes of text-showing operators into glyph IDs, takes outlin
 
 ## Known holes / open
 - `GlyphCache::font_hash` caches a font's hash by the address of the font data, and `render_text_string` clones and drops that data on every call, so a later font reusing the address gets the earlier font's glyph outlines; which glyphs are affected depends on allocation patterns (measured 2026-09-30: two builds differing only in unrelated code drew different glyphs on four pages, identical once the memo was removed). Tracked: #163
-- Standard-14 text without a font, CFF, Type1 and Type3 are drawn as boxes (inferred; no pixel-checking test).
+- Standard-14 text without a font, CFF, Type1 and Type3 are drawn as boxes (inferred; no pixel-checking test). Standard-14 Helvetica rendered as one black box per glyph (measured 2026-10-06, `render_page` at 150 dpi, #184).
 - Tracked: #45 (/Differences, CID widths, CFF)

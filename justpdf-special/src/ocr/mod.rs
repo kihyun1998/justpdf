@@ -1,9 +1,10 @@
 //! OCR support via Tesseract CLI.
 //!
-//! Requires `tesseract` to be installed and available on the PATH.
+//! Requires `tesseract` 3.04 or newer to be installed and available on the PATH.
 
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 
 use crate::{Result, SpecialError};
 
@@ -48,16 +49,45 @@ pub fn ocr_image(image_path: &Path, language: Option<&str>) -> Result<String> {
         });
     }
 
-    let mut cmd = Command::new("tesseract");
-    cmd.arg(image_path);
-    cmd.arg("stdout"); // output to stdout
+    let output = tesseract_command(image_path.as_os_str(), language).output()?;
+    recognized_text(output)
+}
 
+/// OCR an encoded image (PNG, JPEG, ...) held in memory, passing it to
+/// Tesseract on stdin.
+fn ocr_image_bytes(image: &[u8], language: Option<&str>) -> Result<String> {
+    let mut child = tesseract_command("stdin".as_ref(), language)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| SpecialError::NotFound {
+            detail: format!("tesseract not found: {e}"),
+        })?;
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let (written, output) = std::thread::scope(|s| {
+        let writer = s.spawn(move || stdin.write_all(image));
+        let output = child.wait_with_output();
+        (writer.join().expect("stdin writer panicked"), output)
+    });
+    let text = recognized_text(output?)?;
+    written?;
+    Ok(text)
+}
+
+/// `tesseract <input> stdout [-l <language>]`.
+fn tesseract_command(input: &std::ffi::OsStr, language: Option<&str>) -> Command {
+    let mut cmd = Command::new("tesseract");
+    cmd.arg(input);
+    cmd.arg("stdout"); // output to stdout
     if let Some(lang) = language {
         cmd.arg("-l").arg(lang);
     }
+    cmd
+}
 
-    let output = cmd.output()?;
-
+/// The recognized text of a finished Tesseract run, or its stderr as the error.
+fn recognized_text(output: Output) -> Result<String> {
     if !output.status.success() {
         return Err(SpecialError::Feature {
             detail: format!(
@@ -66,7 +96,6 @@ pub fn ocr_image(image_path: &Path, language: Option<&str>) -> Result<String> {
             ),
         });
     }
-
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
@@ -96,17 +125,7 @@ pub fn ocr_pdf_page(
             detail: format!("render failed: {e}"),
         })?;
 
-    // Write to temp file
-    let temp_dir = std::env::temp_dir();
-    let temp_path = temp_dir.join(format!("justpdf_ocr_{}.png", std::process::id()));
-    std::fs::write(&temp_path, &png_data)?;
-
-    let result = ocr_image(&temp_path, language);
-
-    // Clean up
-    let _ = std::fs::remove_file(&temp_path);
-
-    result
+    ocr_image_bytes(&png_data, language)
 }
 
 /// Create a searchable PDF from a scanned PDF by adding an OCR text layer.
@@ -144,11 +163,7 @@ pub fn make_searchable_pdf(
         })?;
 
         // OCR the rendered image
-        let temp_path = std::env::temp_dir()
-            .join(format!("justpdf_ocr_{}_{i}.png", std::process::id()));
-        std::fs::write(&temp_path, &png_data)?;
-        let ocr_text = ocr_image(&temp_path, language).unwrap_or_default();
-        let _ = std::fs::remove_file(&temp_path);
+        let ocr_text = ocr_image_bytes(&png_data, language).unwrap_or_default();
 
         // Build page with image + invisible text overlay
         let mut page = PageBuilder::new(w, h);
@@ -215,6 +230,65 @@ mod tests {
         assert!(ops.iter().all(|op| op.operator != b"BI"));
         let xobjects = page.get_dict(b"Resources").unwrap().get_dict(b"XObject").unwrap();
         assert_eq!(xobjects.len(), 1);
+    }
+
+    /// The rows of a block capital, top first, on a 3×5 grid.
+    fn glyph_rows(c: char) -> [&'static str; 5] {
+        match c {
+            'E' => ["###", "#..", "###", "#..", "###"],
+            'F' => ["###", "#..", "###", "#..", "#.."],
+            'H' => ["#.#", "#.#", "###", "#.#", "#.#"],
+            'I' => ["###", ".#.", ".#.", ".#.", "###"],
+            'L' => ["#..", "#..", "#..", "#..", "###"],
+            'T' => ["###", ".#.", ".#.", ".#.", ".#."],
+            _ => panic!("no block glyph for {c:?}"),
+        }
+    }
+
+    /// A one-page PDF showing `word` as filled-rectangle block capitals.
+    fn pdf_showing(word: &str) -> justpdf_core::PdfDocument {
+        const CELL: f64 = 10.0;
+        let mut page = justpdf_core::writer::PageBuilder::new(400.0, 120.0);
+        page.set_fill_rgb(0.0, 0.0, 0.0);
+        for (i, c) in word.chars().enumerate() {
+            let left = 30.0 + i as f64 * 5.0 * CELL;
+            for (row, cells) in glyph_rows(c).iter().enumerate() {
+                for (col, cell) in cells.chars().enumerate() {
+                    if cell == '#' {
+                        let x = left + col as f64 * CELL;
+                        let y = 85.0 - (row as f64 + 1.0) * CELL;
+                        page.fill_rect(x, y, CELL, CELL);
+                    }
+                }
+            }
+        }
+        let mut builder = justpdf_core::writer::DocumentBuilder::new();
+        builder.add_page(page);
+        justpdf_core::PdfDocument::from_bytes(builder.build().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn test_concurrent_page_ocr_reads_its_own_page() {
+        if !is_tesseract_available() {
+            return;
+        }
+        let words = ["LIFE", "TILE", "FELT", "HEFT"];
+        std::thread::scope(|s| {
+            let handles: Vec<_> = (0..16)
+                .map(|i| {
+                    let word = words[i % words.len()];
+                    s.spawn(move || {
+                        let doc = pdf_showing(word);
+                        (word, ocr_pdf_page(&doc, 0, 150.0, Some("eng")))
+                    })
+                })
+                .collect();
+            for h in handles {
+                let (word, text) = h.join().unwrap();
+                let text = text.unwrap_or_else(|e| panic!("{word}: {e}"));
+                assert!(text.contains(word), "{word}: OCR read {text:?}");
+            }
+        });
     }
 
     #[test]
