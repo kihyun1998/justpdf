@@ -40,4 +40,4 @@ Builds a PDF from nothing. `DocumentBuilder` gathers fonts, pages, images, metad
 - The public API cannot connect an embedded TrueType font to a page (Design model above). Tracked: #65.
 - There is no path to write non-ASCII text correctly: standard fonts are WinAnsi-family, and there is no UTF-16BE text string encoder either.
 - Without encryption no `/ID` is written. ISO 32000-1 §14.4 says "optional but should be used"; whether it is required in PDF 2.0 was not checked.
-- Tracked: #33 (text string encoding), #34 (non-ASCII content text), #43 (inline image missing `cm`), #77 (no `/ID` without encryption)
+- Tracked: #33 (text string encoding), #34 (non-ASCII content text), #77 (no `/ID` without encryption)
