@@ -202,13 +202,7 @@ fn remove_null_objects(objects: &mut Vec<(u32, PdfObject)>) -> usize {
     let before = objects.len();
 
     // Remove null objects that are not referenced
-    objects.retain(|(obj_num, obj)| {
-        if obj.is_null() && !referenced.contains(obj_num) {
-            false
-        } else {
-            true
-        }
-    });
+    objects.retain(|(obj_num, obj)| !(obj.is_null() && !referenced.contains(obj_num)));
 
     before - objects.len()
 }
@@ -428,13 +422,13 @@ mod tests {
 
         rewrite_references(&mut obj, &remap, None);
 
-        if let PdfObject::Array(items) = &obj {
-            if let PdfObject::Dict(d) = &items[0] {
-                if let Some(PdfObject::Reference(r)) = d.get(b"Ref") {
-                    assert_eq!(r.obj_num, 1);
-                } else {
-                    panic!("expected reference");
-                }
+        if let PdfObject::Array(items) = &obj
+            && let PdfObject::Dict(d) = &items[0]
+        {
+            if let Some(PdfObject::Reference(r)) = d.get(b"Ref") {
+                assert_eq!(r.obj_num, 1);
+            } else {
+                panic!("expected reference");
             }
         }
     }

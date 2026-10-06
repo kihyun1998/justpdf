@@ -937,7 +937,7 @@ mod tests {
         let td_content_size = 6 + 11 + top_dict_extra.len();
         // INDEX overhead for 1 item: count(2) + offsize(1) + (count+1) offsets
         // offsize depends on data length: for small data (<= 255), offsize=1
-        let off_size: usize = if td_content_size + 1 <= 0xFF { 1 } else { 2 };
+        let off_size: usize = if td_content_size < 0xFF { 1 } else { 2 };
         let td_index_overhead = 2 + 1 + 2 * off_size; // count + offsize_byte + 2 offsets
         let top_dict_index_size = td_index_overhead + td_content_size;
 

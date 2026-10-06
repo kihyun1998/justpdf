@@ -32,10 +32,10 @@ fn bench_extract_page_text(c: &mut Criterion) {
     let pdf_data = create_text_pdf(1, 20);
     c.bench_function("extract_text_1page_20lines", |b| {
         b.iter(|| {
-            let mut doc = PdfDocument::from_bytes(pdf_data.clone()).unwrap();
-            let pages = collect_pages(&mut doc).unwrap();
+            let doc = PdfDocument::from_bytes(pdf_data.clone()).unwrap();
+            let pages = collect_pages(&doc).unwrap();
             for page in &pages {
-                let _ = extract_page_text(&mut doc, page);
+                let _ = extract_page_text(&doc, page);
             }
         })
     });
@@ -47,14 +47,14 @@ fn bench_extract_all_text(c: &mut Criterion) {
 
     c.bench_function("extract_all_text_5pages", |b| {
         b.iter(|| {
-            let mut doc = PdfDocument::from_bytes(small.clone()).unwrap();
-            extract_all_text_string(&mut doc).unwrap()
+            let doc = PdfDocument::from_bytes(small.clone()).unwrap();
+            extract_all_text_string(&doc).unwrap()
         })
     });
     c.bench_function("extract_all_text_20pages", |b| {
         b.iter(|| {
-            let mut doc = PdfDocument::from_bytes(medium.clone()).unwrap();
-            extract_all_text_string(&mut doc).unwrap()
+            let doc = PdfDocument::from_bytes(medium.clone()).unwrap();
+            extract_all_text_string(&doc).unwrap()
         })
     });
 }
@@ -63,8 +63,8 @@ fn bench_collect_pages(c: &mut Criterion) {
     let pdf_data = create_text_pdf(50, 5);
     c.bench_function("collect_pages_50pages", |b| {
         b.iter(|| {
-            let mut doc = PdfDocument::from_bytes(pdf_data.clone()).unwrap();
-            collect_pages(&mut doc).unwrap()
+            let doc = PdfDocument::from_bytes(pdf_data.clone()).unwrap();
+            collect_pages(&doc).unwrap()
         })
     });
 }

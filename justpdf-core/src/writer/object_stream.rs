@@ -148,10 +148,10 @@ pub(crate) fn is_eligible(
     }
 
     // Must NOT be a cross-reference stream (Type == XRef)
-    if let PdfObject::Dict(d) = obj {
-        if d.get_name(b"Type") == Some(b"XRef") {
-            return false;
-        }
+    if let PdfObject::Dict(d) = obj
+        && d.get_name(b"Type") == Some(b"XRef")
+    {
+        return false;
     }
 
     // Null objects: technically eligible but not worth packing
@@ -355,7 +355,7 @@ pub(crate) fn write_xref_stream_with_generations(
     let xref_offset = buf.len();
 
     // Write as an indirect object
-    write!(buf, "{} 0 obj\n", xref_stm_obj_num)?;
+    writeln!(buf, "{} 0 obj", xref_stm_obj_num)?;
     // Manually write the stream with correct /Length
     let mut stream_dict = dict;
     stream_dict.insert(

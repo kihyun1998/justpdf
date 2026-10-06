@@ -33,9 +33,9 @@ impl PageBuilder {
     /// Set the current font and size: `/{name} {size} Tf`, the name escaped.
     pub fn set_font(&mut self, resource_name: &str, size: f64) {
         use std::io::Write;
-        write!(
+        writeln!(
             self.content,
-            "{} {} Tf\n",
+            "{} {} Tf",
             name_syntax(resource_name.as_bytes()),
             Number(size)
         )
@@ -55,7 +55,7 @@ impl PageBuilder {
     /// Move to position (x, y): `x y Td`.
     pub fn move_to(&mut self, x: f64, y: f64) {
         use std::io::Write;
-        write!(self.content, "{} {} Td\n", Number(x), Number(y)).unwrap();
+        writeln!(self.content, "{} {} Td", Number(x), Number(y)).unwrap();
     }
 
     /// Show a text string: `(text) Tj`, or `<hex> Tj` when it holds bytes
@@ -68,35 +68,21 @@ impl PageBuilder {
     /// Set fill color in RGB: `r g b rg`.
     pub fn set_fill_rgb(&mut self, r: f64, g: f64, b: f64) {
         use std::io::Write;
-        write!(
-            self.content,
-            "{} {} {} rg\n",
-            Number(r),
-            Number(g),
-            Number(b)
-        )
-        .unwrap();
+        writeln!(self.content, "{} {} {} rg", Number(r), Number(g), Number(b)).unwrap();
     }
 
     /// Set stroke color in RGB: `r g b RG`.
     pub fn set_stroke_rgb(&mut self, r: f64, g: f64, b: f64) {
         use std::io::Write;
-        write!(
-            self.content,
-            "{} {} {} RG\n",
-            Number(r),
-            Number(g),
-            Number(b)
-        )
-        .unwrap();
+        writeln!(self.content, "{} {} {} RG", Number(r), Number(g), Number(b)).unwrap();
     }
 
     /// Draw a line from (x1,y1) to (x2,y2) and stroke: `x1 y1 m x2 y2 l S`.
     pub fn draw_line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64) {
         use std::io::Write;
-        write!(
+        writeln!(
             self.content,
-            "{} {} m {} {} l S\n",
+            "{} {} m {} {} l S",
             Number(x1),
             Number(y1),
             Number(x2),
@@ -108,9 +94,9 @@ impl PageBuilder {
     /// Draw a stroked rectangle: `x y w h re S`.
     pub fn draw_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
         use std::io::Write;
-        write!(
+        writeln!(
             self.content,
-            "{} {} {} {} re S\n",
+            "{} {} {} {} re S",
             Number(x),
             Number(y),
             Number(w),
@@ -122,9 +108,9 @@ impl PageBuilder {
     /// Draw a filled rectangle: `x y w h re f`.
     pub fn fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
         use std::io::Write;
-        write!(
+        writeln!(
             self.content,
-            "{} {} {} {} re f\n",
+            "{} {} {} {} re f",
             Number(x),
             Number(y),
             Number(w),
@@ -136,9 +122,9 @@ impl PageBuilder {
     /// Draw an image with transformation: `q w 0 0 h x y cm /name Do Q`.
     pub fn draw_image(&mut self, name: &str, x: f64, y: f64, w: f64, h: f64) {
         use std::io::Write;
-        write!(
+        writeln!(
             self.content,
-            "q {} 0 0 {} {} {} cm {} Do Q\n",
+            "q {} 0 0 {} {} {} cm {} Do Q",
             Number(w),
             Number(h),
             Number(x),

@@ -18,7 +18,7 @@ fn main() {
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("page_{}.png", page_index + 1));
 
-    let mut doc = PdfDocument::open(pdf_path).expect("failed to open PDF");
+    let doc = PdfDocument::open(pdf_path).expect("failed to open PDF");
 
     let options = RenderOptions {
         dpi,
@@ -26,7 +26,7 @@ fn main() {
     };
 
     println!("Rendering page {} at {dpi} DPI...", page_index + 1);
-    let png_data = render_page(&mut doc, page_index, &options).expect("failed to render");
+    let png_data = render_page(&doc, page_index, &options).expect("failed to render");
 
     std::fs::write(&output, &png_data).expect("failed to write PNG");
     println!("Saved to {output} ({} bytes)", png_data.len());

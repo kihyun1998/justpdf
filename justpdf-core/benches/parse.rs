@@ -42,7 +42,7 @@ fn bench_resolve_objects(c: &mut Criterion) {
     let pdf = create_test_pdf(10);
     c.bench_function("resolve_all_objects_10pages", |b| {
         b.iter(|| {
-            let mut doc = PdfDocument::from_bytes(pdf.clone()).unwrap();
+            let doc = PdfDocument::from_bytes(pdf.clone()).unwrap();
             let refs: Vec<_> = doc.object_refs().collect();
             for r in &refs {
                 let _ = doc.resolve(r);

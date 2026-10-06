@@ -116,17 +116,16 @@ impl DocumentModifier {
             .cloned()
             .unwrap_or(PdfObject::Null);
 
-        if let PdfObject::Dict(mut pages_dict) = pages_obj {
-            if let Some(PdfObject::Array(mut kids)) = pages_dict.remove(b"Kids") {
-                if page_index < kids.len() {
-                    kids.remove(page_index);
-                    let count = kids.len() as i64;
-                    pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(kids));
-                    pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(count));
-                    self.writer
-                        .set_object(pages_obj_num, PdfObject::Dict(pages_dict));
-                }
-            }
+        if let PdfObject::Dict(mut pages_dict) = pages_obj
+            && let Some(PdfObject::Array(mut kids)) = pages_dict.remove(b"Kids")
+            && page_index < kids.len()
+        {
+            kids.remove(page_index);
+            let count = kids.len() as i64;
+            pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(kids));
+            pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(count));
+            self.writer
+                .set_object(pages_obj_num, PdfObject::Dict(pages_dict));
         }
 
         Ok(())
@@ -144,16 +143,16 @@ impl DocumentModifier {
             .cloned()
             .unwrap_or(PdfObject::Null);
 
-        if let PdfObject::Dict(mut pages_dict) = pages_obj {
-            if let Some(PdfObject::Array(mut kids)) = pages_dict.remove(b"Kids") {
-                let idx = page_index.min(kids.len());
-                kids.insert(idx, PdfObject::Reference(page_ref));
-                let count = kids.len() as i64;
-                pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(kids));
-                pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(count));
-                self.writer
-                    .set_object(pages_obj_num, PdfObject::Dict(pages_dict));
-            }
+        if let PdfObject::Dict(mut pages_dict) = pages_obj
+            && let Some(PdfObject::Array(mut kids)) = pages_dict.remove(b"Kids")
+        {
+            let idx = page_index.min(kids.len());
+            kids.insert(idx, PdfObject::Reference(page_ref));
+            let count = kids.len() as i64;
+            pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(kids));
+            pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(count));
+            self.writer
+                .set_object(pages_obj_num, PdfObject::Dict(pages_dict));
         }
 
         Ok(())
@@ -169,20 +168,20 @@ impl DocumentModifier {
             .cloned()
             .unwrap_or(PdfObject::Null);
 
-        if let PdfObject::Dict(mut pages_dict) = pages_obj {
-            if let Some(PdfObject::Array(kids)) = pages_dict.remove(b"Kids") {
-                let mut new_kids = Vec::with_capacity(order.len());
-                for &idx in order {
-                    if idx < kids.len() {
-                        new_kids.push(kids[idx].clone());
-                    }
+        if let PdfObject::Dict(mut pages_dict) = pages_obj
+            && let Some(PdfObject::Array(kids)) = pages_dict.remove(b"Kids")
+        {
+            let mut new_kids = Vec::with_capacity(order.len());
+            for &idx in order {
+                if idx < kids.len() {
+                    new_kids.push(kids[idx].clone());
                 }
-                let count = new_kids.len() as i64;
-                pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(new_kids));
-                pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(count));
-                self.writer
-                    .set_object(pages_obj_num, PdfObject::Dict(pages_dict));
             }
+            let count = new_kids.len() as i64;
+            pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(new_kids));
+            pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(count));
+            self.writer
+                .set_object(pages_obj_num, PdfObject::Dict(pages_dict));
         }
 
         Ok(())
@@ -397,10 +396,10 @@ impl DocumentModifier {
 
     fn find_pages_ref(&self) -> Result<IndirectRef> {
         // Look up Catalog → /Pages
-        if let Some(PdfObject::Dict(catalog)) = self.find_object(self.catalog_num) {
-            if let Some(PdfObject::Reference(r)) = catalog.get(b"Pages") {
-                return Ok(r.clone());
-            }
+        if let Some(PdfObject::Dict(catalog)) = self.find_object(self.catalog_num)
+            && let Some(PdfObject::Reference(r)) = catalog.get(b"Pages")
+        {
+            return Ok(r.clone());
         }
         // Fallback: guess object 2
         Ok(IndirectRef {
@@ -572,13 +571,13 @@ pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result
             None => obj.clone(),
         };
         offsets.push((*obj_num, buf.len()));
-        write!(buf, "{} {} obj\n", obj_num, gen_num)?;
+        writeln!(buf, "{} {} obj", obj_num, gen_num)?;
         crate::writer::serialize::serialize_object(&mut buf, &write_obj)?;
         write!(buf, "\nendobj\n")?;
     }
 
     let new_xref_offset = buf.len();
-    write!(buf, "xref\n")?;
+    writeln!(buf, "xref")?;
     let mut entries: Vec<(u32, Option<usize>)> = offsets
         .into_iter()
         .map(|(n, offset)| (n, Some(offset)))
@@ -586,7 +585,7 @@ pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result
         .collect();
     entries.sort_by_key(|(n, _)| *n);
     for (obj_num, offset) in &entries {
-        write!(buf, "{} 1\n", obj_num)?;
+        writeln!(buf, "{} 1", obj_num)?;
         match offset {
             Some(offset) => writeln!(
                 buf,
@@ -609,7 +608,7 @@ pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result
             .as_ref(),
         old_startxref,
     );
-    write!(buf, "trailer\n")?;
+    writeln!(buf, "trailer")?;
     crate::writer::serialize::serialize_dict(&mut buf, &trailer)?;
     write!(buf, "\nstartxref\n{}\n%%EOF\n", new_xref_offset)?;
 
@@ -676,9 +675,9 @@ pub fn merge_documents(docs: &[&PdfDocument]) -> Result<Vec<u8>> {
     let mut all_page_refs: Vec<IndirectRef> = Vec::new();
 
     for doc in docs.iter() {
-        let pages = collect_pages(*doc)?;
+        let pages = collect_pages(doc)?;
         for page_info in &pages {
-            let page_ref = graft_page(&mut writer, *doc, page_info, &pages_ref)?;
+            let page_ref = graft_page(&mut writer, doc, page_info, &pages_ref)?;
             all_page_refs.push(page_ref);
         }
     }
@@ -822,12 +821,12 @@ mod tests {
     #[test]
     fn test_modifier_roundtrip() {
         let bytes = create_test_pdf("Hello", 2);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
 
         let modifier = DocumentModifier::from_document(&doc).unwrap();
         let new_bytes = modifier.build().unwrap();
 
-        let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
+        let reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
         let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 2);
     }
@@ -835,13 +834,13 @@ mod tests {
     #[test]
     fn test_delete_page() {
         let bytes = create_test_pdf("Test", 3);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
 
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.delete_page(1).unwrap(); // remove middle page
 
         let new_bytes = modifier.build().unwrap();
-        let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
+        let reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
         let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 2);
     }
@@ -849,13 +848,13 @@ mod tests {
     #[test]
     fn test_reorder_pages() {
         let bytes = create_test_pdf("Reorder", 3);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
 
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.reorder_pages(&[2, 0, 1]).unwrap(); // reverse-ish
 
         let new_bytes = modifier.build().unwrap();
-        let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
+        let reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
         let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 3);
     }
@@ -863,7 +862,7 @@ mod tests {
     #[test]
     fn test_set_info() {
         let bytes = create_test_pdf("Info", 1);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
 
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.set_info(b"Title", "New Title");
@@ -880,12 +879,12 @@ mod tests {
         let bytes1 = create_test_pdf("Doc1", 2);
         let bytes2 = create_test_pdf("Doc2", 3);
 
-        let mut doc1 = PdfDocument::from_bytes(bytes1).unwrap();
-        let mut doc2 = PdfDocument::from_bytes(bytes2).unwrap();
+        let doc1 = PdfDocument::from_bytes(bytes1).unwrap();
+        let doc2 = PdfDocument::from_bytes(bytes2).unwrap();
 
         let merged = merge_documents(&[&doc1, &doc2]).unwrap();
 
-        let mut reparsed = PdfDocument::from_bytes(merged).unwrap();
+        let reparsed = PdfDocument::from_bytes(merged).unwrap();
         let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 5); // 2 + 3
     }
@@ -1392,7 +1391,7 @@ mod tests {
         let original = create_test_pdf("Original", 1);
         let original_len = original.len();
 
-        let mut doc = PdfDocument::from_bytes(original.clone()).unwrap();
+        let doc = PdfDocument::from_bytes(original.clone()).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
         modifier.set_info(b"Title", "Updated Title");
 
@@ -1417,7 +1416,7 @@ mod tests {
     #[test]
     fn test_garbage_collect() {
         let bytes = create_test_pdf("GC Test", 1);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         // Run GC first to establish baseline (some objects from parsing may be unreachable)
@@ -1446,12 +1445,12 @@ mod tests {
         let bytes1 = create_test_pdf("Doc1", 1);
         let bytes2 = create_test_pdf("Doc2", 1);
 
-        let mut doc1 = PdfDocument::from_bytes(bytes1).unwrap();
-        let mut doc2 = PdfDocument::from_bytes(bytes2).unwrap();
+        let doc1 = PdfDocument::from_bytes(bytes1).unwrap();
+        let doc2 = PdfDocument::from_bytes(bytes2).unwrap();
 
         let merged = merge_documents(&[&doc1, &doc2]).unwrap();
 
-        let mut reparsed = PdfDocument::from_bytes(merged).unwrap();
+        let reparsed = PdfDocument::from_bytes(merged).unwrap();
         let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 2);
 
@@ -1899,7 +1898,7 @@ mod tests {
 
         let mut buf = source.clone();
         let info_offset = buf.len();
-        write!(buf, "{info_num} {gen_num} obj\n").unwrap();
+        writeln!(buf, "{info_num} {gen_num} obj").unwrap();
         crate::writer::serialize::serialize_object(&mut buf, &info).unwrap();
         write!(buf, "\nendobj\n").unwrap();
         let xref_offset = buf.len();
@@ -2206,7 +2205,7 @@ mod tests {
 
         let mut buf = source.clone();
         let offset = buf.len();
-        write!(buf, "{catalog_num} 1 obj\n").unwrap();
+        writeln!(buf, "{catalog_num} 1 obj").unwrap();
         crate::writer::serialize::serialize_object(&mut buf, &catalog).unwrap();
         write!(buf, "\nendobj\n").unwrap();
         let xref_offset = buf.len();

@@ -294,7 +294,7 @@ fn remove_ref_from_order(arr_opt: Option<PdfObject>, ocg_ref: &IndirectRef) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::page::collect_pages;
+
     use crate::parser::PdfDocument;
     use crate::writer::document::DocumentBuilder;
     use crate::writer::page::PageBuilder;
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn test_add_ocg_visible() {
         let bytes = create_test_pdf();
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ocg_ref = add_ocg(&mut modifier, "Visible Layer", true).unwrap();
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn test_add_ocg_hidden() {
         let bytes = create_test_pdf();
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ocg_ref = add_ocg(&mut modifier, "Hidden Layer", false).unwrap();
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn test_add_multiple_ocgs() {
         let bytes = create_test_pdf();
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let _ = add_ocg(&mut modifier, "Layer 1", true).unwrap();
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn test_set_ocg_visibility_off() {
         let bytes = create_test_pdf();
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ocg_ref = add_ocg(&mut modifier, "Toggle Layer", true).unwrap();
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn test_set_ocg_visibility_on() {
         let bytes = create_test_pdf();
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ocg_ref = add_ocg(&mut modifier, "Toggle Layer", false).unwrap();
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn test_set_visibility_no_oc_properties_error() {
         let bytes = create_test_pdf();
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let dummy_ref = IndirectRef {
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn test_remove_ocg() {
         let bytes = create_test_pdf();
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ref1 = add_ocg(&mut modifier, "Layer 1", true).unwrap();
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn test_remove_ocg_no_oc_properties() {
         let bytes = create_test_pdf();
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let dummy_ref = IndirectRef {
@@ -520,14 +520,14 @@ mod tests {
     #[test]
     fn test_add_ocg_roundtrip() {
         let bytes = create_test_pdf();
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         add_ocg(&mut modifier, "Roundtrip Layer", true).unwrap();
 
         // Build and re-parse
         let new_bytes = modifier.build().unwrap();
-        let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
+        let reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
 
         // Should be able to read OC properties
         let props = crate::ocg::read_oc_properties(&reparsed).unwrap();
@@ -546,13 +546,13 @@ mod tests {
     #[test]
     fn test_add_hidden_ocg_roundtrip() {
         let bytes = create_test_pdf();
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ocg_ref = add_ocg(&mut modifier, "Hidden Layer", false).unwrap();
 
         let new_bytes = modifier.build().unwrap();
-        let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
+        let reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
 
         let props = crate::ocg::read_oc_properties(&reparsed).unwrap().unwrap();
         let config = props.default_config.unwrap();

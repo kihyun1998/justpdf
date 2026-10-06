@@ -15,7 +15,7 @@ pub fn authenticate(state: &SecurityState, password: &[u8]) -> Result<Vec<u8>> {
     let ed = &state.encrypt_dict;
 
     match ed.r {
-        2 | 3 | 4 => authenticate_r234(ed, &state.file_id, password),
+        2..=4 => authenticate_r234(ed, &state.file_id, password),
         5 => authenticate_r5(ed, password),
         6 => authenticate_r6(ed, password),
         _ => Err(JustPdfError::UnsupportedEncryption {
@@ -63,10 +63,10 @@ fn authenticate_r5(ed: &EncryptionDict, password: &[u8]) -> Result<Vec<u8>> {
     let validation_salt = &ed.u[32..40];
     let key_salt = &ed.u[40..48];
 
-    if verify_password_r5(password, validation_salt, &[], &ed.u[..32]) {
-        if let Some(file_key) = key::compute_file_key_r5(password, key_salt, &[], ue) {
-            return Ok(file_key);
-        }
+    if verify_password_r5(password, validation_salt, &[], &ed.u[..32])
+        && let Some(file_key) = key::compute_file_key_r5(password, key_salt, &[], ue)
+    {
+        return Ok(file_key);
     }
 
     // Try owner password
@@ -78,11 +78,10 @@ fn authenticate_r5(ed: &EncryptionDict, password: &[u8]) -> Result<Vec<u8>> {
         let o_validation_salt = &ed.o[32..40];
         let o_key_salt = &ed.o[40..48];
 
-        if verify_password_r5(password, o_validation_salt, &ed.u[..48], &ed.o[..32]) {
-            if let Some(file_key) = key::compute_file_key_r5(password, o_key_salt, &ed.u[..48], oe)
-            {
-                return Ok(file_key);
-            }
+        if verify_password_r5(password, o_validation_salt, &ed.u[..48], &ed.o[..32])
+            && let Some(file_key) = key::compute_file_key_r5(password, o_key_salt, &ed.u[..48], oe)
+        {
+            return Ok(file_key);
         }
     }
 
@@ -131,14 +130,14 @@ fn authenticate_r6(ed: &EncryptionDict, password: &[u8]) -> Result<Vec<u8>> {
     let u_stored_hash = &ed.u[..32];
 
     let computed_hash = key::compute_hash_r6(password, u_validation_salt, &[]);
-    if computed_hash == u_stored_hash {
-        if let Some(file_key) = key::compute_file_key_r6_user(password, &ed.u, ue) {
-            // Verify /Perms if present
-            if let Some(ref perms) = ed.perms {
-                verify_perms_r6(&file_key, perms, ed.p, ed.encrypt_metadata)?;
-            }
-            return Ok(file_key);
+    if computed_hash == u_stored_hash
+        && let Some(file_key) = key::compute_file_key_r6_user(password, &ed.u, ue)
+    {
+        // Verify /Perms if present
+        if let Some(ref perms) = ed.perms {
+            verify_perms_r6(&file_key, perms, ed.p, ed.encrypt_metadata)?;
         }
+        return Ok(file_key);
     }
 
     // Try owner password
@@ -152,13 +151,13 @@ fn authenticate_r6(ed: &EncryptionDict, password: &[u8]) -> Result<Vec<u8>> {
 
         let u_trunc = if ed.u.len() >= 48 { &ed.u[..48] } else { &ed.u };
         let computed_hash = key::compute_hash_r6(password, o_validation_salt, u_trunc);
-        if computed_hash == o_stored_hash {
-            if let Some(file_key) = key::compute_file_key_r6_owner(password, &ed.o, oe, &ed.u) {
-                if let Some(ref perms) = ed.perms {
-                    verify_perms_r6(&file_key, perms, ed.p, ed.encrypt_metadata)?;
-                }
-                return Ok(file_key);
+        if computed_hash == o_stored_hash
+            && let Some(file_key) = key::compute_file_key_r6_owner(password, &ed.o, oe, &ed.u)
+        {
+            if let Some(ref perms) = ed.perms {
+                verify_perms_r6(&file_key, perms, ed.p, ed.encrypt_metadata)?;
             }
+            return Ok(file_key);
         }
     }
 

@@ -60,7 +60,7 @@ impl CbzDocument {
         }
 
         // Sort by filename (natural sort)
-        entries.sort_by(|a, b| natural_sort_key(&a.0).cmp(&natural_sort_key(&b.0)));
+        entries.sort_by_key(|a| natural_sort_key(&a.0));
 
         // Decode image dimensions
         let mut images = Vec::new();
@@ -209,10 +209,10 @@ fn is_image_extension(name: &str) -> bool {
 
 fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     // Try to get dimensions without full decode
-    if let Ok(reader) = image::ImageReader::new(Cursor::new(data)).with_guessed_format() {
-        if let Ok((w, h)) = reader.into_dimensions() {
-            return Some((w, h));
-        }
+    if let Ok(reader) = image::ImageReader::new(Cursor::new(data)).with_guessed_format()
+        && let Ok((w, h)) = reader.into_dimensions()
+    {
+        return Some((w, h));
     }
     None
 }

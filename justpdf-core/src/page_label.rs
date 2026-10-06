@@ -598,7 +598,7 @@ mod tests {
     fn test_parse_page_labels_manual_structure() {
         // Build a minimal PDF that has a /PageLabels number tree in the catalog.
         let bytes = make_test_pdf(5);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
 
         // Manually inject /PageLabels into the catalog.
         let catalog_ref = doc.catalog_ref().unwrap().clone();
@@ -648,7 +648,7 @@ mod tests {
     #[test]
     fn test_roundtrip_page_labels() {
         let bytes = make_test_pdf(6);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ranges = vec![
@@ -663,7 +663,7 @@ mod tests {
 
         // Serialize and re-parse
         let new_bytes = modifier.build().unwrap();
-        let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
+        let reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
 
         let parsed_ranges = read_page_labels(&reparsed).unwrap();
         assert_eq!(parsed_ranges.len(), 3);
@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn test_roundtrip_with_logical_start() {
         let bytes = make_test_pdf(4);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ranges = vec![PageLabelRange::new(0, PageLabelStyle::Decimal).with_logical_start(10)];
@@ -700,7 +700,7 @@ mod tests {
         set_page_labels(&mut modifier, &ranges).unwrap();
 
         let new_bytes = modifier.build().unwrap();
-        let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
+        let reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
 
         let parsed_ranges = read_page_labels(&reparsed).unwrap();
         assert_eq!(parsed_ranges.len(), 1);
@@ -713,7 +713,7 @@ mod tests {
     #[test]
     fn test_roundtrip_none_style_with_prefix() {
         let bytes = make_test_pdf(2);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
         let ranges = vec![
@@ -724,7 +724,7 @@ mod tests {
         set_page_labels(&mut modifier, &ranges).unwrap();
 
         let new_bytes = modifier.build().unwrap();
-        let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
+        let reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
 
         let parsed_ranges = read_page_labels(&reparsed).unwrap();
         assert_eq!(parsed_ranges.len(), 2);
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn test_read_page_labels_no_labels() {
         let bytes = make_test_pdf(1);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let ranges = read_page_labels(&doc).unwrap();
         assert!(ranges.is_empty());
     }

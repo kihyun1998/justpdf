@@ -286,7 +286,7 @@ pub fn parse_hint_tables(data: &[u8], params: &LinearizationParams) -> Option<Ve
     // Section 2: page-length deltas
     let mut lengths: Vec<u64> = Vec::with_capacity(n_pages);
     for _ in 0..n_pages {
-        let delta = reader.read_bits(bits_delta_length)? as u64;
+        let delta = reader.read_bits(bits_delta_length)?;
         lengths.push(min_page_length + delta);
     }
 

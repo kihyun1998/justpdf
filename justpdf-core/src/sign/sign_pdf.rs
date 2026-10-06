@@ -144,7 +144,7 @@ fn build_pdf_with_placeholder(
 
     // Write sig value object
     let sig_val_offset = buf.len();
-    write!(buf, "{} 0 obj\n", sig_value_num)?;
+    writeln!(buf, "{} 0 obj", sig_value_num)?;
     write!(
         buf,
         "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached "
@@ -157,7 +157,7 @@ fn build_pdf_with_placeholder(
     write!(buf, "/Contents <")?;
     let contents_offset = buf.len();
     let contents_length = PLACEHOLDER_SIZE * 2; // hex characters
-    buf.extend(std::iter::repeat(b'0').take(contents_length));
+    buf.extend(std::iter::repeat_n(b'0', contents_length));
     write!(buf, "> ")?;
 
     write!(buf, "/Name {} ", string_syntax(signer_name.as_bytes()))?;
@@ -172,7 +172,7 @@ fn build_pdf_with_placeholder(
 
     // Write signature field
     let sig_field_offset = buf.len();
-    write!(buf, "{} 0 obj\n", sig_field_num)?;
+    writeln!(buf, "{} 0 obj", sig_field_num)?;
     write!(buf, "<< /Type /Annot /Subtype /Widget /FT /Sig ")?;
     write!(buf, "/T (Signature1) ")?;
     write!(buf, "/V {} 0 R ", sig_value_num)?;
@@ -209,10 +209,10 @@ fn build_pdf_with_placeholder(
         );
 
         let ap_offset = buf.len();
-        write!(buf, "{} 0 obj\n", ap_stream_num)?;
+        writeln!(buf, "{} 0 obj", ap_stream_num)?;
         // make_stream already includes /Length and /Filter
         serialize_dict(&mut buf, &ap_dict)?;
-        write!(buf, "\n")?;
+        writeln!(buf)?;
         write!(buf, "stream\r\n")?;
         buf.extend_from_slice(&ap_data);
         write!(buf, "\r\nendstream\nendobj\n")?;
@@ -221,11 +221,11 @@ fn build_pdf_with_placeholder(
 
     // Write new xref
     let xref_offset = buf.len();
-    write!(buf, "xref\n")?;
+    writeln!(buf, "xref")?;
 
     // Write subsections
     for (obj_num, offset) in &offsets {
-        write!(buf, "{} 1\n", obj_num)?;
+        writeln!(buf, "{} 1", obj_num)?;
         writeln!(buf, "{:010} {:05} n ", offset, 0)?;
     }
 
@@ -242,7 +242,7 @@ fn build_pdf_with_placeholder(
         None,
         old_startxref,
     );
-    write!(buf, "trailer\n")?;
+    writeln!(buf, "trailer")?;
     crate::writer::serialize::serialize_dict(&mut buf, &trailer)?;
     write!(buf, "\nstartxref\n{}\n%%EOF\n", xref_offset)?;
 
@@ -517,18 +517,19 @@ fn build_utctime_now() -> Vec<u8> {
     let mut y = 1970u64;
     let mut remaining_days = days;
     loop {
-        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-            366
-        } else {
-            365
-        };
+        let days_in_year =
+            if y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400)) {
+                366
+            } else {
+                365
+            };
         if remaining_days < days_in_year {
             break;
         }
         remaining_days -= days_in_year;
         y += 1;
     }
-    let is_leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let is_leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
     let month_days = [
         31,
         if is_leap { 29 } else { 28 },

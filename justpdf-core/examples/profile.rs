@@ -12,11 +12,11 @@ fn main() {
     let read_time = start.elapsed();
 
     let start = Instant::now();
-    let mut doc = PdfDocument::from_bytes(data).unwrap();
+    let doc = PdfDocument::from_bytes(data).unwrap();
     let parse_time = start.elapsed();
 
     let start = Instant::now();
-    let pages = collect_pages(&mut doc).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     let pages_time = start.elapsed();
 
     println!("File: {}", path);

@@ -115,10 +115,10 @@ fn find_opf_path(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<String>
         .map_err(|e| FormatError::Xml(format!("parsing container.xml: {e}")))?;
 
     for node in doc.descendants() {
-        if node.tag_name().name() == "rootfile" {
-            if let Some(path) = node.attribute("full-path") {
-                return Ok(path.to_string());
-            }
+        if node.tag_name().name() == "rootfile"
+            && let Some(path) = node.attribute("full-path")
+        {
+            return Ok(path.to_string());
         }
     }
 
@@ -149,22 +149,22 @@ fn parse_opf(
     for node in doc.descendants() {
         match node.tag_name().name() {
             "title" => {
-                if title.is_none() {
-                    if let Some(t) = node.text() {
-                        let t = t.trim();
-                        if !t.is_empty() {
-                            title = Some(t.to_string());
-                        }
+                if title.is_none()
+                    && let Some(t) = node.text()
+                {
+                    let t = t.trim();
+                    if !t.is_empty() {
+                        title = Some(t.to_string());
                     }
                 }
             }
             "creator" => {
-                if author.is_none() {
-                    if let Some(a) = node.text() {
-                        let a = a.trim();
-                        if !a.is_empty() {
-                            author = Some(a.to_string());
-                        }
+                if author.is_none()
+                    && let Some(a) = node.text()
+                {
+                    let a = a.trim();
+                    if !a.is_empty() {
+                        author = Some(a.to_string());
                     }
                 }
             }

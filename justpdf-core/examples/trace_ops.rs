@@ -19,7 +19,7 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
 
-    let mut doc = match PdfDocument::open(path) {
+    let doc = match PdfDocument::open(path) {
         Ok(doc) => doc,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -27,7 +27,7 @@ fn main() {
         }
     };
 
-    let pages = match page::collect_pages(&mut doc) {
+    let pages = match page::collect_pages(&doc) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Error: {e}");

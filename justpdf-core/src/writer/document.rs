@@ -716,7 +716,7 @@ mod tests {
         assert!(bytes.starts_with(b"%PDF-1.7"));
 
         // Parse it back
-        let mut parsed = PdfDocument::from_bytes(bytes).unwrap();
+        let parsed = PdfDocument::from_bytes(bytes).unwrap();
         let pages = crate::page::collect_pages(&parsed).unwrap();
         assert_eq!(pages.len(), 1);
     }
@@ -752,7 +752,7 @@ mod tests {
 
         let bytes = doc.build().unwrap();
 
-        let mut parsed = PdfDocument::from_bytes(bytes).unwrap();
+        let parsed = PdfDocument::from_bytes(bytes).unwrap();
         let pages = crate::page::collect_pages(&parsed).unwrap();
         assert_eq!(pages.len(), 2);
     }
@@ -955,8 +955,8 @@ mod tests {
         doc.add_page(page);
         let bytes = doc.build().unwrap();
 
-        let mut parsed = PdfDocument::from_bytes(bytes).unwrap();
-        let mut modifier = DocumentModifier::from_document(&mut parsed).unwrap();
+        let parsed = PdfDocument::from_bytes(bytes).unwrap();
+        let mut modifier = DocumentModifier::from_document(&parsed).unwrap();
 
         // Deleting page 999 on a 1-page doc should not panic
         let result = modifier.delete_page(999);
@@ -964,7 +964,7 @@ mod tests {
 
         // Original page should still be there
         let new_bytes = modifier.build().unwrap();
-        let mut reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
+        let reparsed = PdfDocument::from_bytes(new_bytes).unwrap();
         let pages = crate::page::collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 1);
     }

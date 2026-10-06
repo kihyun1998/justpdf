@@ -863,7 +863,7 @@ mod tests {
             ..Default::default()
         };
         let results = search_page(&page, "\\w+", &options);
-        assert!(results.len() >= 1);
+        assert!(!results.is_empty());
         assert_eq!(results[0].matched_text, "Hello");
     }
 

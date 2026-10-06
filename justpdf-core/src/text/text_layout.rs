@@ -125,11 +125,11 @@ pub fn layout_text(text: &str, font: &FontInfo, options: &LayoutOptions) -> Layo
 
     for (i, (line_text, is_last_of_para)) in raw_lines.into_iter().enumerate() {
         // Check overflow before adding this line.
-        if let Some(max_h) = options.max_height {
-            if y_offset + line_height > max_h + 1e-9 {
-                overflow = true;
-                break;
-            }
+        if let Some(max_h) = options.max_height
+            && y_offset + line_height > max_h + 1e-9
+        {
+            overflow = true;
+            break;
         }
 
         let line_width = measure_text_width(&line_text, font, options.font_size);
@@ -164,7 +164,7 @@ pub fn layout_text(text: &str, font: &FontInfo, options: &LayoutOptions) -> Layo
                     (indent, 0.0)
                 } else {
                     let word_count = line_text.split_whitespace().count();
-                    let gap_count = if word_count > 1 { word_count - 1 } else { 0 };
+                    let gap_count = word_count.saturating_sub(1);
                     if gap_count > 0 {
                         let extra = effective_max - line_width - indent;
                         let ws = if extra > 0.0 {

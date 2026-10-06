@@ -392,7 +392,7 @@ mod tests {
         let count_zero: i64 = 0;
 
         assert!(count_positive > 0); // is_open = true
-        assert!(!(count_negative > 0)); // is_open = false
-        assert!(!(count_zero > 0)); // is_open = false
+        assert!((count_negative <= 0)); // is_open = false
+        assert!((count_zero <= 0)); // is_open = false
     }
 }

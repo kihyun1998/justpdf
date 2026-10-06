@@ -56,9 +56,8 @@ pub fn rebuild_xref(data: &[u8]) -> Result<Xref> {
 /// Try normal parsing first; if it fails, fall back to [`rebuild_xref`].
 pub fn repair_document(data: Vec<u8>) -> Result<PdfDocument> {
     // Happy path — normal parsing.
-    match PdfDocument::from_bytes(data.clone()) {
-        Ok(doc) => return Ok(doc),
-        Err(_) => {}
+    if let Ok(doc) = PdfDocument::from_bytes(data.clone()) {
+        return Ok(doc);
     }
 
     // Fallback — repair.
@@ -206,10 +205,10 @@ fn find_trailer_dict(data: &[u8]) -> Result<PdfDict> {
             // Skip "trailer" + whitespace, then parse the dict.
             let after = i + needle.len();
             let mut tokenizer = Tokenizer::new_at(data, after);
-            if let Ok(obj) = object::parse_object(&mut tokenizer) {
-                if let PdfObject::Dict(d) = obj {
-                    return Ok(d);
-                }
+            if let Ok(obj) = object::parse_object(&mut tokenizer)
+                && let PdfObject::Dict(d) = obj
+            {
+                return Ok(d);
             }
         }
     }
@@ -224,11 +223,11 @@ fn synthesise_trailer(data: &[u8], entries: &HashMap<u32, (usize, u16)>) -> Resu
     let mut root_ref: Option<IndirectRef> = None;
 
     for (&obj_num, &(offset, gen_num)) in entries {
-        if let Some(dict) = try_parse_dict_at(data, offset) {
-            if dict.get_name(b"Type") == Some(b"Catalog") {
-                root_ref = Some(IndirectRef { obj_num, gen_num });
-                break;
-            }
+        if let Some(dict) = try_parse_dict_at(data, offset)
+            && dict.get_name(b"Type") == Some(b"Catalog")
+        {
+            root_ref = Some(IndirectRef { obj_num, gen_num });
+            break;
         }
     }
 

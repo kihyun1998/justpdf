@@ -31,7 +31,7 @@ pub fn decrypt_aes_cbc(key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
         return Ok(Vec::new());
     }
 
-    if ciphertext.len() % 16 != 0 {
+    if !ciphertext.len().is_multiple_of(16) {
         return Err(JustPdfError::EncryptionError {
             detail: format!(
                 "AES ciphertext length {} not multiple of 16",
@@ -85,7 +85,7 @@ pub fn encrypt_aes_cbc(key: &[u8], data: &[u8], iv: &[u8; 16]) -> Result<Vec<u8>
     // Add PKCS#7 padding
     let pad_len = 16 - (data.len() % 16);
     let mut padded = data.to_vec();
-    padded.extend(std::iter::repeat(pad_len as u8).take(pad_len));
+    padded.extend(std::iter::repeat_n(pad_len as u8, pad_len));
 
     let mut buf = padded;
 

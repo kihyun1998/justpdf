@@ -28,10 +28,10 @@ pub fn decrypt_object(
     };
 
     // Don't decrypt the encryption dictionary itself
-    if let Some(enc_num) = state.encrypt_obj_num {
-        if obj_num == enc_num {
-            return Ok(obj);
-        }
+    if let Some(enc_num) = state.encrypt_obj_num
+        && obj_num == enc_num
+    {
+        return Ok(obj);
     }
 
     match obj {
@@ -276,10 +276,10 @@ fn extract_crypt_filter_name<'a>(
         PdfObject::Array(arr) => {
             // Find the DecodeParms entry corresponding to the /Crypt filter
             for (i, name) in filter_names.iter().enumerate() {
-                if *name == b"Crypt" {
-                    if let Some(PdfObject::Dict(d)) = arr.get(i) {
-                        return d.get_name(b"Name");
-                    }
+                if *name == b"Crypt"
+                    && let Some(PdfObject::Dict(d)) = arr.get(i)
+                {
+                    return d.get_name(b"Name");
                 }
             }
             None

@@ -158,7 +158,7 @@ fn encode_code128(data: &str) -> Result<Vec<bool>> {
     let mut values: Vec<u32> = vec![104]; // Start B
     for ch in data.chars() {
         let val = ch as u32;
-        if val < 32 || val > 126 {
+        if !(32..=126).contains(&val) {
             return Err(SpecialError::Feature {
                 detail: format!("Code128B: unsupported character '{ch}'"),
             });
@@ -533,7 +533,7 @@ pub fn generate_datamatrix(data: &str, module_size: u32) -> Result<BarcodeImage>
     let data_capacity = |size: usize| -> usize {
         // Interior data area is (size-2) x (size-2) for finder + timing borders
         let inner = size.saturating_sub(2);
-        (inner * inner) / 8_usize.max(1)
+        (inner * inner) / 8_usize
     };
 
     let mut matrix_size = 10usize;
@@ -599,7 +599,7 @@ pub fn generate_pdf417(data: &str, width: u32, height: u32) -> Result<BarcodeIma
 
     // Number of data columns (1-30), pick based on data length
     let num_cols = ((codewords.len() as f64).sqrt().ceil() as usize).clamp(2, 10);
-    let num_rows = ((codewords.len() + num_cols - 1) / num_cols).max(3);
+    let num_rows = codewords.len().div_ceil(num_cols).max(3);
 
     // Start pattern: 8 modules (81111113)
     let start_pattern: [bool; 17] = [

@@ -90,7 +90,7 @@ impl<'a> RenderInterpreter<'a> {
         // Get content stream data
         let content_data = self.get_page_content(page)?;
         if !content_data.is_empty() {
-            let ops = parse_content_stream(&content_data).map_err(|e| RenderError::Core(e))?;
+            let ops = parse_content_stream(&content_data).map_err(RenderError::Core)?;
             self.execute_ops(&ops)?;
         }
 
@@ -230,10 +230,10 @@ impl<'a> RenderInterpreter<'a> {
             }
         } else {
             // Check if it has /OCGs key (OCMD without /Type)
-            if dict.get(b"OCGs").is_some() {
-                if let Some(ocmd) = ocg::parse_ocmd(dict) {
-                    return ocg::is_ocmd_visible(&ocmd, config);
-                }
+            if dict.get(b"OCGs").is_some()
+                && let Some(ocmd) = ocg::parse_ocmd(dict)
+            {
+                return ocg::is_ocmd_visible(&ocmd, config);
             }
             true
         }
@@ -308,37 +308,36 @@ impl<'a> RenderInterpreter<'a> {
         // Resolve CIDFont widths, font descriptor, and CIDToGIDMap for Type0 fonts
         let mut cid_font_descriptor: Option<PdfDict> = None;
         let mut cid_to_gid_map: Option<Vec<u16>> = None;
-        if info.subtype == b"Type0" {
-            if let Some(PdfObject::Array(descendants)) = fd.get(b"DescendantFonts") {
-                if let Some(desc_ref) = descendants.first() {
-                    let desc_obj = match desc_ref {
+        if info.subtype == b"Type0"
+            && let Some(PdfObject::Array(descendants)) = fd.get(b"DescendantFonts")
+            && let Some(desc_ref) = descendants.first()
+        {
+            let desc_obj = match desc_ref {
+                PdfObject::Reference(r) => {
+                    let r = r.clone();
+                    self.doc.resolve(&r)?
+                }
+                other => other.clone(),
+            };
+            if let PdfObject::Dict(cid_dict) = &desc_obj {
+                let cid_info = parse_font_info(cid_dict);
+                info.widths = cid_info.widths;
+                // Get font descriptor from CID font
+                if let Some(fd_obj) = cid_dict.get(b"FontDescriptor") {
+                    let fd_resolved = match fd_obj {
                         PdfObject::Reference(r) => {
                             let r = r.clone();
-                            self.doc.resolve(&r)?
+                            self.doc.resolve(&r).ok()
                         }
-                        other => other.clone(),
+                        other => Some(other.clone()),
                     };
-                    if let PdfObject::Dict(cid_dict) = &desc_obj {
-                        let cid_info = parse_font_info(cid_dict);
-                        info.widths = cid_info.widths;
-                        // Get font descriptor from CID font
-                        if let Some(fd_obj) = cid_dict.get(b"FontDescriptor") {
-                            let fd_resolved = match fd_obj {
-                                PdfObject::Reference(r) => {
-                                    let r = r.clone();
-                                    self.doc.resolve(&r).ok()
-                                }
-                                other => Some(other.clone()),
-                            };
-                            if let Some(PdfObject::Dict(d)) = fd_resolved {
-                                cid_font_descriptor = Some(d);
-                            }
-                        }
-
-                        // Parse CIDToGIDMap
-                        cid_to_gid_map = self.parse_cid_to_gid_map(cid_dict);
+                    if let Some(PdfObject::Dict(d)) = fd_resolved {
+                        cid_font_descriptor = Some(d);
                     }
                 }
+
+                // Parse CIDToGIDMap
+                cid_to_gid_map = self.parse_cid_to_gid_map(cid_dict);
             }
         }
 
@@ -369,7 +368,7 @@ impl<'a> RenderInterpreter<'a> {
 
         // Try FontFile2 (TrueType), FontFile3 (CFF/OpenType), FontFile (Type1)
         for key in &[b"FontFile2".as_slice(), b"FontFile3", b"FontFile"] {
-            if let Some(obj) = descriptor.get(*key) {
+            if let Some(obj) = descriptor.get(key) {
                 let stream_obj = match obj {
                     PdfObject::Reference(r) => {
                         let r = r.clone();
@@ -377,10 +376,10 @@ impl<'a> RenderInterpreter<'a> {
                     }
                     other => Some(other.clone()),
                 };
-                if let Some(PdfObject::Stream { dict, data }) = stream_obj {
-                    if let Ok(decoded) = self.doc.decode_stream(&dict, &data) {
-                        return Some(decoded);
-                    }
+                if let Some(PdfObject::Stream { dict, data }) = stream_obj
+                    && let Ok(decoded) = self.doc.decode_stream(&dict, &data)
+                {
+                    return Some(decoded);
                 }
             }
         }
@@ -991,21 +990,19 @@ impl<'a> RenderInterpreter<'a> {
     }
 
     fn fill_current_path(&mut self, rule: FillRule) {
-        if let Some(pb) = self.path_builder.take() {
-            if let Some(path) = pb.finish() {
-                // Check for pattern fill
-                if self.state.fill_pattern.is_some() {
-                    if self.try_fill_with_pattern(&path, rule) {
-                        return;
-                    }
-                }
-                let transform = self.effective_transform();
-                let color = self.state.fill_color_rgba();
-                let bm = self.blend_mode();
-                self.apply_soft_mask_to_device();
-                self.device.fill_path(&path, rule, transform, color, bm);
-                self.restore_clip_after_soft_mask();
+        if let Some(pb) = self.path_builder.take()
+            && let Some(path) = pb.finish()
+        {
+            // Check for pattern fill
+            if self.state.fill_pattern.is_some() && self.try_fill_with_pattern(&path, rule) {
+                return;
             }
+            let transform = self.effective_transform();
+            let color = self.state.fill_color_rgba();
+            let bm = self.blend_mode();
+            self.apply_soft_mask_to_device();
+            self.device.fill_path(&path, rule, transform, color, bm);
+            self.restore_clip_after_soft_mask();
         }
     }
 
@@ -1014,10 +1011,8 @@ impl<'a> RenderInterpreter<'a> {
             let pb_clone = pb.clone();
             if let Some(path) = pb_clone.finish() {
                 // Check for pattern fill
-                if self.state.fill_pattern.is_some() {
-                    if self.try_fill_with_pattern(&path, rule) {
-                        return;
-                    }
+                if self.state.fill_pattern.is_some() && self.try_fill_with_pattern(&path, rule) {
+                    return;
                 }
                 let transform = self.effective_transform();
                 let color = self.state.fill_color_rgba();
@@ -1030,22 +1025,20 @@ impl<'a> RenderInterpreter<'a> {
     }
 
     fn stroke_current_path(&mut self) {
-        if let Some(pb) = self.path_builder.take() {
-            if let Some(path) = pb.finish() {
-                // Check for pattern stroke
-                if self.state.stroke_pattern.is_some() {
-                    if self.try_stroke_with_pattern(&path) {
-                        return;
-                    }
-                }
-                let transform = self.effective_transform();
-                let color = self.state.stroke_color_rgba();
-                let bm = self.blend_mode();
-                self.apply_soft_mask_to_device();
-                self.device
-                    .stroke_path(&path, transform, color, &self.state, bm);
-                self.restore_clip_after_soft_mask();
+        if let Some(pb) = self.path_builder.take()
+            && let Some(path) = pb.finish()
+        {
+            // Check for pattern stroke
+            if self.state.stroke_pattern.is_some() && self.try_stroke_with_pattern(&path) {
+                return;
             }
+            let transform = self.effective_transform();
+            let color = self.state.stroke_color_rgba();
+            let bm = self.blend_mode();
+            self.apply_soft_mask_to_device();
+            self.device
+                .stroke_path(&path, transform, color, &self.state, bm);
+            self.restore_clip_after_soft_mask();
         }
     }
 
@@ -1195,57 +1188,57 @@ impl<'a> RenderInterpreter<'a> {
         }
 
         // Try to render with real glyph outlines (using glyph cache)
-        if let Some(data) = font_data {
-            if let Ok(face) = ttf_parser::Face::parse(data, 0) {
-                let glyph_id = if is_cid {
-                    // For CID fonts: apply CIDToGIDMap if available
-                    if let Some(map) = cid_to_gid_map {
-                        let gid = map.get(code as usize).copied().unwrap_or(code as u16);
-                        ttf_parser::GlyphId(gid)
-                    } else {
-                        // Identity mapping: CID == GID
-                        ttf_parser::GlyphId(code as u16)
-                    }
+        if let Some(data) = font_data
+            && let Ok(face) = ttf_parser::Face::parse(data, 0)
+        {
+            let glyph_id = if is_cid {
+                // For CID fonts: apply CIDToGIDMap if available
+                if let Some(map) = cid_to_gid_map {
+                    let gid = map.get(code as usize).copied().unwrap_or(code as u16);
+                    ttf_parser::GlyphId(gid)
                 } else {
-                    crate::glyph::char_code_to_glyph_id(&face, code)
-                };
+                    // Identity mapping: CID == GID
+                    ttf_parser::GlyphId(code as u16)
+                }
+            } else {
+                crate::glyph::char_code_to_glyph_id(&face, code)
+            };
 
-                let gid_raw = glyph_id.0;
-                let cached_path = self
-                    .glyph_cache
-                    .get_or_insert(data, gid_raw, || {
-                        crate::glyph::glyph_outline(&face, glyph_id)
-                    })
-                    .cloned();
+            let gid_raw = glyph_id.0;
+            let cached_path = self
+                .glyph_cache
+                .get_or_insert(data, gid_raw, || {
+                    crate::glyph::glyph_outline(&face, glyph_id)
+                })
+                .cloned();
 
-                if let Some(path) = cached_path {
-                    let upem = crate::glyph::units_per_em(&face);
-                    if upem > 0.0 {
-                        // Glyph coordinates are in font units.
-                        // Scale: font_size / upem, and flip Y (font Y is up, PDF text Y is up too
-                        // but we apply the text matrix which handles the rest)
-                        let scale = font_size / upem;
-                        let glyph_matrix = Matrix {
-                            a: scale,
-                            b: 0.0,
-                            c: 0.0,
-                            d: scale, // no Y flip here — glyph coords have Y-up, matching PDF
-                            e: 0.0,
-                            f: text_rise,
-                        };
+            if let Some(path) = cached_path {
+                let upem = crate::glyph::units_per_em(&face);
+                if upem > 0.0 {
+                    // Glyph coordinates are in font units.
+                    // Scale: font_size / upem, and flip Y (font Y is up, PDF text Y is up too
+                    // but we apply the text matrix which handles the rest)
+                    let scale = font_size / upem;
+                    let glyph_matrix = Matrix {
+                        a: scale,
+                        b: 0.0,
+                        c: 0.0,
+                        d: scale, // no Y flip here — glyph coords have Y-up, matching PDF
+                        e: 0.0,
+                        f: text_rise,
+                    };
 
-                        let text_rendering_matrix = glyph_matrix
-                            .concat(&self.state.text_matrix)
-                            .concat(&self.state.ctm)
-                            .concat(&self.page_transform);
+                    let text_rendering_matrix = glyph_matrix
+                        .concat(&self.state.text_matrix)
+                        .concat(&self.state.ctm)
+                        .concat(&self.page_transform);
 
-                        let transform = text_rendering_matrix.to_skia();
-                        let color = self.state.fill_color_rgba();
-                        let bm = self.blend_mode();
-                        self.device
-                            .fill_path(&path, FillRule::Winding, transform, color, bm);
-                        return Ok(());
-                    }
+                    let transform = text_rendering_matrix.to_skia();
+                    let color = self.state.fill_color_rgba();
+                    let bm = self.blend_mode();
+                    self.device
+                        .fill_path(&path, FillRule::Winding, transform, color, bm);
+                    return Ok(());
                 }
             }
         }
@@ -1406,13 +1399,13 @@ impl<'a> RenderInterpreter<'a> {
         let info = image::image_info(dict);
 
         // Check for ImageMask (stencil mask)
-        if let Some(ref img_info) = info {
-            if img_info.is_mask {
-                return self.render_image_mask(img_info, data, dict);
-            }
+        if let Some(ref img_info) = info
+            && img_info.is_mask
+        {
+            return self.render_image_mask(img_info, data, dict);
         }
 
-        let decoded = image::decode_image(data, dict).map_err(|e| RenderError::Core(e))?;
+        let decoded = image::decode_image(data, dict).map_err(RenderError::Core)?;
 
         // Convert decoded image to RGBA
         let mut rgba_data = image_to_rgba(&decoded);
@@ -1422,28 +1415,26 @@ impl<'a> RenderInterpreter<'a> {
         // Apply SMask if present on the image dict
         if let Some(PdfObject::Reference(smask_ref)) = dict.get(b"SMask") {
             let smask_ref = smask_ref.clone();
-            if let Ok(smask_obj) = self.doc.resolve(&smask_ref) {
-                if let PdfObject::Stream {
+            if let Ok(smask_obj) = self.doc.resolve(&smask_ref)
+                && let PdfObject::Stream {
                     dict: smask_dict,
                     data: smask_data,
                 } = smask_obj
-                {
-                    self.apply_image_smask(&mut rgba_data, w, h, &smask_dict, &smask_data);
-                }
+            {
+                self.apply_image_smask(&mut rgba_data, w, h, &smask_dict, &smask_data);
             }
         }
 
         // Apply Mask (explicit mask) if present — a 1-bit image defining transparency
         if let Some(PdfObject::Reference(mask_ref)) = dict.get(b"Mask") {
             let mask_ref = mask_ref.clone();
-            if let Ok(mask_obj) = self.doc.resolve(&mask_ref) {
-                if let PdfObject::Stream {
+            if let Ok(mask_obj) = self.doc.resolve(&mask_ref)
+                && let PdfObject::Stream {
                     dict: mask_dict,
                     data: mask_data,
                 } = mask_obj
-                {
-                    self.apply_image_explicit_mask(&mut rgba_data, w, h, &mask_dict, &mask_data);
-                }
+            {
+                self.apply_image_explicit_mask(&mut rgba_data, w, h, &mask_dict, &mask_data);
             }
         }
 
@@ -1709,10 +1700,10 @@ impl<'a> RenderInterpreter<'a> {
 
         // Resolve function if it's a reference
         let mut resolved_dict = sh_dict;
-        if let Some(PdfObject::Reference(func_ref)) = resolved_dict.get(b"Function").cloned() {
-            if let Ok(func_obj) = self.doc.resolve(&func_ref) {
-                resolved_dict.insert(b"Function".to_vec(), func_obj);
-            }
+        if let Some(PdfObject::Reference(func_ref)) = resolved_dict.get(b"Function").cloned()
+            && let Ok(func_obj) = self.doc.resolve(&func_ref)
+        {
+            resolved_dict.insert(b"Function".to_vec(), func_obj);
         }
 
         let clip = self.device.clip_mask.as_ref();
@@ -1747,22 +1738,22 @@ impl<'a> RenderInterpreter<'a> {
         self.state_stack.push(self.state.clone());
 
         // Apply form matrix if present
-        if let Some(matrix_arr) = dict.get_array(b"Matrix") {
-            if matrix_arr.len() >= 6 {
-                let m = Matrix {
-                    a: matrix_arr[0].as_f64().unwrap_or(1.0),
-                    b: matrix_arr[1].as_f64().unwrap_or(0.0),
-                    c: matrix_arr[2].as_f64().unwrap_or(0.0),
-                    d: matrix_arr[3].as_f64().unwrap_or(1.0),
-                    e: matrix_arr[4].as_f64().unwrap_or(0.0),
-                    f: matrix_arr[5].as_f64().unwrap_or(0.0),
-                };
-                self.state.ctm = m.concat(&self.state.ctm);
-            }
+        if let Some(matrix_arr) = dict.get_array(b"Matrix")
+            && matrix_arr.len() >= 6
+        {
+            let m = Matrix {
+                a: matrix_arr[0].as_f64().unwrap_or(1.0),
+                b: matrix_arr[1].as_f64().unwrap_or(0.0),
+                c: matrix_arr[2].as_f64().unwrap_or(0.0),
+                d: matrix_arr[3].as_f64().unwrap_or(1.0),
+                e: matrix_arr[4].as_f64().unwrap_or(0.0),
+                f: matrix_arr[5].as_f64().unwrap_or(0.0),
+            };
+            self.state.ctm = m.concat(&self.state.ctm);
         }
 
         // Parse and execute the form's content stream
-        let ops = parse_content_stream(data).map_err(|e| RenderError::Core(e))?;
+        let ops = parse_content_stream(data).map_err(RenderError::Core)?;
         self.execute_ops(&ops)?;
 
         // Restore state
@@ -1814,22 +1805,22 @@ impl<'a> RenderInterpreter<'a> {
         self.state_stack.push(self.state.clone());
 
         // Apply form matrix if present
-        if let Some(matrix_arr) = dict.get_array(b"Matrix") {
-            if matrix_arr.len() >= 6 {
-                let m = Matrix {
-                    a: matrix_arr[0].as_f64().unwrap_or(1.0),
-                    b: matrix_arr[1].as_f64().unwrap_or(0.0),
-                    c: matrix_arr[2].as_f64().unwrap_or(0.0),
-                    d: matrix_arr[3].as_f64().unwrap_or(1.0),
-                    e: matrix_arr[4].as_f64().unwrap_or(0.0),
-                    f: matrix_arr[5].as_f64().unwrap_or(0.0),
-                };
-                self.state.ctm = m.concat(&self.state.ctm);
-            }
+        if let Some(matrix_arr) = dict.get_array(b"Matrix")
+            && matrix_arr.len() >= 6
+        {
+            let m = Matrix {
+                a: matrix_arr[0].as_f64().unwrap_or(1.0),
+                b: matrix_arr[1].as_f64().unwrap_or(0.0),
+                c: matrix_arr[2].as_f64().unwrap_or(0.0),
+                d: matrix_arr[3].as_f64().unwrap_or(1.0),
+                e: matrix_arr[4].as_f64().unwrap_or(0.0),
+                f: matrix_arr[5].as_f64().unwrap_or(0.0),
+            };
+            self.state.ctm = m.concat(&self.state.ctm);
         }
 
         // Parse and execute the form's content stream into temp pixmap
-        let ops = parse_content_stream(data).map_err(|e| RenderError::Core(e))?;
+        let ops = parse_content_stream(data).map_err(RenderError::Core)?;
         let _ = self.execute_ops(&ops);
 
         // Restore state
@@ -1855,21 +1846,21 @@ impl<'a> RenderInterpreter<'a> {
     fn render_form_xobject_direct(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
         self.state_stack.push(self.state.clone());
 
-        if let Some(matrix_arr) = dict.get_array(b"Matrix") {
-            if matrix_arr.len() >= 6 {
-                let m = Matrix {
-                    a: matrix_arr[0].as_f64().unwrap_or(1.0),
-                    b: matrix_arr[1].as_f64().unwrap_or(0.0),
-                    c: matrix_arr[2].as_f64().unwrap_or(0.0),
-                    d: matrix_arr[3].as_f64().unwrap_or(1.0),
-                    e: matrix_arr[4].as_f64().unwrap_or(0.0),
-                    f: matrix_arr[5].as_f64().unwrap_or(0.0),
-                };
-                self.state.ctm = m.concat(&self.state.ctm);
-            }
+        if let Some(matrix_arr) = dict.get_array(b"Matrix")
+            && matrix_arr.len() >= 6
+        {
+            let m = Matrix {
+                a: matrix_arr[0].as_f64().unwrap_or(1.0),
+                b: matrix_arr[1].as_f64().unwrap_or(0.0),
+                c: matrix_arr[2].as_f64().unwrap_or(0.0),
+                d: matrix_arr[3].as_f64().unwrap_or(1.0),
+                e: matrix_arr[4].as_f64().unwrap_or(0.0),
+                f: matrix_arr[5].as_f64().unwrap_or(0.0),
+            };
+            self.state.ctm = m.concat(&self.state.ctm);
         }
 
-        let ops = parse_content_stream(data).map_err(|e| RenderError::Core(e))?;
+        let ops = parse_content_stream(data).map_err(RenderError::Core)?;
         self.execute_ops(&ops)?;
 
         if let Some(s) = self.state_stack.pop() {
@@ -2005,18 +1996,18 @@ impl<'a> RenderInterpreter<'a> {
         self.state_stack.push(self.state.clone());
 
         // Apply form matrix if present
-        if let Some(matrix_arr) = form_dict.get_array(b"Matrix") {
-            if matrix_arr.len() >= 6 {
-                let m = Matrix {
-                    a: matrix_arr[0].as_f64().unwrap_or(1.0),
-                    b: matrix_arr[1].as_f64().unwrap_or(0.0),
-                    c: matrix_arr[2].as_f64().unwrap_or(0.0),
-                    d: matrix_arr[3].as_f64().unwrap_or(1.0),
-                    e: matrix_arr[4].as_f64().unwrap_or(0.0),
-                    f: matrix_arr[5].as_f64().unwrap_or(0.0),
-                };
-                self.state.ctm = m.concat(&self.state.ctm);
-            }
+        if let Some(matrix_arr) = form_dict.get_array(b"Matrix")
+            && matrix_arr.len() >= 6
+        {
+            let m = Matrix {
+                a: matrix_arr[0].as_f64().unwrap_or(1.0),
+                b: matrix_arr[1].as_f64().unwrap_or(0.0),
+                c: matrix_arr[2].as_f64().unwrap_or(0.0),
+                d: matrix_arr[3].as_f64().unwrap_or(1.0),
+                e: matrix_arr[4].as_f64().unwrap_or(0.0),
+                f: matrix_arr[5].as_f64().unwrap_or(0.0),
+            };
+            self.state.ctm = m.concat(&self.state.ctm);
         }
 
         // Render the mask form
@@ -2281,10 +2272,10 @@ impl<'a> RenderInterpreter<'a> {
 
         // Resolve function references within the shading dict
         let mut resolved_shading = shading_dict;
-        if let Some(PdfObject::Reference(func_ref)) = resolved_shading.get(b"Function").cloned() {
-            if let Ok(func_obj) = self.doc.resolve(&func_ref) {
-                resolved_shading.insert(b"Function".to_vec(), func_obj);
-            }
+        if let Some(PdfObject::Reference(func_ref)) = resolved_shading.get(b"Function").cloned()
+            && let Ok(func_obj) = self.doc.resolve(&func_ref)
+        {
+            resolved_shading.insert(b"Function".to_vec(), func_obj);
         }
 
         let w = self.device.pixmap.width();

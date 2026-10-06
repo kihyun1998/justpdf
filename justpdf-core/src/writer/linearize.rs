@@ -503,7 +503,7 @@ fn write_linearized_inner(
     let mut object_offsets: Vec<(u32, usize, usize)> = Vec::new();
 
     // --- 1. Header ---
-    write!(buf, "%PDF-{}.{}\n", version.0, version.1)?;
+    writeln!(buf, "%PDF-{}.{}", version.0, version.1)?;
     buf.extend_from_slice(b"%\xe2\xe3\xcf\xd3\n");
 
     // --- 2. Linearization dictionary (always object lin_dict_obj_num, gen 0) ---
@@ -558,7 +558,7 @@ fn write_linearized_inner(
         // The hint stream is just a raw stream with our hint table data.
         // We use no filter for simplicity.
 
-        write!(buf, "{} 0 obj\n", hint_stream_obj_num)?;
+        writeln!(buf, "{} 0 obj", hint_stream_obj_num)?;
         let hint_obj = PdfObject::Stream {
             dict: hint_dict,
             data: hint_data.to_vec(),
@@ -577,9 +577,9 @@ fn write_linearized_inner(
     let _first_page_start = buf.len();
     for (obj_num, obj) in first_page_objects {
         let offset = buf.len();
-        write!(
+        writeln!(
             buf,
-            "{} {} obj\n",
+            "{} {} obj",
             obj_num,
             generation_of(generations, *obj_num)
         )?;
@@ -593,9 +593,9 @@ fn write_linearized_inner(
     // --- 6. Remaining pages' objects ---
     for (obj_num, obj) in rest_objects {
         let offset = buf.len();
-        write!(
+        writeln!(
             buf,
-            "{} {} obj\n",
+            "{} {} obj",
             obj_num,
             generation_of(generations, *obj_num)
         )?;
@@ -608,8 +608,8 @@ fn write_linearized_inner(
     // --- 7. Main cross-reference table ---
     let main_xref_offset = buf.len();
     {
-        write!(buf, "xref\n")?;
-        write!(buf, "0 {}\n", xref_size)?;
+        writeln!(buf, "xref")?;
+        writeln!(buf, "0 {}", xref_size)?;
 
         // Entry 0: free list head
         buf.extend_from_slice(b"0000000000 65535 f \n");
@@ -644,9 +644,9 @@ fn write_linearized_inner(
             trailer.insert(b"Info".to_vec(), PdfObject::Reference(info.clone()));
         }
 
-        write!(buf, "trailer\n")?;
+        writeln!(buf, "trailer")?;
         serialize_dict(&mut buf, &trailer)?;
-        write!(buf, "\n")?;
+        writeln!(buf)?;
     }
 
     // --- 9. Startxref + %%EOF ---
@@ -696,11 +696,7 @@ fn compute_page_offsets(
             if min_offset == usize::MAX {
                 min_offset = 0;
             }
-            let length = if max_end > min_offset {
-                max_end - min_offset
-            } else {
-                0
-            };
+            let length = max_end.saturating_sub(min_offset);
             result.push((min_offset as u64, length as u64, count));
         } else {
             // Subsequent pages: objects are in rest_objects.
@@ -716,11 +712,7 @@ fn compute_page_offsets(
             if min_offset == usize::MAX {
                 min_offset = 0;
             }
-            let length = if max_end > min_offset {
-                max_end - min_offset
-            } else {
-                0
-            };
+            let length = max_end.saturating_sub(min_offset);
             result.push((min_offset as u64, length as u64, count));
         }
     }
@@ -759,7 +751,7 @@ mod tests {
     #[test]
     fn linearize_two_page_pdf() {
         let original = create_test_pdf(2);
-        let mut doc = PdfDocument::from_bytes(original).unwrap();
+        let doc = PdfDocument::from_bytes(original).unwrap();
         let result = linearize(&doc).unwrap();
 
         // The result should start with %PDF header.
@@ -775,7 +767,7 @@ mod tests {
     #[test]
     fn linearized_params_are_correct() {
         let original = create_test_pdf(3);
-        let mut doc = PdfDocument::from_bytes(original).unwrap();
+        let doc = PdfDocument::from_bytes(original).unwrap();
         let result = linearize(&doc).unwrap();
 
         let params = detect_linearization(&result).expect("should detect linearization");
@@ -807,11 +799,11 @@ mod tests {
     fn linearized_page_count_matches() {
         for num_pages in [1, 2, 3, 5] {
             let original = create_test_pdf(num_pages);
-            let mut doc = PdfDocument::from_bytes(original).unwrap();
+            let doc = PdfDocument::from_bytes(original).unwrap();
             let result = linearize(&doc).unwrap();
 
             // Re-parse and count pages.
-            let mut reparsed = PdfDocument::from_bytes(result).unwrap();
+            let reparsed = PdfDocument::from_bytes(result).unwrap();
             let pages = collect_pages(&reparsed).unwrap();
             assert_eq!(
                 pages.len(),
@@ -824,7 +816,7 @@ mod tests {
     #[test]
     fn linearization_dict_is_first_object() {
         let original = create_test_pdf(2);
-        let mut doc = PdfDocument::from_bytes(original).unwrap();
+        let doc = PdfDocument::from_bytes(original).unwrap();
         let result = linearize(&doc).unwrap();
 
         // After header + binary comment, the first object should contain /Linearized.
@@ -832,7 +824,7 @@ mod tests {
         let lin_pos = text
             .find("/Linearized")
             .expect("should contain /Linearized");
-        let first_obj_pos = text.find("obj").expect("should contain obj");
+        let _first_obj_pos = text.find("obj").expect("should contain obj");
         // /Linearized should appear in the first object.
         assert!(
             lin_pos < text.find("endobj").unwrap(),
@@ -843,17 +835,17 @@ mod tests {
     #[test]
     fn first_page_objects_come_before_rest() {
         let original = create_test_pdf(2);
-        let mut doc_orig = PdfDocument::from_bytes(original.clone()).unwrap();
+        let doc_orig = PdfDocument::from_bytes(original.clone()).unwrap();
 
         // Get the first page object number from the original doc.
         let pages_orig = collect_pages(&doc_orig).unwrap();
-        let first_page_obj = pages_orig[0].page_ref.obj_num;
+        let _first_page_obj = pages_orig[0].page_ref.obj_num;
 
-        let mut doc = PdfDocument::from_bytes(original).unwrap();
+        let doc = PdfDocument::from_bytes(original).unwrap();
         let result = linearize(&doc).unwrap();
 
         // Verify the output is a valid PDF.
-        let mut reparsed = PdfDocument::from_bytes(result.clone()).unwrap();
+        let reparsed = PdfDocument::from_bytes(result.clone()).unwrap();
         let pages = collect_pages(&reparsed).unwrap();
         assert_eq!(pages.len(), 2);
 
@@ -870,7 +862,7 @@ mod tests {
     #[test]
     fn linearize_single_page() {
         let original = create_test_pdf(1);
-        let mut doc = PdfDocument::from_bytes(original).unwrap();
+        let doc = PdfDocument::from_bytes(original).unwrap();
         let result = linearize(&doc).unwrap();
 
         assert!(is_linearized(&result));
@@ -882,7 +874,7 @@ mod tests {
     #[test]
     fn hint_stream_is_parseable() {
         let original = create_test_pdf(3);
-        let mut doc = PdfDocument::from_bytes(original).unwrap();
+        let doc = PdfDocument::from_bytes(original).unwrap();
         let result = linearize(&doc).unwrap();
 
         let params = detect_linearization(&result).unwrap();
@@ -890,7 +882,7 @@ mod tests {
         // Extract the hint stream data from the file.
         // The hint stream is at params.hint_offset. We need to parse the stream object
         // to get its data. For this test, we re-parse the PDF and find the hint object.
-        let mut reparsed = PdfDocument::from_bytes(result).unwrap();
+        let _reparsed = PdfDocument::from_bytes(result).unwrap();
 
         // The hint stream object can be found by scanning for it.
         // Since we know the offset, we verify it's within bounds.

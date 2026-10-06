@@ -335,8 +335,8 @@ impl DisplayList {
         let mut output = Pixmap::new(self.width, self.height)?;
         output.fill(background);
 
-        let cols = (self.width + tile_size - 1) / tile_size;
-        let rows = (self.height + tile_size - 1) / tile_size;
+        let cols = self.width.div_ceil(tile_size);
+        let rows = self.height.div_ceil(tile_size);
 
         for row in 0..rows {
             for col in 0..cols {

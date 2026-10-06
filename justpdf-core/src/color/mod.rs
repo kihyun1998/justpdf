@@ -484,7 +484,7 @@ pub fn read_output_intents(doc: &PdfDocument) -> Result<Vec<OutputIntent>> {
 /// Overprint controls how colours are composited when painting on a page that
 /// already has marks from a previous painting operation.  These settings come
 /// from the graphics-state parameters `/OP`, `/op`, and `/OPM`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct OverprintState {
     /// Overprint for stroking operations (`/OP`)
     pub stroke: bool,
@@ -492,16 +492,6 @@ pub struct OverprintState {
     pub fill: bool,
     /// Overprint mode (`/OPM`): 0 = set all components, 1 = nonzero components only
     pub mode: u32,
-}
-
-impl Default for OverprintState {
-    fn default() -> Self {
-        Self {
-            stroke: false,
-            fill: false,
-            mode: 0,
-        }
-    }
 }
 
 /// Parse overprint settings from an ExtGState dictionary.
@@ -725,7 +715,7 @@ mod tests {
             PdfObject::String(b"sRGB IEC61966-2.1".to_vec()),
         );
 
-        let arr = vec![PdfObject::Dict(dict1), PdfObject::Dict(dict2)];
+        let arr = [PdfObject::Dict(dict1), PdfObject::Dict(dict2)];
 
         let intents: Vec<OutputIntent> = arr
             .iter()

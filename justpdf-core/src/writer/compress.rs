@@ -157,13 +157,12 @@ pub fn analyze_pdf(data: &[u8]) -> Result<AnalyzeResult> {
 
     let refs: Vec<_> = doc.object_refs().collect();
     for iref in &refs {
-        if let Ok(obj) = doc.resolve(iref) {
-            if let PdfObject::Stream { ref dict, ref data } = obj {
-                if is_image_xobject(dict) {
-                    images += 1;
-                    total_image_bytes += data.len();
-                }
-            }
+        if let Ok(obj) = doc.resolve(iref)
+            && let PdfObject::Stream { ref dict, ref data } = obj
+            && is_image_xobject(dict)
+        {
+            images += 1;
+            total_image_bytes += data.len();
         }
     }
 
@@ -309,10 +308,10 @@ fn recompress_images(
         .objects
         .iter()
         .filter_map(|(obj_num, obj)| {
-            if let PdfObject::Stream { dict, data } = obj {
-                if is_image_xobject(dict) {
-                    return Some((*obj_num, dict.clone(), data.clone()));
-                }
+            if let PdfObject::Stream { dict, data } = obj
+                && is_image_xobject(dict)
+            {
+                return Some((*obj_num, dict.clone(), data.clone()));
             }
             None
         })
@@ -434,23 +433,24 @@ fn compute_target_dimensions_with_ctm(
     };
 
     // If we have CTM-derived display size, calculate actual DPI
-    if let Some((disp_w, disp_h)) = display_size {
-        if disp_w > 0.0 && disp_h > 0.0 {
-            // DPI = pixels / (display_points / 72)
-            let dpi_x = w as f64 / (disp_w / 72.0);
-            let dpi_y = h as f64 / (disp_h / 72.0);
-            let effective_dpi = dpi_x.max(dpi_y);
+    if let Some((disp_w, disp_h)) = display_size
+        && disp_w > 0.0
+        && disp_h > 0.0
+    {
+        // DPI = pixels / (display_points / 72)
+        let dpi_x = w as f64 / (disp_w / 72.0);
+        let dpi_y = h as f64 / (disp_h / 72.0);
+        let effective_dpi = dpi_x.max(dpi_y);
 
-            if effective_dpi <= max_dpi {
-                return (w, h, false); // already within budget
-            }
-
-            // Scale down to target DPI
-            let scale = max_dpi / effective_dpi;
-            let new_w = ((w as f64) * scale).round() as u32;
-            let new_h = ((h as f64) * scale).round() as u32;
-            return (new_w.max(1), new_h.max(1), true);
+        if effective_dpi <= max_dpi {
+            return (w, h, false); // already within budget
         }
+
+        // Scale down to target DPI
+        let scale = max_dpi / effective_dpi;
+        let new_w = ((w as f64) * scale).round() as u32;
+        let new_h = ((h as f64) * scale).round() as u32;
+        return (new_w.max(1), new_h.max(1), true);
     }
 
     // Fallback: pixel-budget heuristic (assumes 72 DPI baseline)
@@ -570,21 +570,21 @@ fn collect_image_display_sizes(modifier: &mut DocumentModifier) -> HashMap<u32, 
                     }
                 }
                 b"Do" => {
-                    if let Some(name) = op.operands.first().and_then(|o| o.as_name()) {
-                        if let Some(&obj_num) = xobject_map.get(name) {
-                            // Extract display size from CTM
-                            // For images, Do maps the unit square [0,0]-[1,1] through CTM
-                            let display_w = (ctm[0] * ctm[0] + ctm[2] * ctm[2]).sqrt();
-                            let display_h = (ctm[1] * ctm[1] + ctm[3] * ctm[3]).sqrt();
+                    if let Some(name) = op.operands.first().and_then(|o| o.as_name())
+                        && let Some(&obj_num) = xobject_map.get(name)
+                    {
+                        // Extract display size from CTM
+                        // For images, Do maps the unit square [0,0]-[1,1] through CTM
+                        let display_w = (ctm[0] * ctm[0] + ctm[2] * ctm[2]).sqrt();
+                        let display_h = (ctm[1] * ctm[1] + ctm[3] * ctm[3]).sqrt();
 
-                            // Keep the maximum display size across all usages
-                            let entry = result.entry(obj_num).or_insert((0.0, 0.0));
-                            if display_w > entry.0 {
-                                entry.0 = display_w;
-                            }
-                            if display_h > entry.1 {
-                                entry.1 = display_h;
-                            }
+                        // Keep the maximum display size across all usages
+                        let entry = result.entry(obj_num).or_insert((0.0, 0.0));
+                        if display_w > entry.0 {
+                            entry.0 = display_w;
+                        }
+                        if display_h > entry.1 {
+                            entry.1 = display_h;
                         }
                     }
                 }
@@ -833,10 +833,10 @@ fn convert_images_to_grayscale(modifier: &mut DocumentModifier, stats: &mut Comp
         .objects
         .iter()
         .filter_map(|(obj_num, obj)| {
-            if let PdfObject::Stream { dict, data } = obj {
-                if is_image_xobject(dict) {
-                    return Some((*obj_num, dict.clone(), data.clone()));
-                }
+            if let PdfObject::Stream { dict, data } = obj
+                && is_image_xobject(dict)
+            {
+                return Some((*obj_num, dict.clone(), data.clone()));
             }
             None
         })
@@ -986,24 +986,24 @@ fn rewrite_color_operators_to_gray(modifier: &mut DocumentModifier) {
         .objects
         .iter()
         .filter_map(|(_, obj)| {
-            if let PdfObject::Dict(dict) = obj {
-                if dict.get_name(b"Type") == Some(b"Page") {
-                    return match dict.get(b"Contents") {
-                        Some(PdfObject::Reference(r)) => Some(vec![r.obj_num]),
-                        Some(PdfObject::Array(arr)) => Some(
-                            arr.iter()
-                                .filter_map(|o| {
-                                    if let PdfObject::Reference(r) = o {
-                                        Some(r.obj_num)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect(),
-                        ),
-                        _ => None,
-                    };
-                }
+            if let PdfObject::Dict(dict) = obj
+                && dict.get_name(b"Type") == Some(b"Page")
+            {
+                return match dict.get(b"Contents") {
+                    Some(PdfObject::Reference(r)) => Some(vec![r.obj_num]),
+                    Some(PdfObject::Array(arr)) => Some(
+                        arr.iter()
+                            .filter_map(|o| {
+                                if let PdfObject::Reference(r) = o {
+                                    Some(r.obj_num)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect(),
+                    ),
+                    _ => None,
+                };
             }
             None
         })
@@ -1232,24 +1232,22 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
                     if let (Some(font_name), Some(s)) = (
                         &current_font_name,
                         op.operands.first().and_then(|o| o.as_str()),
-                    ) {
-                        if let Some(&font_obj_num) = font_map.get(font_name.as_slice()) {
-                            let codes = font_char_codes.entry(font_obj_num).or_default();
-                            extract_char_codes(s, font_obj_num, modifier, codes);
-                        }
+                    ) && let Some(&font_obj_num) = font_map.get(font_name.as_slice())
+                    {
+                        let codes = font_char_codes.entry(font_obj_num).or_default();
+                        extract_char_codes(s, font_obj_num, modifier, codes);
                     }
                 }
                 b"TJ" => {
                     if let (Some(font_name), Some(arr)) = (
                         &current_font_name,
                         op.operands.first().and_then(|o| o.as_array()),
-                    ) {
-                        if let Some(&font_obj_num) = font_map.get(font_name.as_slice()) {
-                            let codes = font_char_codes.entry(font_obj_num).or_default();
-                            for item in arr {
-                                if let Some(s) = item.as_str() {
-                                    extract_char_codes(s, font_obj_num, modifier, codes);
-                                }
+                    ) && let Some(&font_obj_num) = font_map.get(font_name.as_slice())
+                    {
+                        let codes = font_char_codes.entry(font_obj_num).or_default();
+                        for item in arr {
+                            if let Some(s) = item.as_str() {
+                                extract_char_codes(s, font_obj_num, modifier, codes);
                             }
                         }
                     }
@@ -1797,10 +1795,10 @@ fn remove_unused_resources(modifier: &mut DocumentModifier, stats: &mut Compress
     // Collect page obj_nums and their data
     let mut pages: Vec<(u32, PdfDict)> = Vec::new();
     for (obj_num, obj) in modifier.writer().objects.iter() {
-        if let PdfObject::Dict(dict) = obj {
-            if dict.get_name(b"Type") == Some(b"Page") {
-                pages.push((*obj_num, dict.clone()));
-            }
+        if let PdfObject::Dict(dict) = obj
+            && dict.get_name(b"Type") == Some(b"Page")
+        {
+            pages.push((*obj_num, dict.clone()));
         }
     }
 
@@ -1874,44 +1872,37 @@ fn remove_unused_resources(modifier: &mut DocumentModifier, stats: &mut Compress
             if !checked.insert(xobj_name.clone()) {
                 continue;
             }
-            if let Some(&xobj_obj_num) = xobject_map.get(&xobj_name) {
-                if let Some(PdfObject::Stream { dict, data }) =
+            if let Some(&xobj_obj_num) = xobject_map.get(&xobj_name)
+                && let Some(PdfObject::Stream { dict, data }) =
                     modifier.find_object_pub(xobj_obj_num).cloned()
+            {
+                // Only process Form XObjects (not images)
+                if dict.get_name(b"Subtype") != Some(b"Form") {
+                    continue;
+                }
+                // Decode and parse the Form XObject's content stream
+                if let Ok(form_data) = crate::stream::decode_stream(&data, &dict)
+                    && let Ok(form_ops) = parse_content_stream(&form_data)
                 {
-                    // Only process Form XObjects (not images)
-                    if dict.get_name(b"Subtype") != Some(b"Form") {
-                        continue;
-                    }
-                    // Decode and parse the Form XObject's content stream
-                    if let Ok(form_data) = crate::stream::decode_stream(&data, &dict) {
-                        if let Ok(form_ops) = parse_content_stream(&form_data) {
-                            for op in &form_ops {
-                                match op.operator.as_slice() {
-                                    b"Tf" => {
-                                        if let Some(n) =
-                                            op.operands.first().and_then(|o| o.as_name())
-                                        {
-                                            used_fonts.insert(n.to_vec());
-                                        }
-                                    }
-                                    b"Do" => {
-                                        if let Some(n) =
-                                            op.operands.first().and_then(|o| o.as_name())
-                                        {
-                                            used_xobjects.insert(n.to_vec());
-                                            form_xobjects_to_check.push(n.to_vec());
-                                        }
-                                    }
-                                    b"gs" => {
-                                        if let Some(n) =
-                                            op.operands.first().and_then(|o| o.as_name())
-                                        {
-                                            used_extgstate.insert(n.to_vec());
-                                        }
-                                    }
-                                    _ => {}
+                    for op in &form_ops {
+                        match op.operator.as_slice() {
+                            b"Tf" => {
+                                if let Some(n) = op.operands.first().and_then(|o| o.as_name()) {
+                                    used_fonts.insert(n.to_vec());
                                 }
                             }
+                            b"Do" => {
+                                if let Some(n) = op.operands.first().and_then(|o| o.as_name()) {
+                                    used_xobjects.insert(n.to_vec());
+                                    form_xobjects_to_check.push(n.to_vec());
+                                }
+                            }
+                            b"gs" => {
+                                if let Some(n) = op.operands.first().and_then(|o| o.as_name()) {
+                                    used_extgstate.insert(n.to_vec());
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -2132,11 +2123,9 @@ fn strip_non_essential(
                 }
             }
 
-            if options.strip_extras {
-                if new_dict.remove(b"AA").is_some() {
-                    stats.metadata_items_stripped += 1;
-                    page_changed = true;
-                }
+            if options.strip_extras && new_dict.remove(b"AA").is_some() {
+                stats.metadata_items_stripped += 1;
+                page_changed = true;
             }
 
             if page_changed {
@@ -2261,7 +2250,7 @@ mod tests {
 
         let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
 
-        assert!(compressed.len() > 0);
+        assert!(!compressed.is_empty());
         assert_eq!(stats.original_size, original_size);
         assert_eq!(stats.images_found, 0);
         // Output should be valid PDF
@@ -2856,7 +2845,7 @@ mod tests {
     fn test_dedup_roundtrip_valid() {
         let pdf = create_pdf_with_duplicate_images(100, 100, 90);
 
-        let (compressed, stats) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
+        let (compressed, _stats) = compress_pdf(&pdf, &CompressOptions::preset_low()).unwrap();
 
         // Re-parse
         let reparsed = PdfDocument::from_bytes(compressed).unwrap();
@@ -3785,7 +3774,7 @@ mod tests {
         let pdf = create_text_pdf(3);
 
         let options = CompressOptions::preset_medium();
-        let (compressed, stats) = compress_pdf(&pdf, &options).unwrap();
+        let (compressed, _stats) = compress_pdf(&pdf, &options).unwrap();
 
         assert!(compressed.starts_with(b"%PDF"));
 
@@ -4204,8 +4193,6 @@ mod tests {
     /// H-T2: Object stream has correct /Type /ObjStm metadata.
     #[test]
     fn test_pack_object_streams_metadata() {
-        use crate::object::IndirectRef;
-
         let objects = vec![
             (
                 1,
@@ -4243,8 +4230,6 @@ mod tests {
     /// H-T3: Streams are NOT eligible for packing.
     #[test]
     fn test_pack_object_streams_skips_streams() {
-        use crate::object::IndirectRef;
-
         let objects = vec![
             (
                 1,
@@ -4376,8 +4361,6 @@ mod tests {
     /// `/Pretendard#20Black`, breaking the parser.
     #[test]
     fn test_compress_font_name_with_space_roundtrip() {
-        use crate::object::IndirectRef;
-
         // Build a minimal PDF with a font whose BaseFont contains a space
         let mut writer = crate::writer::PdfWriter::new();
 

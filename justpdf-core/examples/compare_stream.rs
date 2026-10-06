@@ -29,43 +29,40 @@ fn main() {
         gen_num: 0,
     };
     let cid_obj = orig.resolve(&iref).unwrap();
-    if let PdfObject::Dict(cd) = &cid_obj {
-        if let Some(PdfObject::Reference(fd_ref)) = cd.get(b"FontDescriptor") {
-            let fd = orig.resolve(fd_ref).unwrap();
-            if let PdfObject::Dict(fd_dict) = &fd {
-                if let Some(PdfObject::Reference(ff2_ref)) = fd_dict.get(b"FontFile2") {
-                    println!("FontFile2 obj: {}", ff2_ref.obj_num);
+    if let PdfObject::Dict(cd) = &cid_obj
+        && let Some(PdfObject::Reference(fd_ref)) = cd.get(b"FontDescriptor")
+    {
+        let fd = orig.resolve(fd_ref).unwrap();
+        if let PdfObject::Dict(fd_dict) = &fd
+            && let Some(PdfObject::Reference(ff2_ref)) = fd_dict.get(b"FontFile2")
+        {
+            println!("FontFile2 obj: {}", ff2_ref.obj_num);
 
-                    let orig_bytes = get_stream_bytes(&orig, ff2_ref.obj_num);
-                    let rt_bytes = get_stream_bytes(&rt, ff2_ref.obj_num);
+            let orig_bytes = get_stream_bytes(&orig, ff2_ref.obj_num);
+            let rt_bytes = get_stream_bytes(&rt, ff2_ref.obj_num);
 
-                    match (orig_bytes, rt_bytes) {
-                        (Some(ob), Some(rb)) => {
-                            println!("Original FontFile2 decoded: {} bytes", ob.len());
-                            println!("Roundtrip FontFile2 decoded: {} bytes", rb.len());
-                            println!("Match: {}", ob == rb);
-                            if ob != rb {
-                                // Find first difference
-                                for (i, (a, b)) in ob.iter().zip(rb.iter()).enumerate() {
-                                    if a != b {
-                                        println!(
-                                            "First diff at byte {}: orig={:#04x} rt={:#04x}",
-                                            i, a, b
-                                        );
-                                        break;
-                                    }
-                                }
+            match (orig_bytes, rt_bytes) {
+                (Some(ob), Some(rb)) => {
+                    println!("Original FontFile2 decoded: {} bytes", ob.len());
+                    println!("Roundtrip FontFile2 decoded: {} bytes", rb.len());
+                    println!("Match: {}", ob == rb);
+                    if ob != rb {
+                        // Find first difference
+                        for (i, (a, b)) in ob.iter().zip(rb.iter()).enumerate() {
+                            if a != b {
+                                println!("First diff at byte {}: orig={:#04x} rt={:#04x}", i, a, b);
+                                break;
                             }
                         }
-                        (Some(ob), None) => {
-                            println!("Original: {} bytes, Roundtrip: MISSING", ob.len())
-                        }
-                        (None, Some(rb)) => {
-                            println!("Original: MISSING, Roundtrip: {} bytes", rb.len())
-                        }
-                        _ => println!("Both missing"),
                     }
                 }
+                (Some(ob), None) => {
+                    println!("Original: {} bytes, Roundtrip: MISSING", ob.len())
+                }
+                (None, Some(rb)) => {
+                    println!("Original: MISSING, Roundtrip: {} bytes", rb.len())
+                }
+                _ => println!("Both missing"),
             }
         }
     }

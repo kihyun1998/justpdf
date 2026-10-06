@@ -659,17 +659,14 @@ pub fn parse_gouraud_triangles(
                     vertices.push(vertex);
                 }
             }
-            2 => {
+            2
                 // Continue from first and last vertex
-                if vertices.len() >= 2 {
+                if vertices.len() >= 2 => {
                     let v_first = vertices[0];
                     let v_last = vertices[vertices.len() - 1];
                     vertices.push(vertex);
                     triangles.push([v_last, vertices.last().copied().unwrap(), v_first]);
-                } else {
-                    vertices.push(vertex);
                 }
-            }
             _ => {
                 vertices.push(vertex);
             }
@@ -1066,10 +1063,10 @@ fn extract_color_stops(dict: &PdfDict) -> Vec<GradientStop> {
         if let PdfObject::Dict(func) = func_obj {
             return extract_stops_from_function(func, cs_name);
         }
-        if let PdfObject::Array(funcs) = func_obj {
-            if let Some(PdfObject::Dict(func)) = funcs.first() {
-                return extract_stops_from_function(func, cs_name);
-            }
+        if let PdfObject::Array(funcs) = func_obj
+            && let Some(PdfObject::Dict(func)) = funcs.first()
+        {
+            return extract_stops_from_function(func, cs_name);
         }
     }
 

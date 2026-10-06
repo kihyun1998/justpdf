@@ -14,13 +14,13 @@ fn test_render_page_produces_png() {
         return;
     }
 
-    let mut doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
+    let doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
     let options = RenderOptions {
         dpi: 72.0,
         ..Default::default()
     };
 
-    let png_data = render_page(&mut doc, 0, &options).expect("failed to render page 0");
+    let png_data = render_page(&doc, 0, &options).expect("failed to render page 0");
 
     // Check PNG signature
     assert!(png_data.len() > 8, "PNG output too small");
@@ -34,13 +34,13 @@ fn test_render_page_at_150dpi() {
         return;
     }
 
-    let mut doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
+    let doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
     let options = RenderOptions {
         dpi: 150.0,
         ..Default::default()
     };
 
-    let png_data = render_page(&mut doc, 0, &options).expect("failed to render at 150 DPI");
+    let png_data = render_page(&doc, 0, &options).expect("failed to render at 150 DPI");
     assert!(png_data.len() > 100);
 }
 
@@ -51,7 +51,7 @@ fn test_render_page_out_of_range() {
         return;
     }
 
-    let mut doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
+    let doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
     let options = RenderOptions::default();
 
     let count = justpdf_core::page::collect_pages(&doc).unwrap().len();
@@ -63,7 +63,7 @@ fn test_render_page_out_of_range() {
         )
     };
 
-    let err = render_page(&mut doc, 999, &options).unwrap_err();
+    let err = render_page(&doc, 999, &options).unwrap_err();
     assert!(is_out_of_range(&err), "render_page: {err:?}");
     let Err(err) = render_page_to_pixmap(&doc, 999, &options) else {
         panic!("render_page_to_pixmap: expected an error");
@@ -80,7 +80,7 @@ fn test_render_multiple_pages() {
         return;
     }
 
-    let mut doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
+    let doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
     let options = RenderOptions {
         dpi: 72.0,
         ..Default::default()
@@ -88,7 +88,7 @@ fn test_render_multiple_pages() {
 
     // Render first 3 pages
     for i in 0..3 {
-        let result = render_page(&mut doc, i, &options);
+        let result = render_page(&doc, i, &options);
         assert!(
             result.is_ok(),
             "failed to render page {i}: {:?}",
@@ -104,14 +104,14 @@ fn test_render_jpeg_output() {
         return;
     }
 
-    let mut doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
+    let doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
     let options = RenderOptions {
         dpi: 72.0,
         format: OutputFormat::Jpeg { quality: 85 },
         ..Default::default()
     };
 
-    let jpeg_data = render_page(&mut doc, 0, &options).expect("failed to render JPEG");
+    let jpeg_data = render_page(&doc, 0, &options).expect("failed to render JPEG");
 
     // Check JPEG signature (SOI marker)
     assert!(jpeg_data.len() > 2, "JPEG output too small");
@@ -126,14 +126,14 @@ fn test_render_all_20_pages() {
         return;
     }
 
-    let mut doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
+    let doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
     let options = RenderOptions {
         dpi: 72.0,
         ..Default::default()
     };
 
     for i in 0..20 {
-        let result = render_page(&mut doc, i, &options);
+        let result = render_page(&doc, i, &options);
         assert!(
             result.is_ok(),
             "failed to render page {i}: {:?}",
@@ -150,8 +150,8 @@ fn test_render_page_to_svg() {
         return;
     }
 
-    let mut doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
-    let svg = render_page_to_svg(&mut doc, 0).expect("failed to render SVG");
+    let doc = PdfDocument::open(&pdf_path).expect("failed to open PDF");
+    let svg = render_page_to_svg(&doc, 0).expect("failed to render SVG");
 
     assert!(
         svg.starts_with("<?xml") || svg.starts_with("<svg"),
