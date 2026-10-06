@@ -327,11 +327,11 @@ fn format_size(bytes: u64) -> String {
 }
 
 fn print_info_field(info: &justpdf_core::PdfDict, key: &str) {
-    if let Some(obj) = info.get(key.as_bytes()) {
-        if let Some(s) = obj.as_str() {
-            let text = String::from_utf8_lossy(s);
-            println!("{key}: {text}");
-        }
+    if let Some(obj) = info.get(key.as_bytes())
+        && let Some(s) = obj.as_str()
+    {
+        let text = String::from_utf8_lossy(s);
+        println!("{key}: {text}");
     }
 }
 
@@ -348,16 +348,15 @@ fn cmd_info(file: &Path, password: Option<&str>) -> Result<(), Box<dyn std::erro
     println!("Pages: {}", pages.len());
 
     // Get metadata from Info dict
-    if let Some(info_ref) = doc.trailer().get_ref(b"Info") {
-        if let Ok(info_obj) = doc.resolve(&info_ref.clone()) {
-            if let Some(info) = info_obj.as_dict() {
-                print_info_field(info, "Title");
-                print_info_field(info, "Author");
-                print_info_field(info, "Subject");
-                print_info_field(info, "Creator");
-                print_info_field(info, "Producer");
-            }
-        }
+    if let Some(info_ref) = doc.trailer().get_ref(b"Info")
+        && let Ok(info_obj) = doc.resolve(&info_ref.clone())
+        && let Some(info) = info_obj.as_dict()
+    {
+        print_info_field(info, "Title");
+        print_info_field(info, "Author");
+        print_info_field(info, "Subject");
+        print_info_field(info, "Creator");
+        print_info_field(info, "Producer");
     }
 
     println!(

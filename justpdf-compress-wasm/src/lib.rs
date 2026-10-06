@@ -202,6 +202,7 @@ pub fn compress_custom(
 }
 
 /// Compress a PDF with full control over all options.
+#[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn compress_advanced(
     data: &[u8],

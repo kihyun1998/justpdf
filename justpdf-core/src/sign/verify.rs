@@ -161,10 +161,10 @@ fn find_message_digest(attrs: &cms::signed_data::SignedAttributes) -> Option<Vec
     for attr in attrs.iter() {
         if attr.oid == md_oid {
             // The value is a SET containing an OCTET STRING
-            if let Some(val) = attr.values.as_ref().get(0) {
-                if let Ok(bytes) = val.decode_as::<der::asn1::OctetStringRef>() {
-                    return Some(bytes.as_bytes().to_vec());
-                }
+            if let Some(val) = attr.values.as_ref().first()
+                && let Ok(bytes) = val.decode_as::<der::asn1::OctetStringRef>()
+            {
+                return Some(bytes.as_bytes().to_vec());
             }
         }
     }
@@ -223,19 +223,16 @@ fn find_signer_certificate<'a>(
     let certs = signed_data.certificates.as_ref()?;
 
     let sid = &signer_info.sid;
-    match sid {
-        cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(iasn) => {
-            for cert_choice in certs.0.iter() {
-                if let cms::cert::CertificateChoices::Certificate(cert) = cert_choice {
-                    if cert.tbs_certificate.serial_number == iasn.serial_number
-                        && cert.tbs_certificate.issuer == iasn.issuer
-                    {
-                        return Some(cert);
-                    }
-                }
+    // SubjectKeyIdentifier not implemented yet
+    if let cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(iasn) = sid {
+        for cert_choice in certs.0.iter() {
+            if let cms::cert::CertificateChoices::Certificate(cert) = cert_choice
+                && cert.tbs_certificate.serial_number == iasn.serial_number
+                && cert.tbs_certificate.issuer == iasn.issuer
+            {
+                return Some(cert);
             }
         }
-        _ => {} // SubjectKeyIdentifier not implemented yet
     }
 
     None

@@ -153,7 +153,7 @@ impl PdfFunction {
 
         let functions: Vec<PdfFunction> = dict
             .get_array(b"Functions")
-            .map(|arr| arr.iter().filter_map(|o| PdfFunction::parse(o)).collect())
+            .map(|arr| arr.iter().filter_map(PdfFunction::parse).collect())
             .unwrap_or_default();
 
         Some(PdfFunction::Stitching {
@@ -257,10 +257,7 @@ impl PdfFunction {
                 let mut stack: Vec<f64> = Vec::new();
                 // Push clamped inputs onto stack
                 for (i, &val) in input.iter().enumerate() {
-                    stack.push(clamp_input(
-                        val,
-                        &domain[i..i + 1].iter().copied().collect::<Vec<_>>(),
-                    ));
+                    stack.push(clamp_input(val, &domain[i..i + 1]));
                 }
 
                 execute_ps_ops(&mut stack, ops);
@@ -642,10 +639,10 @@ fn execute_ps_ops(stack: &mut Vec<f64>, ops: &[PsOp]) {
 
             // Conditional
             PsOp::If(block) => {
-                if let Some(cond) = stack.pop() {
-                    if cond != 0.0 {
-                        execute_ps_ops(stack, block);
-                    }
+                if let Some(cond) = stack.pop()
+                    && cond != 0.0
+                {
+                    execute_ps_ops(stack, block);
                 }
             }
             PsOp::IfElse(true_block, false_block) => {

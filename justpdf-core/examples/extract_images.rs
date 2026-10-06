@@ -21,7 +21,7 @@ fn main() {
 
     std::fs::create_dir_all(out_dir).ok();
 
-    let mut doc = match PdfDocument::open(path) {
+    let doc = match PdfDocument::open(path) {
         Ok(doc) => doc,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -29,7 +29,7 @@ fn main() {
         }
     };
 
-    let pages = match page::collect_pages(&mut doc) {
+    let pages = match page::collect_pages(&doc) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Error: {e}");

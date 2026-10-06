@@ -582,17 +582,17 @@ mod tests {
 
     // Helpers to build minimal ICC binary data ---
 
-    fn put_u32_be(buf: &mut Vec<u8>, offset: usize, val: u32) {
+    fn put_u32_be(buf: &mut [u8], offset: usize, val: u32) {
         let bytes = val.to_be_bytes();
         buf[offset..offset + 4].copy_from_slice(&bytes);
     }
 
-    fn put_u16_be(buf: &mut Vec<u8>, offset: usize, val: u16) {
+    fn put_u16_be(buf: &mut [u8], offset: usize, val: u16) {
         let bytes = val.to_be_bytes();
         buf[offset..offset + 2].copy_from_slice(&bytes);
     }
 
-    fn put_s15fixed16(buf: &mut Vec<u8>, offset: usize, val: f64) {
+    fn put_s15fixed16(buf: &mut [u8], offset: usize, val: f64) {
         let raw = (val * 65536.0).round() as i32;
         let bytes = raw.to_be_bytes();
         buf[offset..offset + 4].copy_from_slice(&bytes);

@@ -59,6 +59,12 @@ fn page_error_code(e: &JustPdfError) -> c_int {
 
 /// Open a PDF file. Returns a document handle via `out`.
 /// Returns JUSTPDF_OK on success.
+///
+/// # Safety
+///
+/// - `path` must be null or point to a NUL-terminated string that stays valid for the duration of the call.
+/// - `out` must be null or valid for writing one `*mut JustPdfDocument`.
+/// - On `JUSTPDF_OK`, `*out` holds a handle the caller owns and must release with `justpdf_close`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_open(
     path: *const c_char,
@@ -82,6 +88,12 @@ pub unsafe extern "C" fn justpdf_open(
 }
 
 /// Open a PDF from memory. `data` must point to `len` bytes.
+///
+/// # Safety
+///
+/// - `data` must be null or valid for reading `len` bytes for the duration of the call; the bytes are copied, so the buffer may be released once the call returns.
+/// - `out` must be null or valid for writing one `*mut JustPdfDocument`.
+/// - On `JUSTPDF_OK`, `*out` holds a handle the caller owns and must release with `justpdf_close`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_open_memory(
     data: *const u8,
@@ -103,6 +115,11 @@ pub unsafe extern "C" fn justpdf_open_memory(
 }
 
 /// Free a document handle.
+///
+/// # Safety
+///
+/// - `doc` must be null or a handle returned by `justpdf_open` or `justpdf_open_memory` that has not been passed to `justpdf_close`.
+/// - After the call `doc` is dangling and must not be used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_close(doc: *mut JustPdfDocument) {
     if !doc.is_null() {
@@ -111,6 +128,11 @@ pub unsafe extern "C" fn justpdf_close(doc: *mut JustPdfDocument) {
 }
 
 /// Authenticate an encrypted document.
+///
+/// # Safety
+///
+/// - `doc` must be null or a handle returned by `justpdf_open` or `justpdf_open_memory` that has not been passed to `justpdf_close`. No other call may use the same handle while this one runs.
+/// - `password` must be null or point to a NUL-terminated string that stays valid for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_authenticate(
     doc: *mut JustPdfDocument,
@@ -132,6 +154,11 @@ pub unsafe extern "C" fn justpdf_authenticate(
 // ---------------------------------------------------------------------------
 
 /// Get page count. Writes the count to `out`.
+///
+/// # Safety
+///
+/// - `doc` must be null or a handle returned by `justpdf_open` or `justpdf_open_memory` that has not been passed to `justpdf_close`.
+/// - `out` must be null or valid for writing one `c_uint`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_page_count(
     doc: *const JustPdfDocument,
@@ -151,6 +178,12 @@ pub unsafe extern "C" fn justpdf_page_count(
 }
 
 /// Get PDF version. Writes major and minor to the provided pointers.
+///
+/// # Safety
+///
+/// - `doc` must be null or a handle returned by `justpdf_open` or `justpdf_open_memory` that has not been passed to `justpdf_close`.
+/// - `major` must be null or valid for writing one `u8`.
+/// - `minor` must be null or valid for writing one `u8`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_version(
     doc: *const JustPdfDocument,
@@ -169,6 +202,11 @@ pub unsafe extern "C" fn justpdf_version(
 }
 
 /// Check if document is encrypted. Writes 1 (encrypted) or 0 (not) to `out`.
+///
+/// # Safety
+///
+/// - `doc` must be null or a handle returned by `justpdf_open` or `justpdf_open_memory` that has not been passed to `justpdf_close`.
+/// - `out` must be null or valid for writing one `c_int`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_is_encrypted(
     doc: *const JustPdfDocument,
@@ -188,6 +226,12 @@ pub unsafe extern "C" fn justpdf_is_encrypted(
 
 /// Extract text from a single page (0-based index).
 /// The returned string must be freed with `justpdf_free_string`.
+///
+/// # Safety
+///
+/// - `doc` must be null or a handle returned by `justpdf_open` or `justpdf_open_memory` that has not been passed to `justpdf_close`.
+/// - `out` must be null or valid for writing one `*mut c_char`.
+/// - On `JUSTPDF_OK`, `*out` holds a NUL-terminated string the caller owns and must release with `justpdf_free_string`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_extract_page_text(
     doc: *const JustPdfDocument,
@@ -214,6 +258,12 @@ pub unsafe extern "C" fn justpdf_extract_page_text(
 
 /// Extract text from all pages.
 /// The returned string must be freed with `justpdf_free_string`.
+///
+/// # Safety
+///
+/// - `doc` must be null or a handle returned by `justpdf_open` or `justpdf_open_memory` that has not been passed to `justpdf_close`.
+/// - `out` must be null or valid for writing one `*mut c_char`.
+/// - On `JUSTPDF_OK`, `*out` holds a NUL-terminated string the caller owns and must release with `justpdf_free_string`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_extract_all_text(
     doc: *const JustPdfDocument,
@@ -234,6 +284,10 @@ pub unsafe extern "C" fn justpdf_extract_all_text(
 }
 
 /// Free a string returned by justpdf functions.
+///
+/// # Safety
+///
+/// - `s` must be null or a string returned by `justpdf_extract_page_text` or `justpdf_extract_all_text` that has not already been freed. After the call `s` is dangling and must not be used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_free_string(s: *mut c_char) {
     if !s.is_null() {
@@ -247,6 +301,12 @@ pub unsafe extern "C" fn justpdf_free_string(s: *mut c_char) {
 
 /// Render a page to PNG. Returns image data via `out`.
 /// The image must be freed with `justpdf_free_image`.
+///
+/// # Safety
+///
+/// - `doc` must be null or a handle returned by `justpdf_open` or `justpdf_open_memory` that has not been passed to `justpdf_close`.
+/// - `out` must be null or valid for writing one `*mut JustPdfImage`.
+/// - On `JUSTPDF_OK`, `*out` holds an image handle the caller owns and must release with `justpdf_free_image`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_render_page_png(
     doc: *const JustPdfDocument,
@@ -275,6 +335,13 @@ pub unsafe extern "C" fn justpdf_render_page_png(
 }
 
 /// Get image data pointer and length.
+///
+/// # Safety
+///
+/// - `img` must be null or a handle returned by `justpdf_render_page_png` that has not been passed to `justpdf_free_image`.
+/// - `data_out` must be null or valid for writing one `*const u8`.
+/// - `len_out` must be null or valid for writing one `usize`.
+/// - The pointer written to `*data_out` borrows the image's buffer: it is valid for reading `*len_out` bytes only until `img` is passed to `justpdf_free_image`, and must not be written through or freed by the caller.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_image_data(
     img: *const JustPdfImage,
@@ -293,6 +360,11 @@ pub unsafe extern "C" fn justpdf_image_data(
 }
 
 /// Save image data to a file.
+///
+/// # Safety
+///
+/// - `img` must be null or a handle returned by `justpdf_render_page_png` that has not been passed to `justpdf_free_image`.
+/// - `path` must be null or point to a NUL-terminated string that stays valid for the duration of the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_image_save(
     img: *const JustPdfImage,
@@ -313,6 +385,11 @@ pub unsafe extern "C" fn justpdf_image_save(
 }
 
 /// Free a rendered image.
+///
+/// # Safety
+///
+/// - `img` must be null or a handle returned by `justpdf_render_page_png` that has not been passed to `justpdf_free_image`.
+/// - After the call `img` is dangling and must not be used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_free_image(img: *mut JustPdfImage) {
     if !img.is_null() {
@@ -325,6 +402,12 @@ pub unsafe extern "C" fn justpdf_free_image(img: *mut JustPdfImage) {
 // ---------------------------------------------------------------------------
 
 /// Get page dimensions (width and height in points).
+///
+/// # Safety
+///
+/// - `doc` must be null or a handle returned by `justpdf_open` or `justpdf_open_memory` that has not been passed to `justpdf_close`.
+/// - `width` must be null or valid for writing one `c_double`.
+/// - `height` must be null or valid for writing one `c_double`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn justpdf_page_size(
     doc: *const JustPdfDocument,

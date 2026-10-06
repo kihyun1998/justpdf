@@ -88,28 +88,28 @@ fn extract_office_metadata(
     let mut title = None;
     let mut author = None;
 
-    if let Ok(xml) = read_zip_text(archive, "docProps/core.xml") {
-        if let Ok(doc) = roxmltree::Document::parse(&xml) {
-            for node in doc.descendants() {
-                match node.tag_name().name() {
-                    "title" => {
-                        if let Some(t) = node.text() {
-                            let t = t.trim();
-                            if !t.is_empty() {
-                                title = Some(t.to_string());
-                            }
+    if let Ok(xml) = read_zip_text(archive, "docProps/core.xml")
+        && let Ok(doc) = roxmltree::Document::parse(&xml)
+    {
+        for node in doc.descendants() {
+            match node.tag_name().name() {
+                "title" => {
+                    if let Some(t) = node.text() {
+                        let t = t.trim();
+                        if !t.is_empty() {
+                            title = Some(t.to_string());
                         }
                     }
-                    "creator" => {
-                        if let Some(a) = node.text() {
-                            let a = a.trim();
-                            if !a.is_empty() {
-                                author = Some(a.to_string());
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                "creator" => {
+                    if let Some(a) = node.text() {
+                        let a = a.trim();
+                        if !a.is_empty() {
+                            author = Some(a.to_string());
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -154,10 +154,9 @@ fn extract_docx_paragraph_text(node: &roxmltree::Node<'_, '_>, result: &mut Stri
                     if run_child.is_element()
                         && run_child.tag_name().name() == "t"
                         && is_word_namespace(run_child.tag_name().namespace())
+                        && let Some(text) = run_child.text()
                     {
-                        if let Some(text) = run_child.text() {
-                            result.push_str(text);
-                        }
+                        result.push_str(text);
                     }
                     // Handle tab characters
                     if run_child.is_element()
@@ -254,10 +253,10 @@ fn parse_shared_strings(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<
 /// Collect text from a shared string item (<si>).
 fn collect_xlsx_si_text(node: &roxmltree::Node<'_, '_>, result: &mut String) {
     for child in node.descendants() {
-        if child.tag_name().name() == "t" {
-            if let Some(text) = child.text() {
-                result.push_str(text);
-            }
+        if child.tag_name().name() == "t"
+            && let Some(text) = child.text()
+        {
+            result.push_str(text);
         }
     }
 }
@@ -285,7 +284,7 @@ fn parse_xlsx_sheet(
 
                 let col_idx = cell
                     .attribute("r")
-                    .map(|r| column_index_from_ref(r))
+                    .map(column_index_from_ref)
                     .unwrap_or(cells.len() as u32);
 
                 let cell_type = cell.attribute("t").unwrap_or("");
@@ -310,10 +309,10 @@ fn parse_xlsx_sheet(
                         // Inline string
                         let mut s = String::new();
                         for t_node in cell.descendants() {
-                            if t_node.tag_name().name() == "t" {
-                                if let Some(t) = t_node.text() {
-                                    s.push_str(t);
-                                }
+                            if t_node.tag_name().name() == "t"
+                                && let Some(t) = t_node.text()
+                            {
+                                s.push_str(t);
                             }
                         }
                         s
@@ -404,11 +403,11 @@ fn extract_pptx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<Vec
                         current_paragraph.push_str(text);
                     }
                 }
-                "p" if is_drawingml_namespace(node.tag_name().namespace()) => {
+                "p" if is_drawingml_namespace(node.tag_name().namespace())
                     // Start of a new paragraph — flush previous
-                    if !current_paragraph.is_empty() {
-                        text_parts.push(std::mem::take(&mut current_paragraph));
-                    }
+                    && !current_paragraph.is_empty() =>
+                {
+                    text_parts.push(std::mem::take(&mut current_paragraph));
                 }
                 _ => {}
             }

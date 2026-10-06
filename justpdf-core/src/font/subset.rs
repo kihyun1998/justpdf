@@ -174,7 +174,7 @@ pub fn subset_font(font_data: &[u8], glyph_ids: &[u16]) -> Option<SubsetResult> 
         }
         new_glyf.extend_from_slice(glyf_data.get(start..end)?);
         // Pad to 4-byte boundary.
-        while new_glyf.len() % 4 != 0 {
+        while !new_glyf.len().is_multiple_of(4) {
             new_glyf.push(0);
         }
     }

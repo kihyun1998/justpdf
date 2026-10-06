@@ -70,7 +70,7 @@ pub fn resolve_bidi(text: &str) -> Result<Vec<BidiRun>> {
 
 /// Check if a string contains any right-to-left characters.
 pub fn contains_rtl(text: &str) -> bool {
-    text.chars().any(|c| is_rtl_char(c))
+    text.chars().any(is_rtl_char)
 }
 
 /// Check if a character is a right-to-left character.

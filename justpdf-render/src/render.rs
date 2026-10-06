@@ -290,7 +290,8 @@ pub fn compute_page_transform(
     // Base transform: translate origin, flip Y, scale
     // PDF: origin at lower-left, Y up
     // Pixels: origin at upper-left, Y down
-    let base = match rotate % 360 {
+
+    match rotate % 360 {
         90 | -270 => {
             // Rotate 90°: swap width/height
             Matrix {
@@ -329,9 +330,7 @@ pub fn compute_page_transform(
                 f: (media_box.lly + h) * scale,
             }
         }
-    };
-
-    base
+    }
 }
 
 #[cfg(test)]

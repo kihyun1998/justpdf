@@ -67,21 +67,21 @@ fn main() {
                             );
 
                             // Check if Type0 with DescendantFonts
-                            if subtype == "Type0" {
-                                if let Some(PdfObject::Array(desc)) = fd.get(b"DescendantFonts") {
-                                    for d in desc {
-                                        if let PdfObject::Reference(dr) = d {
-                                            let cid = doc.resolve(dr).unwrap();
-                                            if let PdfObject::Dict(cd) = &cid {
-                                                let cs = cd
-                                                    .get_name(b"Subtype")
-                                                    .map(|s| String::from_utf8_lossy(s).to_string())
-                                                    .unwrap_or_default();
-                                                println!(
-                                                    "    CIDFont obj {} Subtype={}",
-                                                    dr.obj_num, cs
-                                                );
-                                            }
+                            if subtype == "Type0"
+                                && let Some(PdfObject::Array(desc)) = fd.get(b"DescendantFonts")
+                            {
+                                for d in desc {
+                                    if let PdfObject::Reference(dr) = d {
+                                        let cid = doc.resolve(dr).unwrap();
+                                        if let PdfObject::Dict(cd) = &cid {
+                                            let cs = cd
+                                                .get_name(b"Subtype")
+                                                .map(|s| String::from_utf8_lossy(s).to_string())
+                                                .unwrap_or_default();
+                                            println!(
+                                                "    CIDFont obj {} Subtype={}",
+                                                dr.obj_num, cs
+                                            );
                                         }
                                     }
                                 }

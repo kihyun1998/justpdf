@@ -157,13 +157,9 @@ impl<'a> SvgRenderer<'a> {
 
         let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {
             let tu_ref = tu_ref.clone();
-            if let Ok(tu_obj) = self.doc.resolve(&tu_ref) {
-                if let PdfObject::Stream { dict, data } = tu_obj {
-                    let decoded = self.doc.decode_stream(&dict, &data).ok();
-                    decoded.map(|d| ToUnicodeCMap::parse(&d))
-                } else {
-                    None
-                }
+            if let Ok(PdfObject::Stream { dict, data }) = self.doc.resolve(&tu_ref) {
+                let decoded = self.doc.decode_stream(&dict, &data).ok();
+                decoded.map(|d| ToUnicodeCMap::parse(&d))
             } else {
                 None
             }
@@ -172,21 +168,20 @@ impl<'a> SvgRenderer<'a> {
         };
 
         // Resolve CID font widths for Type0
-        if info.subtype == b"Type0" {
-            if let Some(PdfObject::Array(descendants)) = fd.get(b"DescendantFonts") {
-                if let Some(desc_ref) = descendants.first() {
-                    let desc_obj = match desc_ref {
-                        PdfObject::Reference(r) => {
-                            let r = r.clone();
-                            self.doc.resolve(&r)?
-                        }
-                        other => other.clone(),
-                    };
-                    if let PdfObject::Dict(cid_dict) = &desc_obj {
-                        let cid_info = parse_font_info(cid_dict);
-                        info.widths = cid_info.widths;
-                    }
+        if info.subtype == b"Type0"
+            && let Some(PdfObject::Array(descendants)) = fd.get(b"DescendantFonts")
+            && let Some(desc_ref) = descendants.first()
+        {
+            let desc_obj = match desc_ref {
+                PdfObject::Reference(r) => {
+                    let r = r.clone();
+                    self.doc.resolve(&r)?
                 }
+                other => other.clone(),
+            };
+            if let PdfObject::Dict(cid_dict) = &desc_obj {
+                let cid_info = parse_font_info(cid_dict);
+                info.widths = cid_info.widths;
             }
         }
 
@@ -236,11 +231,11 @@ impl<'a> SvgRenderer<'a> {
                 }
                 other => other.clone(),
             };
-            if let PdfObject::Stream { dict, data } = obj {
-                if let Ok(decoded) = self.doc.decode_stream(&dict, &data) {
-                    combined.extend_from_slice(&decoded);
-                    combined.push(b' ');
-                }
+            if let PdfObject::Stream { dict, data } = obj
+                && let Ok(decoded) = self.doc.decode_stream(&dict, &data)
+            {
+                combined.extend_from_slice(&decoded);
+                combined.push(b' ');
             }
         }
         Ok(combined)
@@ -1195,18 +1190,18 @@ impl<'a> SvgRenderer<'a> {
         self.clip_id_stack.push(self.active_clip_id.clone());
 
         // Apply form matrix if present
-        if let Some(matrix_arr) = dict.get_array(b"Matrix") {
-            if matrix_arr.len() >= 6 {
-                let m = Matrix {
-                    a: matrix_arr[0].as_f64().unwrap_or(1.0),
-                    b: matrix_arr[1].as_f64().unwrap_or(0.0),
-                    c: matrix_arr[2].as_f64().unwrap_or(0.0),
-                    d: matrix_arr[3].as_f64().unwrap_or(1.0),
-                    e: matrix_arr[4].as_f64().unwrap_or(0.0),
-                    f: matrix_arr[5].as_f64().unwrap_or(0.0),
-                };
-                self.state.ctm = m.concat(&self.state.ctm);
-            }
+        if let Some(matrix_arr) = dict.get_array(b"Matrix")
+            && matrix_arr.len() >= 6
+        {
+            let m = Matrix {
+                a: matrix_arr[0].as_f64().unwrap_or(1.0),
+                b: matrix_arr[1].as_f64().unwrap_or(0.0),
+                c: matrix_arr[2].as_f64().unwrap_or(0.0),
+                d: matrix_arr[3].as_f64().unwrap_or(1.0),
+                e: matrix_arr[4].as_f64().unwrap_or(0.0),
+                f: matrix_arr[5].as_f64().unwrap_or(0.0),
+            };
+            self.state.ctm = m.concat(&self.state.ctm);
         }
 
         let ops = parse_content_stream(data).map_err(RenderError::Core)?;
@@ -1333,7 +1328,7 @@ fn extract_font_family(info: &FontInfo) -> String {
         &base
     };
     // Replace common separators
-    name.replace(',', " ").replace('-', " ")
+    name.replace([',', '-'], " ")
 }
 
 /// Convert decoded image data to RGBA.
@@ -1402,7 +1397,7 @@ fn encode_rgba_to_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 /// Simple base64 encoder (no external dependency).
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
 
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;

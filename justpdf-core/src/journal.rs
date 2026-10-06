@@ -722,6 +722,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn serialization_roundtrip() {
         let mut j = Journal::new();
         j.record(Operation::AddObject { obj_num: 1 });

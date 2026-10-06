@@ -22,7 +22,7 @@ fn main() {
             std::process::exit(1);
         });
 
-    let mut doc = match PdfDocument::open(path) {
+    let doc = match PdfDocument::open(path) {
         Ok(doc) => doc,
         Err(e) => {
             eprintln!("Error: {e}");

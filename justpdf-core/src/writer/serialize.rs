@@ -143,7 +143,7 @@ fn serialize_pdf_impl(
     let mut buf: Vec<u8> = Vec::new();
 
     // --- Header ---
-    write!(buf, "%PDF-{}.{}\n", version.0, version.1)?;
+    writeln!(buf, "%PDF-{}.{}", version.0, version.1)?;
     // Binary marker: four bytes > 127 to signal binary content
     buf.extend_from_slice(b"%\xe2\xe3\xcf\xd3\n");
 
@@ -175,7 +175,7 @@ fn serialize_pdf_impl(
             obj.clone()
         };
 
-        write!(buf, "{} {} obj\n", obj_num, gen_num)?;
+        writeln!(buf, "{} {} obj", obj_num, gen_num)?;
         serialize_object(&mut buf, &write_obj)?;
         write!(buf, "\nendobj\n")?;
     }
@@ -187,8 +187,8 @@ fn serialize_pdf_impl(
     let max_obj_num = offsets.iter().map(|(n, _)| *n).max().unwrap_or(0);
     let xref_size = max_obj_num + 1;
 
-    write!(buf, "xref\n")?;
-    write!(buf, "0 {}\n", xref_size)?;
+    writeln!(buf, "xref")?;
+    writeln!(buf, "0 {}", xref_size)?;
 
     // Entry 0: free list head
     buf.extend_from_slice(b"0000000000 65535 f \n");
@@ -231,9 +231,9 @@ fn serialize_pdf_impl(
         trailer.insert(b"ID".to_vec(), PdfObject::Array(id_array.to_vec()));
     }
 
-    write!(buf, "trailer\n")?;
+    writeln!(buf, "trailer")?;
     serialize_dict(&mut buf, &trailer)?;
-    write!(buf, "\n")?;
+    writeln!(buf)?;
 
     // --- Startxref ---
     write!(buf, "startxref\n{}\n%%EOF\n", xref_offset)?;
@@ -343,7 +343,7 @@ fn serialize_with_xref_stream_impl(
     // --- Header ---
     let ver_major = version.0.max(1);
     let ver_minor = version.1.max(5); // at least 1.5 for object streams
-    write!(buf, "%PDF-{}.{}\n", ver_major, ver_minor)?;
+    writeln!(buf, "%PDF-{}.{}", ver_major, ver_minor)?;
     buf.extend_from_slice(b"%\xe2\xe3\xcf\xd3\n");
 
     // --- Body: write each indirect object ---
@@ -353,9 +353,9 @@ fn serialize_with_xref_stream_impl(
         let offset = buf.len();
         offsets.push((*obj_num, offset));
 
-        write!(
+        writeln!(
             buf,
-            "{} {} obj\n",
+            "{} {} obj",
             obj_num,
             generation_of(generations, *obj_num)
         )?;

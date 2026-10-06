@@ -13,10 +13,10 @@ pub fn glyph_outline(face: &Face, glyph_id: ttf_parser::GlyphId) -> Option<Path>
 /// Uses the cmap table if available, otherwise uses identity mapping.
 pub fn char_code_to_glyph_id(face: &Face, code: u32) -> ttf_parser::GlyphId {
     // Try direct Unicode cmap lookup
-    if let Some(c) = char::from_u32(code) {
-        if let Some(gid) = face.glyph_index(c) {
-            return gid;
-        }
+    if let Some(c) = char::from_u32(code)
+        && let Some(gid) = face.glyph_index(c)
+    {
+        return gid;
     }
     // Fallback: treat code as glyph ID directly
     ttf_parser::GlyphId(code as u16)

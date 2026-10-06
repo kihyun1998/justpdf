@@ -65,18 +65,18 @@ fn text_field_appearance(field: &FormField, w: f64, h: f64) -> String {
     );
 
     // Text value
-    if let Some(text) = field.value_as_string() {
-        if !text.is_empty() {
-            // Use DA if present, otherwise default
-            if let Some(da) = &field.default_appearance {
-                let _ = write!(buf, "BT\n{da}\n");
-            } else {
-                buf.push_str("BT\n/Helvetica 10 Tf\n");
-            }
-            buf.push_str("0 g\n");
-            let _ = write!(buf, "2 {} Td\n", Number((h - 10.0) / 2.0));
-            let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
+    if let Some(text) = field.value_as_string()
+        && !text.is_empty()
+    {
+        // Use DA if present, otherwise default
+        if let Some(da) = &field.default_appearance {
+            let _ = write!(buf, "BT\n{da}\n");
+        } else {
+            buf.push_str("BT\n/Helvetica 10 Tf\n");
         }
+        buf.push_str("0 g\n");
+        let _ = writeln!(buf, "2 {} Td", Number((h - 10.0) / 2.0));
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
     }
     buf
 }
@@ -176,12 +176,12 @@ fn combo_appearance(field: &FormField, w: f64, h: f64) -> String {
     );
 
     // Selected value text
-    if let Some(text) = field.value_as_string() {
-        if !text.is_empty() {
-            buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
-            let _ = write!(buf, "2 {} Td\n", Number((h - 10.0) / 2.0));
-            let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
-        }
+    if let Some(text) = field.value_as_string()
+        && !text.is_empty()
+    {
+        buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
+        let _ = writeln!(buf, "2 {} Td", Number((h - 10.0) / 2.0));
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
     }
     buf
 }
@@ -220,7 +220,7 @@ fn list_appearance(field: &FormField, w: f64, h: f64) -> String {
             );
         }
         buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
-        let _ = write!(buf, "3 {} Td\n", Number(y + 2.0));
+        let _ = writeln!(buf, "3 {} Td", Number(y + 2.0));
         let _ = write!(buf, "{} Tj\nET\n", string_syntax(opt.as_bytes()));
         y -= line_height;
     }
@@ -251,21 +251,21 @@ fn button_appearance(field: &FormField, w: f64, h: f64) -> String {
     );
 
     // Button caption
-    if let Some(text) = field.value_as_string() {
-        if !text.is_empty() {
-            buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
-            let _ = write!(buf, "4 {} Td\n", Number((h - 10.0) / 2.0));
-            let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
-        }
+    if let Some(text) = field.value_as_string()
+        && !text.is_empty()
+    {
+        buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
+        let _ = writeln!(buf, "4 {} Td", Number((h - 10.0) / 2.0));
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
     }
     buf
 }
 
 fn append_circle(buf: &mut String, cx: f64, cy: f64, r: f64, k: f64) {
-    let _ = write!(buf, "{} {} m\n", Number(cx + r), Number(cy));
-    let _ = write!(
+    let _ = writeln!(buf, "{} {} m", Number(cx + r), Number(cy));
+    let _ = writeln!(
         buf,
-        "{} {} {} {} {} {} c\n",
+        "{} {} {} {} {} {} c",
         Number(cx + r),
         Number(cy + r * k),
         Number(cx + r * k),
@@ -273,9 +273,9 @@ fn append_circle(buf: &mut String, cx: f64, cy: f64, r: f64, k: f64) {
         Number(cx),
         Number(cy + r)
     );
-    let _ = write!(
+    let _ = writeln!(
         buf,
-        "{} {} {} {} {} {} c\n",
+        "{} {} {} {} {} {} c",
         Number(cx - r * k),
         Number(cy + r),
         Number(cx - r),
@@ -283,9 +283,9 @@ fn append_circle(buf: &mut String, cx: f64, cy: f64, r: f64, k: f64) {
         Number(cx - r),
         Number(cy)
     );
-    let _ = write!(
+    let _ = writeln!(
         buf,
-        "{} {} {} {} {} {} c\n",
+        "{} {} {} {} {} {} c",
         Number(cx - r),
         Number(cy - r * k),
         Number(cx - r * k),
@@ -293,9 +293,9 @@ fn append_circle(buf: &mut String, cx: f64, cy: f64, r: f64, k: f64) {
         Number(cx),
         Number(cy - r)
     );
-    let _ = write!(
+    let _ = writeln!(
         buf,
-        "{} {} {} {} {} {} c\n",
+        "{} {} {} {} {} {} c",
         Number(cx + r * k),
         Number(cy - r),
         Number(cx + r),

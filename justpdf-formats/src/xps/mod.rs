@@ -87,20 +87,17 @@ impl XpsDocument {
 /// Find the FixedDocumentSequence path from the content types or relationships.
 fn find_fixed_doc_sequence(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<String> {
     // Try reading _rels/.rels first
-    if let Ok(rels) = read_zip_text(archive, "_rels/.rels") {
-        if let Ok(doc) = roxmltree::Document::parse(&rels) {
-            for node in doc.descendants() {
-                if node.tag_name().name() == "Relationship" {
-                    if let Some(rel_type) = node.attribute("Type") {
-                        if rel_type.contains("fixeddocumentsequence")
-                            || rel_type.contains("FixedDocumentSequence")
-                        {
-                            if let Some(target) = node.attribute("Target") {
-                                return Ok(normalize_xps_path(target));
-                            }
-                        }
-                    }
-                }
+    if let Ok(rels) = read_zip_text(archive, "_rels/.rels")
+        && let Ok(doc) = roxmltree::Document::parse(&rels)
+    {
+        for node in doc.descendants() {
+            if node.tag_name().name() == "Relationship"
+                && let Some(rel_type) = node.attribute("Type")
+                && (rel_type.contains("fixeddocumentsequence")
+                    || rel_type.contains("FixedDocumentSequence"))
+                && let Some(target) = node.attribute("Target")
+            {
+                return Ok(normalize_xps_path(target));
             }
         }
     }
@@ -119,10 +116,10 @@ fn find_fixed_doc_sequence(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Resu
 
     // Last resort: scan for .fdseq files
     for i in 0..archive.len() {
-        if let Ok(file) = archive.by_index(i) {
-            if file.name().ends_with(".fdseq") {
-                return Ok(file.name().to_string());
-            }
+        if let Ok(file) = archive.by_index(i)
+            && file.name().ends_with(".fdseq")
+        {
+            return Ok(file.name().to_string());
         }
     }
 
@@ -142,10 +139,10 @@ fn parse_fixed_doc_sequence(
 
     let mut doc_paths = Vec::new();
     for node in doc.descendants() {
-        if node.tag_name().name() == "DocumentReference" {
-            if let Some(source) = node.attribute("Source") {
-                doc_paths.push(resolve_xps_path(path, source));
-            }
+        if node.tag_name().name() == "DocumentReference"
+            && let Some(source) = node.attribute("Source")
+        {
+            doc_paths.push(resolve_xps_path(path, source));
         }
     }
 
@@ -169,10 +166,10 @@ fn parse_fixed_document(
 
     let mut page_paths = Vec::new();
     for node in doc.descendants() {
-        if node.tag_name().name() == "PageContent" {
-            if let Some(source) = node.attribute("Source") {
-                page_paths.push(resolve_xps_path(path, source));
-            }
+        if node.tag_name().name() == "PageContent"
+            && let Some(source) = node.attribute("Source")
+        {
+            page_paths.push(resolve_xps_path(path, source));
         }
     }
 
@@ -216,12 +213,12 @@ fn parse_fixed_page(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, path: &str) ->
 
 /// Recursively extract text from Glyphs elements.
 fn extract_glyphs_text(node: &roxmltree::Node<'_, '_>, text_parts: &mut Vec<String>) {
-    if node.tag_name().name() == "Glyphs" {
-        if let Some(unicode) = node.attribute("UnicodeString") {
-            let trimmed = unicode.trim();
-            if !trimmed.is_empty() {
-                text_parts.push(trimmed.to_string());
-            }
+    if node.tag_name().name() == "Glyphs"
+        && let Some(unicode) = node.attribute("UnicodeString")
+    {
+        let trimmed = unicode.trim();
+        if !trimmed.is_empty() {
+            text_parts.push(trimmed.to_string());
         }
     }
     for child in node.children() {
@@ -242,22 +239,22 @@ fn extract_metadata(
     let core_props_paths = ["docProps/core.xml", "metadata/core-properties/1.xml"];
 
     for path in &core_props_paths {
-        if let Ok(xml) = read_zip_text(archive, path) {
-            if let Ok(doc) = roxmltree::Document::parse(&xml) {
-                for node in doc.descendants() {
-                    match node.tag_name().name() {
-                        "title" => {
-                            if let Some(t) = node.text() {
-                                title = Some(t.to_string());
-                            }
+        if let Ok(xml) = read_zip_text(archive, path)
+            && let Ok(doc) = roxmltree::Document::parse(&xml)
+        {
+            for node in doc.descendants() {
+                match node.tag_name().name() {
+                    "title" => {
+                        if let Some(t) = node.text() {
+                            title = Some(t.to_string());
                         }
-                        "creator" => {
-                            if let Some(a) = node.text() {
-                                author = Some(a.to_string());
-                            }
-                        }
-                        _ => {}
                     }
+                    "creator" => {
+                        if let Some(a) = node.text() {
+                            author = Some(a.to_string());
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

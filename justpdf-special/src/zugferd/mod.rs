@@ -78,12 +78,11 @@ fn detect_zugferd_xml(doc: &PdfDocument) -> Option<(String, String)> {
         for &zf_name in &zugferd_names {
             if name_lower.contains(zf_name) || name_lower.ends_with(".xml") {
                 // Try to extract the file content
-                if let Ok(data) = justpdf_core::embedded_file::extract_file(doc, file_spec) {
-                    if let Ok(xml) = String::from_utf8(data) {
-                        if xml.contains("CrossIndustryInvoice") || xml.contains("rsm:") {
-                            return Some((file_spec.filename.clone(), xml));
-                        }
-                    }
+                if let Ok(data) = justpdf_core::embedded_file::extract_file(doc, file_spec)
+                    && let Ok(xml) = String::from_utf8(data)
+                    && (xml.contains("CrossIndustryInvoice") || xml.contains("rsm:"))
+                {
+                    return Some((file_spec.filename.clone(), xml));
                 }
             }
         }
@@ -134,12 +133,11 @@ pub fn parse_zugferd_xml(xml: &str) -> Result<std::collections::HashMap<String, 
         match tag {
             "ID" => {
                 // Could be invoice number, buyer/seller ID, etc.
-                if let Some(parent) = node.parent() {
-                    if parent.tag_name().name() == "ExchangedDocument" {
-                        if let Some(text) = node.text() {
-                            fields.insert("invoice_number".into(), text.to_string());
-                        }
-                    }
+                if let Some(parent) = node.parent()
+                    && parent.tag_name().name() == "ExchangedDocument"
+                    && let Some(text) = node.text()
+                {
+                    fields.insert("invoice_number".into(), text.to_string());
                 }
             }
             "IssueDateTime" | "DateTimeString" => {
@@ -170,10 +168,10 @@ pub fn parse_zugferd_xml(xml: &str) -> Result<std::collections::HashMap<String, 
                         if let Some(text) = node.text() {
                             fields.insert("seller_name".into(), text.to_string());
                         }
-                    } else if pname == "BuyerTradeParty" {
-                        if let Some(text) = node.text() {
-                            fields.insert("buyer_name".into(), text.to_string());
-                        }
+                    } else if pname == "BuyerTradeParty"
+                        && let Some(text) = node.text()
+                    {
+                        fields.insert("buyer_name".into(), text.to_string());
                     }
                 }
             }

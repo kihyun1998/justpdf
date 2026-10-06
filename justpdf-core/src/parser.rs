@@ -95,10 +95,10 @@ impl<K: Eq + Hash + Clone, V> LruCache<K, V> {
             return;
         }
         // Evict if at capacity
-        if self.map.len() >= self.capacity {
-            if let Some(evicted) = self.order.pop_back() {
-                self.map.remove(&evicted);
-            }
+        if self.map.len() >= self.capacity
+            && let Some(evicted) = self.order.pop_back()
+        {
+            self.map.remove(&evicted);
         }
         self.order.push_front(key.clone());
         self.map.insert(key, value);
@@ -369,10 +369,10 @@ impl PdfDocument {
 
     /// Extract the first element of the /ID array from the trailer.
     pub(crate) fn extract_file_id(&self) -> Vec<u8> {
-        if let Some(PdfObject::Array(arr)) = self.xref.trailer.get(b"ID") {
-            if let Some(PdfObject::String(id)) = arr.first() {
-                return id.clone();
-            }
+        if let Some(PdfObject::Array(arr)) = self.xref.trailer.get(b"ID")
+            && let Some(PdfObject::String(id)) = arr.first()
+        {
+            return id.clone();
         }
         Vec::new()
     }
@@ -458,10 +458,10 @@ impl PdfDocument {
         }
 
         // Check if we need authentication
-        if let Some(ref sec) = self.security {
-            if !sec.is_authenticated() {
-                return Err(JustPdfError::EncryptedDocument);
-            }
+        if let Some(ref sec) = self.security
+            && !sec.is_authenticated()
+        {
+            return Err(JustPdfError::EncryptedDocument);
         }
 
         if !self.defines(iref) {
@@ -504,18 +504,18 @@ impl PdfDocument {
         }
 
         // Apply decryption if needed
-        if let Some(ref sec) = self.security {
-            if sec.is_authenticated() {
-                if self.is_plain_document_metadata(iref, &obj, sec) {
-                    return Ok(crypto::decrypt_stream_dict(
-                        obj,
-                        sec,
-                        iref.obj_num,
-                        iref.gen_num,
-                    ));
-                }
-                return crypto::decrypt_object(obj, sec, iref.obj_num, iref.gen_num);
+        if let Some(ref sec) = self.security
+            && sec.is_authenticated()
+        {
+            if self.is_plain_document_metadata(iref, &obj, sec) {
+                return Ok(crypto::decrypt_stream_dict(
+                    obj,
+                    sec,
+                    iref.obj_num,
+                    iref.gen_num,
+                ));
             }
+            return crypto::decrypt_object(obj, sec, iref.obj_num, iref.gen_num);
         }
 
         Ok(obj)

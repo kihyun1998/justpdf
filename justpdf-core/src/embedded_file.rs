@@ -94,22 +94,22 @@ fn parse_file_spec_dict(doc: &PdfDocument, dict: &PdfDict) -> Result<FileSpec> {
             let stream_ref = r.clone();
 
             // Resolve the stream to extract params
-            if let Ok(stream_obj) = doc.resolve(&stream_ref) {
-                if let PdfObject::Stream { dict: s_dict, .. } = stream_obj {
-                    // MIME type from /Subtype
-                    if let Some(name) = s_dict.get_name(b"Subtype") {
-                        let raw = String::from_utf8_lossy(name).into_owned();
-                        // `#2F` left after decoding: a MIME type escaped twice
-                        mime_type = Some(raw.replace("#2F", "/"));
-                    }
+            if let Ok(stream_obj) = doc.resolve(&stream_ref)
+                && let PdfObject::Stream { dict: s_dict, .. } = stream_obj
+            {
+                // MIME type from /Subtype
+                if let Some(name) = s_dict.get_name(b"Subtype") {
+                    let raw = String::from_utf8_lossy(name).into_owned();
+                    // `#2F` left after decoding: a MIME type escaped twice
+                    mime_type = Some(raw.replace("#2F", "/"));
+                }
 
-                    // /Params sub-dictionary
-                    if let Some(params) = s_dict.get_dict(b"Params") {
-                        size = params.get_i64(b"Size").map(|v| v as usize);
-                        checksum = params.get_string(b"CheckSum").map(|b| b.to_vec());
-                        creation_date = params.get(b"CreationDate").and_then(obj_to_string);
-                        mod_date = params.get(b"ModDate").and_then(obj_to_string);
-                    }
+                // /Params sub-dictionary
+                if let Some(params) = s_dict.get_dict(b"Params") {
+                    size = params.get_i64(b"Size").map(|v| v as usize);
+                    checksum = params.get_string(b"CheckSum").map(|b| b.to_vec());
+                    creation_date = params.get(b"CreationDate").and_then(obj_to_string);
+                    mod_date = params.get(b"ModDate").and_then(obj_to_string);
                 }
             }
 
@@ -130,7 +130,7 @@ fn parse_file_spec_dict(doc: &PdfDocument, dict: &PdfDict) -> Result<FileSpec> {
 }
 
 /// Resolve a dict entry that might be an indirect reference to a dict.
-fn resolve_dict<'a>(doc: &'a PdfDocument, parent: &PdfDict, key: &[u8]) -> Result<Option<PdfDict>> {
+fn resolve_dict(doc: &PdfDocument, parent: &PdfDict, key: &[u8]) -> Result<Option<PdfDict>> {
     match parent.get(key) {
         Some(PdfObject::Dict(d)) => Ok(Some(d.clone())),
         Some(PdfObject::Reference(r)) => {

@@ -18,7 +18,7 @@ fn fixture(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn test_open_minimal_pdf() {
-    let mut doc = PdfDocument::open(&fixture("minimal.pdf")).unwrap();
+    let doc = PdfDocument::open(&fixture("minimal.pdf")).unwrap();
     assert_eq!(doc.version, (1, 4));
     assert!(doc.object_count() > 0);
 
@@ -32,7 +32,7 @@ fn test_open_minimal_pdf() {
 
 #[test]
 fn test_two_pages() {
-    let mut doc = PdfDocument::open(&fixture("two_pages.pdf")).unwrap();
+    let doc = PdfDocument::open(&fixture("two_pages.pdf")).unwrap();
 
     let cat_ref = doc.catalog_ref().unwrap().clone();
     let catalog = doc.resolve(&cat_ref).unwrap().clone();
@@ -48,7 +48,7 @@ fn test_two_pages() {
 
 #[test]
 fn test_with_text_stream() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
 
     // Resolve the content stream (obj 4)
     let iref = IndirectRef {
@@ -64,7 +64,7 @@ fn test_with_text_stream() {
 
 #[test]
 fn test_compressed_stream() {
-    let mut doc = PdfDocument::open(&fixture("compressed_stream.pdf")).unwrap();
+    let doc = PdfDocument::open(&fixture("compressed_stream.pdf")).unwrap();
 
     let iref = IndirectRef {
         obj_num: 4,
@@ -83,7 +83,7 @@ fn test_compressed_stream() {
 
 #[test]
 fn test_ascii_hex_stream() {
-    let mut doc = PdfDocument::open(&fixture("ascii_hex_stream.pdf")).unwrap();
+    let doc = PdfDocument::open(&fixture("ascii_hex_stream.pdf")).unwrap();
 
     let iref = IndirectRef {
         obj_num: 4,
@@ -101,7 +101,7 @@ fn test_ascii_hex_stream() {
 
 #[test]
 fn test_incremental_update() {
-    let mut doc = PdfDocument::open(&fixture("incremental.pdf")).unwrap();
+    let doc = PdfDocument::open(&fixture("incremental.pdf")).unwrap();
 
     // Should have Info dict from incremental update
     let trailer = doc.trailer();
@@ -137,11 +137,11 @@ fn test_incremental_update() {
 
 #[test]
 fn test_extract_text_hello_world() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     assert_eq!(pages.len(), 1);
 
-    let page_text = text::extract_page_text(&mut doc, &pages[0]).unwrap();
+    let page_text = text::extract_page_text(&doc, &pages[0]).unwrap();
 
     // Should have extracted characters
     assert!(!page_text.chars.is_empty());
@@ -163,11 +163,11 @@ fn test_extract_text_hello_world() {
 
 #[test]
 fn test_extract_text_compressed() {
-    let mut doc = PdfDocument::open(&fixture("compressed_stream.pdf")).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("compressed_stream.pdf")).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     assert_eq!(pages.len(), 1);
 
-    let page_text = text::extract_page_text(&mut doc, &pages[0]).unwrap();
+    let page_text = text::extract_page_text(&doc, &pages[0]).unwrap();
     let plain = page_text.plain_text();
     assert!(
         plain.contains("Compressed content stream"),
@@ -177,27 +177,27 @@ fn test_extract_text_compressed() {
 
 #[test]
 fn test_extract_text_all_pages() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let result = text::extract_all_text_string(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let result = text::extract_all_text_string(&doc).unwrap();
     assert!(result.contains("Hello World"));
 }
 
 #[test]
 fn test_extract_text_empty_page() {
-    let mut doc = PdfDocument::open(&fixture("minimal.pdf")).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("minimal.pdf")).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     assert_eq!(pages.len(), 1);
 
-    let page_text = text::extract_page_text(&mut doc, &pages[0]).unwrap();
+    let page_text = text::extract_page_text(&doc, &pages[0]).unwrap();
     assert!(page_text.chars.is_empty());
     assert_eq!(page_text.plain_text(), "");
 }
 
 #[test]
 fn test_extract_text_word_grouping() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
-    let page_text = text::extract_page_text(&mut doc, &pages[0]).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = collect_pages(&doc).unwrap();
+    let page_text = text::extract_page_text(&doc, &pages[0]).unwrap();
 
     // "Hello World" → should have 2 words
     assert!(!page_text.lines.is_empty());
@@ -213,8 +213,8 @@ fn test_extract_text_word_grouping() {
 
 #[test]
 fn test_search_exact_in_pdf() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = text::extract_all_text(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&doc).unwrap();
     let results = search::search_exact(&pages, "Hello");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].page_index, 0);
@@ -224,24 +224,24 @@ fn test_search_exact_in_pdf() {
 
 #[test]
 fn test_search_case_insensitive_in_pdf() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = text::extract_all_text(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&doc).unwrap();
     let results = search::search_case_insensitive(&pages, "hello world");
     assert_eq!(results.len(), 1);
 }
 
 #[test]
 fn test_search_no_match_in_pdf() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = text::extract_all_text(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&doc).unwrap();
     let results = search::search_exact(&pages, "nonexistent");
     assert!(results.is_empty());
 }
 
 #[test]
 fn test_search_regex_in_pdf() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = text::extract_all_text(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&doc).unwrap();
     let results = search::search_regex(&pages, "H\\w+").unwrap();
     assert!(!results.is_empty());
     assert!(results[0].matched_text.starts_with('H'));
@@ -249,8 +249,8 @@ fn test_search_regex_in_pdf() {
 
 #[test]
 fn test_search_empty_page() {
-    let mut doc = PdfDocument::open(&fixture("minimal.pdf")).unwrap();
-    let pages = text::extract_all_text(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("minimal.pdf")).unwrap();
+    let pages = text::extract_all_text(&doc).unwrap();
     let results = search::search_exact(&pages, "anything");
     assert!(results.is_empty());
 }
@@ -261,16 +261,16 @@ fn test_search_empty_page() {
 
 #[test]
 fn test_format_plain_text() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = text::extract_all_text(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&doc).unwrap();
     let plain = format::format_page(&pages[0], OutputFormat::PlainText);
     assert!(plain.contains("Hello World"));
 }
 
 #[test]
 fn test_format_html() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = text::extract_all_text(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&doc).unwrap();
     let html = format::format_page(&pages[0], OutputFormat::Html);
     assert!(html.contains("<div class=\"page\">"));
     assert!(html.contains("Hello World"));
@@ -279,8 +279,8 @@ fn test_format_html() {
 
 #[test]
 fn test_format_json() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = text::extract_all_text(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&doc).unwrap();
     let json = format::format_page(&pages[0], OutputFormat::Json);
     assert!(json.contains("\"page_index\": 0"));
     assert!(json.contains("Hello"));
@@ -289,16 +289,16 @@ fn test_format_json() {
 
 #[test]
 fn test_format_markdown() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = text::extract_all_text(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&doc).unwrap();
     let md = format::format_page(&pages[0], OutputFormat::Markdown);
     assert!(md.contains("Hello World"));
 }
 
 #[test]
 fn test_format_multi_page() {
-    let mut doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
-    let pages = text::extract_all_text(&mut doc).unwrap();
+    let doc = PdfDocument::open(&fixture("with_text.pdf")).unwrap();
+    let pages = text::extract_all_text(&doc).unwrap();
     let html = format::format_pages(&pages, OutputFormat::Html);
     assert!(html.contains("<!DOCTYPE html>"));
     assert!(html.contains("Page 1"));
@@ -338,7 +338,7 @@ fn test_truncated_pdf() {
 
 #[test]
 fn test_corrupted_xref_bad_offset() {
-    let mut doc = PdfDocument::open(&fixture("corrupted_xref.pdf")).unwrap();
+    let doc = PdfDocument::open(&fixture("corrupted_xref.pdf")).unwrap();
     // obj 1 has a wrong offset (99999), resolving it should fail
     let result = doc.resolve(&IndirectRef {
         obj_num: 1,
@@ -380,20 +380,20 @@ fn create_simple_pdf() -> Vec<u8> {
 #[test]
 fn test_no_annotations() {
     let bytes = create_simple_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
-    let annots = annot::get_annotations(&mut doc, &pages[0]).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&doc).unwrap();
+    let annots = annot::get_annotations(&doc, &pages[0]).unwrap();
     assert!(annots.is_empty());
 }
 
 #[test]
 fn test_add_highlight_annotation_roundtrip() {
     let bytes = create_simple_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     let page_obj_num = pages[0].page_ref.obj_num;
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     let rect = Rect {
         llx: 100.0,
         lly: 700.0,
@@ -408,9 +408,9 @@ fn test_add_highlight_annotation_roundtrip() {
     let new_bytes = modifier.build().unwrap();
 
     // Re-parse and verify
-    let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
-    let pages2 = collect_pages(&mut doc2).unwrap();
-    let annots = annot::get_annotations(&mut doc2, &pages2[0]).unwrap();
+    let doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
+    let pages2 = collect_pages(&doc2).unwrap();
+    let annots = annot::get_annotations(&doc2, &pages2[0]).unwrap();
     assert_eq!(annots.len(), 1);
     assert_eq!(annots[0].annot_type, AnnotationType::Highlight);
     assert_eq!(annots[0].contents, Some("Test highlight".to_string()));
@@ -420,11 +420,11 @@ fn test_add_highlight_annotation_roundtrip() {
 #[test]
 fn test_add_ink_annotation_roundtrip() {
     let bytes = create_simple_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     let page_obj_num = pages[0].page_ref.obj_num;
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     let rect = Rect {
         llx: 50.0,
         lly: 50.0,
@@ -437,9 +437,9 @@ fn test_add_ink_annotation_roundtrip() {
     annot::add_annotation(&mut modifier, page_obj_num, builder).unwrap();
 
     let new_bytes = modifier.build().unwrap();
-    let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
-    let pages2 = collect_pages(&mut doc2).unwrap();
-    let annots = annot::get_annotations(&mut doc2, &pages2[0]).unwrap();
+    let doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
+    let pages2 = collect_pages(&doc2).unwrap();
+    let annots = annot::get_annotations(&doc2, &pages2[0]).unwrap();
     assert_eq!(annots.len(), 1);
     assert_eq!(annots[0].annot_type, AnnotationType::Ink);
     if let AnnotationData::Ink { ink_list: parsed } = &annots[0].data {
@@ -455,11 +455,11 @@ fn test_add_ink_annotation_roundtrip() {
 #[test]
 fn test_add_link_annotation_roundtrip() {
     let bytes = create_simple_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     let page_obj_num = pages[0].page_ref.obj_num;
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     let rect = Rect {
         llx: 72.0,
         lly: 700.0,
@@ -470,9 +470,9 @@ fn test_add_link_annotation_roundtrip() {
     annot::add_annotation(&mut modifier, page_obj_num, builder).unwrap();
 
     let new_bytes = modifier.build().unwrap();
-    let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
-    let pages2 = collect_pages(&mut doc2).unwrap();
-    let annots = annot::get_annotations(&mut doc2, &pages2[0]).unwrap();
+    let doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
+    let pages2 = collect_pages(&doc2).unwrap();
+    let annots = annot::get_annotations(&doc2, &pages2[0]).unwrap();
     assert_eq!(annots.len(), 1);
     if let AnnotationData::Link { uri, .. } = &annots[0].data {
         assert_eq!(uri.as_deref(), Some("https://example.com"));
@@ -484,11 +484,11 @@ fn test_add_link_annotation_roundtrip() {
 #[test]
 fn test_delete_annotation() {
     let bytes = create_simple_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     let page_obj_num = pages[0].page_ref.obj_num;
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
     // Add two annotations
     let rect = Rect {
@@ -506,9 +506,9 @@ fn test_delete_annotation() {
     annot::delete_annotation(&mut modifier, page_obj_num, 0).unwrap();
 
     let new_bytes = modifier.build().unwrap();
-    let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
-    let pages2 = collect_pages(&mut doc2).unwrap();
-    let annots = annot::get_annotations(&mut doc2, &pages2[0]).unwrap();
+    let doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
+    let pages2 = collect_pages(&doc2).unwrap();
+    let annots = annot::get_annotations(&doc2, &pages2[0]).unwrap();
     assert_eq!(annots.len(), 1);
     assert_eq!(annots[0].contents, Some("Note 2".to_string()));
 }
@@ -516,11 +516,11 @@ fn test_delete_annotation() {
 #[test]
 fn test_delete_annotation_out_of_range() {
     let bytes = create_simple_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     let page_obj_num = pages[0].page_ref.obj_num;
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     let result = annot::delete_annotation(&mut modifier, page_obj_num, 0);
     assert!(result.is_err());
 }
@@ -528,11 +528,11 @@ fn test_delete_annotation_out_of_range() {
 #[test]
 fn test_line_annotation_properties() {
     let bytes = create_simple_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     let page_obj_num = pages[0].page_ref.obj_num;
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     let builder = AnnotationBuilder::line((100.0, 100.0), (300.0, 300.0))
         .line_endings(
             annot::LineEndingStyle::OpenArrow,
@@ -542,9 +542,9 @@ fn test_line_annotation_properties() {
     annot::add_annotation(&mut modifier, page_obj_num, builder).unwrap();
 
     let new_bytes = modifier.build().unwrap();
-    let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
-    let pages2 = collect_pages(&mut doc2).unwrap();
-    let annots = annot::get_annotations(&mut doc2, &pages2[0]).unwrap();
+    let doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
+    let pages2 = collect_pages(&doc2).unwrap();
+    let annots = annot::get_annotations(&doc2, &pages2[0]).unwrap();
     assert_eq!(annots.len(), 1);
     if let AnnotationData::Line {
         start,
@@ -565,11 +565,11 @@ fn test_line_annotation_properties() {
 #[test]
 fn test_annotation_flags_roundtrip() {
     let bytes = create_simple_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     let page_obj_num = pages[0].page_ref.obj_num;
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     let rect = Rect {
         llx: 100.0,
         lly: 600.0,
@@ -582,9 +582,9 @@ fn test_annotation_flags_roundtrip() {
     annot::add_annotation(&mut modifier, page_obj_num, builder).unwrap();
 
     let new_bytes = modifier.build().unwrap();
-    let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
-    let pages2 = collect_pages(&mut doc2).unwrap();
-    let annots = annot::get_annotations(&mut doc2, &pages2[0]).unwrap();
+    let doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
+    let pages2 = collect_pages(&doc2).unwrap();
+    let annots = annot::get_annotations(&doc2, &pages2[0]).unwrap();
     assert_eq!(annots.len(), 1);
     assert!(annots[0].flags.has(AnnotationFlags::PRINT));
     assert!(annots[0].flags.has(AnnotationFlags::NO_ZOOM));
@@ -771,8 +771,8 @@ fn create_acroform_pdf() -> Vec<u8> {
 #[test]
 fn test_acroform_parse() {
     let bytes = create_acroform_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let acroform = form::parse_acroform(&mut doc).unwrap().unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let acroform = form::parse_acroform(&doc).unwrap().unwrap();
 
     assert_eq!(acroform.fields.len(), 4);
 
@@ -800,18 +800,18 @@ fn test_acroform_parse() {
 #[test]
 fn test_acroform_no_form() {
     let bytes = create_simple_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let acroform = form::parse_acroform(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let acroform = form::parse_acroform(&doc).unwrap();
     assert!(acroform.is_none());
 }
 
 #[test]
 fn test_set_text_field_value_roundtrip() {
     let bytes = create_acroform_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let acroform = form::parse_acroform(&mut doc).unwrap().unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let acroform = form::parse_acroform(&doc).unwrap().unwrap();
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     form::set_field_value(
         &mut modifier,
         &acroform,
@@ -821,8 +821,8 @@ fn test_set_text_field_value_roundtrip() {
     .unwrap();
 
     let new_bytes = modifier.build().unwrap();
-    let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
-    let acroform2 = form::parse_acroform(&mut doc2).unwrap().unwrap();
+    let doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
+    let acroform2 = form::parse_acroform(&doc2).unwrap().unwrap();
     let field = acroform2.fields.iter().find(|f| f.name == "name").unwrap();
     assert_eq!(field.value_as_string(), Some("Jane".to_string()));
 }
@@ -830,20 +830,20 @@ fn test_set_text_field_value_roundtrip() {
 #[test]
 fn test_checkbox_toggle_roundtrip() {
     let bytes = create_acroform_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let acroform = form::parse_acroform(&mut doc).unwrap().unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let acroform = form::parse_acroform(&doc).unwrap().unwrap();
 
     // Initially Off
     let cb = acroform.fields.iter().find(|f| f.name == "agree").unwrap();
     assert!(!cb.is_checked());
 
     // Toggle on
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     form::toggle_checkbox(&mut modifier, &acroform, "agree").unwrap();
 
     let new_bytes = modifier.build().unwrap();
-    let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
-    let acroform2 = form::parse_acroform(&mut doc2).unwrap().unwrap();
+    let doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
+    let acroform2 = form::parse_acroform(&doc2).unwrap().unwrap();
     let cb2 = acroform2.fields.iter().find(|f| f.name == "agree").unwrap();
     assert!(cb2.is_checked());
 }
@@ -851,10 +851,10 @@ fn test_checkbox_toggle_roundtrip() {
 #[test]
 fn test_combobox_change_roundtrip() {
     let bytes = create_acroform_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let acroform = form::parse_acroform(&mut doc).unwrap().unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let acroform = form::parse_acroform(&doc).unwrap().unwrap();
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     form::set_field_value(
         &mut modifier,
         &acroform,
@@ -864,8 +864,8 @@ fn test_combobox_change_roundtrip() {
     .unwrap();
 
     let new_bytes = modifier.build().unwrap();
-    let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
-    let acroform2 = form::parse_acroform(&mut doc2).unwrap().unwrap();
+    let doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
+    let acroform2 = form::parse_acroform(&doc2).unwrap().unwrap();
     let combo = acroform2
         .fields
         .iter()
@@ -877,10 +877,10 @@ fn test_combobox_change_roundtrip() {
 #[test]
 fn test_readonly_field_error() {
     let bytes = create_acroform_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let acroform = form::parse_acroform(&mut doc).unwrap().unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let acroform = form::parse_acroform(&doc).unwrap().unwrap();
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     let result = form::set_field_value(
         &mut modifier,
         &acroform,
@@ -893,18 +893,18 @@ fn test_readonly_field_error() {
 #[test]
 fn test_flatten_form() {
     let bytes = create_acroform_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
+    let doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
 
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     // Re-open doc for flatten (needs separate borrow)
-    let mut doc_for_flatten = PdfDocument::from_bytes(bytes).unwrap();
-    form::flatten_form(&mut modifier, &mut doc_for_flatten).unwrap();
+    let doc_for_flatten = PdfDocument::from_bytes(bytes).unwrap();
+    form::flatten_form(&mut modifier, &doc_for_flatten).unwrap();
 
     let new_bytes = modifier.build().unwrap();
-    let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
+    let doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
 
     // AcroForm should be removed
-    let acroform2 = form::parse_acroform(&mut doc2).unwrap();
+    let acroform2 = form::parse_acroform(&doc2).unwrap();
     assert!(acroform2.is_none());
 }
 
@@ -912,12 +912,12 @@ fn test_flatten_form() {
 fn test_redaction_apply() {
     // Create a PDF with text, add redact annotation, apply redaction
     let bytes = create_simple_pdf(); // has "Hello World" at (72, 720)
-    let mut doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes.clone()).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     let page_obj_num = pages[0].page_ref.obj_num;
 
     // Add a Redact annotation covering the text area
-    let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     let rect = Rect {
         llx: 50.0,
         lly: 710.0,
@@ -929,17 +929,17 @@ fn test_redaction_apply() {
     let with_redact = modifier.build().unwrap();
 
     // Now apply redaction
-    let mut doc2 = PdfDocument::from_bytes(with_redact.clone()).unwrap();
-    let mut modifier2 = DocumentModifier::from_document(&mut doc2).unwrap();
-    let mut doc_for_apply = PdfDocument::from_bytes(with_redact).unwrap();
-    annot::redact::apply_redactions(&mut modifier2, &mut doc_for_apply, 0).unwrap();
+    let doc2 = PdfDocument::from_bytes(with_redact.clone()).unwrap();
+    let mut modifier2 = DocumentModifier::from_document(&doc2).unwrap();
+    let doc_for_apply = PdfDocument::from_bytes(with_redact).unwrap();
+    annot::redact::apply_redactions(&mut modifier2, &doc_for_apply, 0).unwrap();
 
     let result_bytes = modifier2.build().unwrap();
 
     // Verify: redact annotation should be removed
-    let mut doc3 = PdfDocument::from_bytes(result_bytes).unwrap();
-    let pages3 = collect_pages(&mut doc3).unwrap();
-    let annots = annot::get_annotations(&mut doc3, &pages3[0]).unwrap();
+    let doc3 = PdfDocument::from_bytes(result_bytes).unwrap();
+    let pages3 = collect_pages(&doc3).unwrap();
+    let annots = annot::get_annotations(&doc3, &pages3[0]).unwrap();
     // No redact annotations remaining
     assert!(
         annots
@@ -951,8 +951,8 @@ fn test_redaction_apply() {
 
 /// The decoded content stream of the first page.
 fn first_page_content(bytes: Vec<u8>) -> Vec<u8> {
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     let page = doc.resolve(&pages[0].page_ref).unwrap();
     let contents = page.as_dict().unwrap().get(b"Contents").unwrap().clone();
     let PdfObject::Reference(r) = contents else {
@@ -980,9 +980,9 @@ fn test_redaction_keeps_content_outside_the_area_unchanged() {
     let bytes = doc.build().unwrap();
     let original = parse_content_stream(&first_page_content(bytes.clone())).unwrap();
 
-    let mut doc1 = PdfDocument::from_bytes(bytes).unwrap();
-    let pages = collect_pages(&mut doc1).unwrap();
-    let mut modifier = DocumentModifier::from_document(&mut doc1).unwrap();
+    let doc1 = PdfDocument::from_bytes(bytes).unwrap();
+    let pages = collect_pages(&doc1).unwrap();
+    let mut modifier = DocumentModifier::from_document(&doc1).unwrap();
     let far_away = Rect {
         llx: 400.0,
         lly: 100.0,
@@ -997,10 +997,10 @@ fn test_redaction_keeps_content_outside_the_area_unchanged() {
     .unwrap();
     let with_redact = modifier.build().unwrap();
 
-    let mut doc2 = PdfDocument::from_bytes(with_redact.clone()).unwrap();
-    let mut modifier2 = DocumentModifier::from_document(&mut doc2).unwrap();
-    let mut doc_for_apply = PdfDocument::from_bytes(with_redact).unwrap();
-    annot::redact::apply_redactions(&mut modifier2, &mut doc_for_apply, 0).unwrap();
+    let doc2 = PdfDocument::from_bytes(with_redact.clone()).unwrap();
+    let mut modifier2 = DocumentModifier::from_document(&doc2).unwrap();
+    let doc_for_apply = PdfDocument::from_bytes(with_redact).unwrap();
+    annot::redact::apply_redactions(&mut modifier2, &doc_for_apply, 0).unwrap();
     let redacted = parse_content_stream(&first_page_content(modifier2.build().unwrap())).unwrap();
 
     // Nothing lies in the area: the original operations come first, unchanged,
@@ -1065,7 +1065,7 @@ fn test_encrypt_rc4_128_roundtrip() {
     assert!(doc.is_authenticated());
 
     // Verify we can parse pages
-    let pages = collect_pages(&mut doc).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     assert_eq!(pages.len(), 1);
 }
 
@@ -1097,7 +1097,7 @@ fn test_encrypt_aes128_roundtrip() {
     assert!(doc.is_encrypted());
 
     doc.authenticate(b"aes128pass").unwrap();
-    let pages = collect_pages(&mut doc).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     assert_eq!(pages.len(), 1);
 }
 
@@ -1132,7 +1132,7 @@ fn test_encrypt_aes256_roundtrip() {
     doc.authenticate(b"aes256owner").unwrap();
     assert!(doc.is_authenticated());
 
-    let pages = collect_pages(&mut doc).unwrap();
+    let pages = collect_pages(&doc).unwrap();
     assert_eq!(pages.len(), 1);
 }
 
@@ -1787,22 +1787,22 @@ fn build_multi_page_pdf(num_pages: usize, write_count: bool) -> Vec<u8> {
 #[test]
 fn test_page_count_single() {
     let bytes = create_simple_pdf();
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    assert_eq!(page_mod::page_count(&mut doc).unwrap(), 1);
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert_eq!(page_mod::page_count(&doc).unwrap(), 1);
 }
 
 #[test]
 fn test_page_count_multi() {
     let bytes = create_multi_page_pdf(25);
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    assert_eq!(page_mod::page_count(&mut doc).unwrap(), 25);
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert_eq!(page_mod::page_count(&doc).unwrap(), 25);
 }
 
 #[test]
 fn test_page_count_large() {
     let bytes = create_multi_page_pdf(1000);
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    assert_eq!(page_mod::page_count(&mut doc).unwrap(), 1000);
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    assert_eq!(page_mod::page_count(&doc).unwrap(), 1000);
 }
 
 // --- get_page tests ---
@@ -1810,8 +1810,8 @@ fn test_page_count_large() {
 #[test]
 fn test_get_page_first() {
     let bytes = create_multi_page_pdf(10);
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let page = get_page(&mut doc, 0).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let page = get_page(&doc, 0).unwrap();
     assert_eq!(page.index, 0);
     assert_eq!(page.media_box.width(), 612.0);
     assert_eq!(page.media_box.height(), 792.0);
@@ -1820,24 +1820,24 @@ fn test_get_page_first() {
 #[test]
 fn test_get_page_last() {
     let bytes = create_multi_page_pdf(10);
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let page = get_page(&mut doc, 9).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let page = get_page(&doc, 9).unwrap();
     assert_eq!(page.index, 9);
 }
 
 #[test]
 fn test_get_page_middle() {
     let bytes = create_multi_page_pdf(50);
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let page = get_page(&mut doc, 25).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let page = get_page(&doc, 25).unwrap();
     assert_eq!(page.index, 25);
 }
 
 #[test]
 fn test_get_page_out_of_range() {
     let bytes = create_multi_page_pdf(5);
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let result = get_page(&mut doc, 5);
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let result = get_page(&doc, 5);
     assert!(
         matches!(
             result,
@@ -1850,8 +1850,8 @@ fn test_get_page_out_of_range() {
 #[test]
 fn test_get_page_out_of_range_large_index() {
     let bytes = create_multi_page_pdf(3);
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let result = get_page(&mut doc, 999);
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let result = get_page(&doc, 999);
     assert!(
         matches!(
             result,
@@ -1907,12 +1907,12 @@ fn test_get_page_past_last_page_under_overstated_count() {
 #[test]
 fn test_get_page_matches_collect_pages() {
     let bytes = create_multi_page_pdf(20);
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
-    let all_pages = collect_pages(&mut doc).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
+    let all_pages = collect_pages(&doc).unwrap();
 
     // Verify get_page returns the same info for each page
     for (i, expected) in all_pages.iter().enumerate() {
-        let page = get_page(&mut doc, i).unwrap();
+        let page = get_page(&doc, i).unwrap();
         assert_eq!(page.index, expected.index);
         assert_eq!(page.page_ref, expected.page_ref);
         assert_eq!(page.media_box, expected.media_box);
@@ -1927,23 +1927,23 @@ fn test_large_pdf_1000_pages() {
     let bytes = create_multi_page_pdf(1000);
 
     // Parse the document
-    let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+    let doc = PdfDocument::from_bytes(bytes).unwrap();
 
     // page_count should be correct without resolving all pages
-    assert_eq!(page_mod::page_count(&mut doc).unwrap(), 1000);
+    assert_eq!(page_mod::page_count(&doc).unwrap(), 1000);
 
     // Single page access should work
-    let first = get_page(&mut doc, 0).unwrap();
+    let first = get_page(&doc, 0).unwrap();
     assert_eq!(first.index, 0);
 
-    let middle = get_page(&mut doc, 500).unwrap();
+    let middle = get_page(&doc, 500).unwrap();
     assert_eq!(middle.index, 500);
 
-    let last = get_page(&mut doc, 999).unwrap();
+    let last = get_page(&doc, 999).unwrap();
     assert_eq!(last.index, 999);
 
     // Out-of-range should fail
-    assert!(get_page(&mut doc, 1000).is_err());
+    assert!(get_page(&doc, 1000).is_err());
 }
 
 // --- decode_stream_cow tests (integration) ---

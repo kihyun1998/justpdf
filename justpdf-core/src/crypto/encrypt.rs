@@ -203,10 +203,10 @@ pub fn encrypt_object(
     };
 
     // Don't encrypt the encryption dictionary itself
-    if let Some(enc_num) = state.encrypt_obj_num {
-        if obj_num == enc_num {
-            return Ok(obj.clone());
-        }
+    if let Some(enc_num) = state.encrypt_obj_num
+        && obj_num == enc_num
+    {
+        return Ok(obj.clone());
     }
 
     match obj {

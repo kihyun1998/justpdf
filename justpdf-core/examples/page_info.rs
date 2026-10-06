@@ -11,7 +11,7 @@ fn main() {
     }
 
     let path = Path::new(&args[1]);
-    let mut doc = match PdfDocument::open(path) {
+    let doc = match PdfDocument::open(path) {
         Ok(doc) => doc,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -19,12 +19,12 @@ fn main() {
         }
     };
 
-    let count = page::page_count(&mut doc).unwrap_or(0);
+    let count = page::page_count(&doc).unwrap_or(0);
     println!("PDF Version: {}.{}", doc.version.0, doc.version.1);
     println!("Pages: {count}");
     println!();
 
-    let pages = match page::collect_pages(&mut doc) {
+    let pages = match page::collect_pages(&doc) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Error collecting pages: {e}");

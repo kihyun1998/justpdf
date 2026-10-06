@@ -39,7 +39,7 @@ pub fn compute_file_encryption_key_r234(
     let mut hasher = Md5::new();
     hasher.update(padded);
     hasher.update(&ed.o);
-    hasher.update(&(ed.p as u32).to_le_bytes());
+    hasher.update((ed.p as u32).to_le_bytes());
     hasher.update(file_id);
 
     if !ed.encrypt_metadata && ed.r >= 4 {
@@ -377,7 +377,7 @@ fn aes128_cbc_encrypt_no_padding(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> 
     type Aes128CbcEnc = cbc::Encryptor<Aes128>;
 
     // Data may not be aligned; pad to 16 bytes if needed
-    let aligned_len = ((data.len() + 15) / 16) * 16;
+    let aligned_len = data.len().div_ceil(16) * 16;
     let mut buf = vec![0u8; aligned_len];
     buf[..data.len()].copy_from_slice(data);
 
@@ -418,6 +418,7 @@ pub fn generate_o_u_values_r234(
 /// Generate encryption entries for R=6 (AES-256).
 ///
 /// Returns (O, U, OE, UE, Perms).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn generate_values_r6(
     user_password: &[u8],
     owner_password: &[u8],
@@ -492,7 +493,7 @@ fn aes256_cbc_encrypt_no_padding(key: &[u8; 32], iv: &[u8; 16], data: &[u8]) -> 
     use cbc::cipher::{BlockEncryptMut, KeyIvInit};
     type Aes256CbcEnc = cbc::Encryptor<Aes256>;
 
-    let aligned_len = ((data.len() + 15) / 16) * 16;
+    let aligned_len = data.len().div_ceil(16) * 16;
     let mut buf = vec![0u8; aligned_len];
     buf[..data.len()].copy_from_slice(data);
 

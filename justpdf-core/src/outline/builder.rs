@@ -29,11 +29,11 @@ pub fn set_outlines(modifier: &mut DocumentModifier, items: &[OutlineItem]) -> R
 
     // Update catalog to reference outlines
     let catalog_ref = modifier.catalog_ref();
-    if let Some(catalog_obj) = modifier.find_object_pub(catalog_ref.obj_num).cloned() {
-        if let PdfObject::Dict(mut catalog_dict) = catalog_obj {
-            catalog_dict.insert(b"Outlines".to_vec(), PdfObject::Reference(outlines_ref));
-            modifier.set_object(catalog_ref.obj_num, PdfObject::Dict(catalog_dict));
-        }
+    if let Some(catalog_obj) = modifier.find_object_pub(catalog_ref.obj_num).cloned()
+        && let PdfObject::Dict(mut catalog_dict) = catalog_obj
+    {
+        catalog_dict.insert(b"Outlines".to_vec(), PdfObject::Reference(outlines_ref));
+        modifier.set_object(catalog_ref.obj_num, PdfObject::Dict(catalog_dict));
     }
 
     Ok(())
@@ -129,11 +129,11 @@ fn build_outline_children(
 /// Remove all outlines from the document.
 pub fn remove_outlines(modifier: &mut DocumentModifier) -> Result<()> {
     let catalog_ref = modifier.catalog_ref();
-    if let Some(catalog_obj) = modifier.find_object_pub(catalog_ref.obj_num).cloned() {
-        if let PdfObject::Dict(mut catalog_dict) = catalog_obj {
-            catalog_dict.remove(b"Outlines");
-            modifier.set_object(catalog_ref.obj_num, PdfObject::Dict(catalog_dict));
-        }
+    if let Some(catalog_obj) = modifier.find_object_pub(catalog_ref.obj_num).cloned()
+        && let PdfObject::Dict(mut catalog_dict) = catalog_obj
+    {
+        catalog_dict.remove(b"Outlines");
+        modifier.set_object(catalog_ref.obj_num, PdfObject::Dict(catalog_dict));
     }
     Ok(())
 }
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn test_build_outline_items_structure() {
         // Verify that OutlineItem can represent a complex tree
-        let items = vec![
+        let items = [
             OutlineItem {
                 title: "Chapter 1".to_string(),
                 dest: Some(Destination::Fit {

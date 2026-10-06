@@ -856,32 +856,6 @@ mod tests {
         }
     }
 
-    /// Encode a DICT real operand.
-    fn encode_dict_real(s: &str) -> Vec<u8> {
-        let mut nibbles = Vec::new();
-        for ch in s.chars() {
-            match ch {
-                '0'..='9' => nibbles.push(ch as u8 - b'0'),
-                '.' => nibbles.push(0xA),
-                'E' => nibbles.push(0xB),
-                '-' => nibbles.push(0xE),
-                _ => {}
-            }
-        }
-        nibbles.push(0xF); // end marker
-
-        // Pad to even number of nibbles
-        if nibbles.len() % 2 != 0 {
-            nibbles.push(0xF);
-        }
-
-        let mut buf = vec![30]; // real operand marker
-        for chunk in nibbles.chunks(2) {
-            buf.push((chunk[0] << 4) | chunk[1]);
-        }
-        buf
-    }
-
     /// Build a minimal valid CFF with given top dict entries and a specific number
     /// of charstrings.
     fn build_minimal_cff(
@@ -937,7 +911,7 @@ mod tests {
         let td_content_size = 6 + 11 + top_dict_extra.len();
         // INDEX overhead for 1 item: count(2) + offsize(1) + (count+1) offsets
         // offsize depends on data length: for small data (<= 255), offsize=1
-        let off_size: usize = if td_content_size + 1 <= 0xFF { 1 } else { 2 };
+        let off_size: usize = if td_content_size < 0xFF { 1 } else { 2 };
         let td_index_overhead = 2 + 1 + 2 * off_size; // count + offsize_byte + 2 offsets
         let top_dict_index_size = td_index_overhead + td_content_size;
 
@@ -1112,6 +1086,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_dict_real_decoding() {
         // Encode "3.14" -> nibbles: 3, A(.), 1, 4, F(end), F(pad)
         let data = vec![

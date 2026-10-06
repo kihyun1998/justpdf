@@ -273,7 +273,7 @@ fn parse_svg_dimensions(root: &roxmltree::Node<'_, '_>) -> Result<(f64, f64)> {
     // Try viewBox first
     if let Some(vb) = root.attribute("viewBox") {
         let parts: Vec<f64> = vb
-            .split(|c: char| c == ' ' || c == ',')
+            .split([' ', ','])
             .filter(|s| !s.is_empty())
             .filter_map(|s| s.parse().ok())
             .collect();
@@ -285,11 +285,11 @@ fn parse_svg_dimensions(root: &roxmltree::Node<'_, '_>) -> Result<(f64, f64)> {
     // Fall back to width/height attributes
     let w = root
         .attribute("width")
-        .and_then(|s| parse_length(s))
+        .and_then(parse_length)
         .unwrap_or(300.0);
     let h = root
         .attribute("height")
-        .and_then(|s| parse_length(s))
+        .and_then(parse_length)
         .unwrap_or(150.0);
 
     Ok((w, h))
@@ -298,28 +298,16 @@ fn parse_svg_dimensions(root: &roxmltree::Node<'_, '_>) -> Result<(f64, f64)> {
 /// Parse a CSS length value (e.g., "100", "100px", "72pt").
 fn parse_length(s: &str) -> Option<f64> {
     let s = s.trim();
-    if s.ends_with("px") {
-        s[..s.len() - 2].trim().parse().ok()
-    } else if s.ends_with("pt") {
-        s[..s.len() - 2].trim().parse().ok()
-    } else if s.ends_with("in") {
-        s[..s.len() - 2]
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(|v| v * 72.0)
-    } else if s.ends_with("mm") {
-        s[..s.len() - 2]
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(|v| v * 72.0 / 25.4)
-    } else if s.ends_with("cm") {
-        s[..s.len() - 2]
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(|v| v * 72.0 / 2.54)
+    if let Some(n) = s.strip_suffix("px") {
+        n.trim().parse().ok()
+    } else if let Some(n) = s.strip_suffix("pt") {
+        n.trim().parse().ok()
+    } else if let Some(n) = s.strip_suffix("in") {
+        n.trim().parse::<f64>().ok().map(|v| v * 72.0)
+    } else if let Some(n) = s.strip_suffix("mm") {
+        n.trim().parse::<f64>().ok().map(|v| v * 72.0 / 25.4)
+    } else if let Some(n) = s.strip_suffix("cm") {
+        n.trim().parse::<f64>().ok().map(|v| v * 72.0 / 2.54)
     } else if s.ends_with('%') {
         None // percentages need parent context, skip
     } else {
@@ -337,15 +325,15 @@ fn parse_style(node: &roxmltree::Node<'_, '_>) -> ElementStyle {
     if let Some(stroke) = node.attribute("stroke") {
         style.stroke = parse_color(stroke);
     }
-    if let Some(sw) = node.attribute("stroke-width") {
-        if let Ok(v) = sw.parse::<f64>() {
-            style.stroke_width = v;
-        }
+    if let Some(sw) = node.attribute("stroke-width")
+        && let Ok(v) = sw.parse::<f64>()
+    {
+        style.stroke_width = v;
     }
-    if let Some(op) = node.attribute("opacity") {
-        if let Ok(v) = op.parse::<f64>() {
-            style.opacity = v.clamp(0.0, 1.0);
-        }
+    if let Some(op) = node.attribute("opacity")
+        && let Ok(v) = op.parse::<f64>()
+    {
+        style.opacity = v.clamp(0.0, 1.0);
     }
 
     // Parse inline style attribute
@@ -388,8 +376,7 @@ fn parse_color(s: &str) -> Option<(u8, u8, u8, u8)> {
     if s == "none" || s == "transparent" {
         return None;
     }
-    if s.starts_with('#') {
-        let hex = &s[1..];
+    if let Some(hex) = s.strip_prefix('#') {
         return match hex.len() {
             3 => {
                 let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
@@ -445,7 +432,7 @@ fn parse_transform(s: &str) -> Transform {
             if let Some(end) = rest.find(')') {
                 let args = &rest[..end];
                 let vals: Vec<f64> = args
-                    .split(|c: char| c == ',' || c == ' ')
+                    .split([',', ' '])
                     .filter(|s| !s.is_empty())
                     .filter_map(|s| s.parse().ok())
                     .collect();
@@ -460,7 +447,7 @@ fn parse_transform(s: &str) -> Transform {
             if let Some(end) = rest.find(')') {
                 let args = &rest[..end];
                 let vals: Vec<f64> = args
-                    .split(|c: char| c == ',' || c == ' ')
+                    .split([',', ' '])
                     .filter(|s| !s.is_empty())
                     .filter_map(|s| s.parse().ok())
                     .collect();
@@ -475,7 +462,7 @@ fn parse_transform(s: &str) -> Transform {
             if let Some(end) = rest.find(')') {
                 let args = &rest[..end];
                 let vals: Vec<f64> = args
-                    .split(|c: char| c == ',' || c == ' ')
+                    .split([',', ' '])
                     .filter(|s| !s.is_empty())
                     .filter_map(|s| s.parse().ok())
                     .collect();
@@ -497,7 +484,7 @@ fn parse_transform(s: &str) -> Transform {
             if let Some(end) = rest.find(')') {
                 let args = &rest[..end];
                 let vals: Vec<f64> = args
-                    .split(|c: char| c == ',' || c == ' ')
+                    .split([',', ' '])
                     .filter(|s| !s.is_empty())
                     .filter_map(|s| s.parse().ok())
                     .collect();
@@ -855,11 +842,11 @@ fn try_read_number(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Opti
         } else if c == 'e' || c == 'E' {
             num.push(c);
             chars.next();
-            if let Some(&sign) = chars.peek() {
-                if sign == '+' || sign == '-' {
-                    num.push(sign);
-                    chars.next();
-                }
+            if let Some(&sign) = chars.peek()
+                && (sign == '+' || sign == '-')
+            {
+                num.push(sign);
+                chars.next();
             }
         } else {
             break;
@@ -1120,6 +1107,7 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
 }
 
 /// Fill a rectangle in the pixel buffer.
+#[allow(clippy::too_many_arguments)]
 fn fill_rect_pixels(
     pixels: &mut [u8],
     buf_w: u32,
@@ -1143,6 +1131,7 @@ fn fill_rect_pixels(
 }
 
 /// Fill an ellipse in the pixel buffer.
+#[allow(clippy::too_many_arguments)]
 fn fill_ellipse_pixels(
     pixels: &mut [u8],
     buf_w: u32,
@@ -1175,6 +1164,7 @@ fn fill_ellipse_pixels(
 }
 
 /// Draw a line using Bresenham's algorithm.
+#[allow(clippy::too_many_arguments)]
 fn draw_line_pixels(
     pixels: &mut [u8],
     buf_w: u32,

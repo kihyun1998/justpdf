@@ -29,4 +29,5 @@ Resolves the pattern set by `scn`/`SCN`: a tiling pattern draws the tile and rep
 - [Glyph rendering](glyph-rendering.md) — pattern text is not supported.
 
 ## Known holes / open
+- The cell size is `(step * scale).ceil().max(1.0).min(2048.0)`: a NaN step gives a 1-pixel cell. `f64::clamp` would pass NaN through, cast it to 0 and make `Pixmap::new` fail, so clippy's `manual_clamp` is allowed there (inferred from the code).
 - Filling or stroking with a pattern on the page (`try_fill_with_pattern`, `try_stroke_with_pattern`) does not apply the soft mask — only solid fills go through `apply_soft_mask_to_device` (observed 2026-09-29 while writing `tests/render_recursion.rs`). Tracked: #129

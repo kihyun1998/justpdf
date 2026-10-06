@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn test_detect_unsigned_sig_field() {
         let bytes = create_pdf_with_sig_field(false);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let sigs = detect_signatures(&doc).unwrap();
         // Unsigned field has no /V, so it should not be detected as a signature
         assert_eq!(sigs.len(), 0);
@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn test_detect_signed_sig_field() {
         let bytes = create_pdf_with_sig_field(true);
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let sigs = detect_signatures(&doc).unwrap();
         assert_eq!(sigs.len(), 1);
         assert_eq!(sigs[0].field_name, "Signature1");
@@ -338,7 +338,7 @@ mod tests {
             let catalog_ref = w.add_object(PdfObject::Dict(catalog));
             serialize_pdf(&w.objects, (1, 7), &catalog_ref, None).unwrap()
         };
-        let mut doc = PdfDocument::from_bytes(bytes).unwrap();
+        let doc = PdfDocument::from_bytes(bytes).unwrap();
         let sigs = detect_signatures(&doc).unwrap();
         assert!(sigs.is_empty());
     }

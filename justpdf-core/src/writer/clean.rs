@@ -202,13 +202,7 @@ fn remove_null_objects(objects: &mut Vec<(u32, PdfObject)>) -> usize {
     let before = objects.len();
 
     // Remove null objects that are not referenced
-    objects.retain(|(obj_num, obj)| {
-        if obj.is_null() && !referenced.contains(obj_num) {
-            false
-        } else {
-            true
-        }
-    });
+    objects.retain(|(obj_num, obj)| !obj.is_null() || referenced.contains(obj_num));
 
     before - objects.len()
 }
@@ -240,7 +234,7 @@ fn collect_references(obj: &PdfObject, refs: &mut std::collections::HashSet<u32>
 
 /// Compact object numbers sequentially starting from 1, rewriting every
 /// reference to a held object at generation 0.
-fn compact_object_numbers(objects: &mut Vec<(u32, PdfObject)>) {
+fn compact_object_numbers(objects: &mut [(u32, PdfObject)]) {
     // Build a mapping from every held obj_num -> new obj_num
     let remap: HashMap<u32, u32> = objects
         .iter()
@@ -428,13 +422,13 @@ mod tests {
 
         rewrite_references(&mut obj, &remap, None);
 
-        if let PdfObject::Array(items) = &obj {
-            if let PdfObject::Dict(d) = &items[0] {
-                if let Some(PdfObject::Reference(r)) = d.get(b"Ref") {
-                    assert_eq!(r.obj_num, 1);
-                } else {
-                    panic!("expected reference");
-                }
+        if let PdfObject::Array(items) = &obj
+            && let PdfObject::Dict(d) = &items[0]
+        {
+            if let Some(PdfObject::Reference(r)) = d.get(b"Ref") {
+                assert_eq!(r.obj_num, 1);
+            } else {
+                panic!("expected reference");
             }
         }
     }

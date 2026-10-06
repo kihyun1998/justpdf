@@ -582,7 +582,7 @@ mod tests {
             let byte = input[i];
             if byte == 0 {
                 output.push(0);
-            } else if byte >= 0x09 && byte <= 0x7F {
+            } else if (0x09..=0x7F).contains(&byte) {
                 output.push(byte);
             } else {
                 // Use literal copy

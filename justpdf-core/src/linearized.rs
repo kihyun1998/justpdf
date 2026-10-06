@@ -286,7 +286,7 @@ pub fn parse_hint_tables(data: &[u8], params: &LinearizationParams) -> Option<Ve
     // Section 2: page-length deltas
     let mut lengths: Vec<u64> = Vec::with_capacity(n_pages);
     for _ in 0..n_pages {
-        let delta = reader.read_bits(bits_delta_length)? as u64;
+        let delta = reader.read_bits(bits_delta_length)?;
         lengths.push(min_page_length + delta);
     }
 
@@ -295,9 +295,9 @@ pub fn parse_hint_tables(data: &[u8], params: &LinearizationParams) -> Option<Ve
     // the linearized first-page (at a known offset) is entry 0.
     let mut offsets: Vec<u64> = Vec::with_capacity(n_pages);
     let mut running = first_page_offset;
-    for i in 0..n_pages {
+    for &length in lengths.iter().take(n_pages) {
         offsets.push(running);
-        running += lengths[i];
+        running += length;
     }
 
     let mut entries: Vec<PageOffsetHint> = Vec::with_capacity(n_pages);
