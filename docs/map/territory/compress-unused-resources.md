@@ -27,3 +27,4 @@ Collects the `Tf` (font), `Do` (XObject) and `gs` (ExtGState) names that page co
 
 ## Known holes / open
 - In a file where resources used outside pages (annotation appearances, patterns) are shared through the page resources, they can be deleted (inferred, no test).
+- `DocumentBuilder` cannot put a font into a page's Resources that the content does not use (a font not passed to `PageBuilder::add_font` is not in Resources at all), so a test of removing an unused `Font` entry has to build or patch that Resources dictionary by hand. An unused helper in `writer/compress.rs` tests that tried it with the builder was removed in #189.
