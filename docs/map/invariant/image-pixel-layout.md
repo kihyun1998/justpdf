@@ -23,12 +23,13 @@ Command to find them again: `rg -n 'fn image_to_rgba|fn to_rgb_pixels|fn compone
 - CCITT and JBIG2 image masks are unpacked wrongly.
 - A 1-bit mask whose width is not a multiple of 8 is sheared, because the row padding to a byte boundary is ignored (measured 2026-10-06, see [Render images](../territory/render-images.md)).
 - The same image has different colors rendered directly and rendered after compression.
+- A 16-bit image panics `compress_pdf` (measured 2026-10-06, see [Compress images](../territory/compress-images.md)).
 Condition: with 8-bit DeviceRGB/Gray JPEG, all of it is fine — common test inputs meet this condition, so it stays invisible.
 
 ## Discovery history
-No recorded incident. On 2026-09-23, while writing the map, two research agents (stream/image/color, render) reported the copies independently. All of it is inferred from reading code, and `decode_image` has no unit test.
+No recorded incident. On 2026-09-23, while writing the map, two research agents (stream/image/color, render) reported the copies independently. All of it was inferred from reading code, and `decode_image` has no unit test. On 2026-10-06, #46's triage measured it against MuPDF 1.28.2 on hand-built pages: Indexed, ICCBased, Separation, 1/4/16-bpc and `/Decode` images all render wrong (see [Image decoding](../territory/image-decoding.md)).
 
-- Tracked: #42 (render: double decode, mask row padding and shape, inline images), #46 (image decode color spaces and Decode)
+- Tracked: #42 (render: double decode, mask row padding and shape, inline images), #46 (array colour spaces, bits per component, `/Decode`), #229 (filter chain, `JBIG2Globals`), #230 (JPX)
 
 ## Where it will recur
 **A function that indexes the bytes of a `DecodedImage` or converts color components to RGB is subject to this invariant.** Before writing a new one, find the existing copies with the command above, and use the functions in [Color spaces](../territory/color-spaces.md) where possible. Unless test inputs include Indexed, 16-bit, CMYK and CCITT, this invariant is not checked.

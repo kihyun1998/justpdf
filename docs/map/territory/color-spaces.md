@@ -31,3 +31,4 @@ The PDF color space model (Device*, CalGray/CalRGB, Lab, Indexed, Separation, De
 ## Known holes / open
 - `test_indexed` checks only the component count, base and hival. No code looks up an actual color in an Indexed palette.
 - Rendering Intent is only parsed and applied nowhere.
+- Tracked: #46 (image colour spaces through this module), #231 (fill and stroke colours in the renderer)

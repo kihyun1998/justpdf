@@ -12,7 +12,7 @@
 - `Tr` distinguishes only mode 3 (invisible) — there is no outline or clipping text (inferred).
 - `d0`/`d1` are no-ops — [Type3 fonts](type3-fonts.md) are not supported.
 - `v` (Bézier) is approximated without tracking the current point ("lossy without current point tracking").
-- The color operators (`cs`/`CS`/`sc`/`scn`…) use the local `cs_from_name` (Device Gray/RGB/CMYK only, everything else is RGB) — the resource's color space, ICC, Indexed and Separation are not interpreted.
+- The color operators (`cs`/`CS`/`sc`/`scn`…) use the local `cs_from_name` (Device Gray/RGB/CMYK only, everything else is RGB) — the resource's color space, ICC, Indexed and Separation are not interpreted (measured 2026-10-06: `/CS0 cs 1 scn` with an Indexed red/blue palette fills red, MuPDF blue; a Separation tint 1 comes out red only because the single tint is read as R). Tracked: #231
 - Other content streams (Form XObject, tile, soft mask `/G`) are entered through `with_running_stream`: a stream met again while it is running is skipped — [Content stream recursion](../invariant/content-stream-recursion.md). Separately, a Form XObject is skipped past depth 10.
 - The device color operators (`g`/`rg`/`k`, `G`/`RG`/`K`) clear that side's pattern selection.
 - Page content is assembled by its own function — [Page content assembly](../invariant/page-content-assembly.md).

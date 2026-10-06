@@ -31,5 +31,5 @@ Decodes image XObjects to RGB, computes a target DPI from the size each is actua
 
 ## Known holes / open
 - `compute_target_dimensions` is `#[allow(dead_code)]` and only tests call it.
-- 16-bit, 1/2/4-bit and Indexed images are outside its assumptions (the invariant above).
+- 16-bit, 1/2/4-bit and Indexed images are outside its assumptions (the invariant above). Measured 2026-10-06 (`preset_medium`, `skip_below_bytes = 0`): a 2×1 16-bpc RGB image **panics** `compress_pdf` (`Invalid buffer length: expected 6 got 12 for 2x1 image`, from the `image` crate's JPEG encoder); a 64×64 Indexed image is skipped while the 64×64 RGB control is recompressed. Tracked: #46
 - `collect_image_display_sizes` reads page content only, so the size an image is drawn at inside a form XObject does not count toward its target size (inferred). Tracked: #139.

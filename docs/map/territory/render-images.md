@@ -13,7 +13,7 @@ Draws image XObjects, image masks, SMasks, explicit masks and inline images onto
 - **SMasks and explicit masks are decoded twice**: after decoding with `self.doc.decode_stream`, the result is passed again to `decode_image` together with the same dictionary. A Flate mask fails the second decode and the mask silently drops out, so the image draws fully opaque (measured 2026-10-06 for an SMask: a red image under an all-0 Flate SMask drew 10000 red pixels, MuPDF 0; the unfiltered SMask control drew 0. Explicit `/Mask` inferred from the same code).
 - The root of every double decode: `decode_image` takes the stream's **raw** bytes and applies the filters itself; the renderer decodes before calling it. The image-mask path works only by accident, falling back to the once-decoded bytes when the second decode fails.
 - **Inline images are not drawn**: the body of `render_inline_image` is only `// TODO` and `Ok(())` (measured 2026-10-06: an inline 2×2 RGB image and an inline `/IM true` mask drew 0 pixels; MuPDF drew both).
-- `resolve_xobject` passes DCTDecode as the raw bytes and everything else through `decode_stream`.
+- `resolve_xobject` passes DCTDecode as the raw bytes and everything else through `decode_stream`. A `[/FlateDecode /DCTDecode]` image therefore reaches `decode_image` as JPEG bytes and draws (measured 2026-10-06, same as MuPDF), while `decode_image` alone fails on it — handing `decode_image` raw bytes (#42) breaks this case until the chain is decoded there. Tracked: #229
 - **The image XObject itself is decoded twice too**: `render_image` hands the bytes `resolve_xobject` already decoded to `decode_image` with the same dictionary. A Flate image fails the second decode and `do_xobject` drops the error, so nothing is drawn (measured 2026-09-30 with SVG `to_pdf` output — see [SVG input](svg-input.md)). Unfiltered images are unaffected; other filters not checked. Re-measured 2026-10-06 on a hand-built 10×10 Flate RGB image: 0 red pixels, MuPDF 10000.
 
 ## Code
@@ -34,4 +34,4 @@ Draws image XObjects, image masks, SMasks, explicit masks and inline images onto
 
 ## Known holes / open
 - Inline images are not rendered (above). Inline images are only parsed.
-- Tracked: #42 (double decode, 1-bit mask row padding, mask shape, inline images; its brief also covers the SVG renderer's double decode), #46 (`image_to_rgba` bits per component and array color spaces)
+- Tracked: #42 (double decode, 1-bit mask row padding, mask shape, inline images; its brief also covers the SVG renderer's double decode), #46 (`image_to_rgba` bits per component and array color spaces), #229 (filter chains; blocks #42)
