@@ -9,7 +9,7 @@ Interprets page content to compute glyph positions (text state, font widths), tu
 ## Design model
 - Text state and glyph advance follow the formulas of spec §9.3 (cited in code comments).
 - Does font resolution **separately** from the renderer: this side reads `/W` and builds Unicode from ToUnicode and the encoding — [Font resolution](../invariant/font-resolution.md).
-- Does not resolve `/Font` in ExtGState (`gs`) ("We don't resolve ExtGState for now" — it has no document access) (#235).
+- Does not resolve `/Font` in ExtGState (`gs`) ("We don't resolve ExtGState for now" — it has no document access) (#235). Measured 2026-10-06 by glyph width: with `/GS1` setting `/Font [<Courier> 12]`, `/GS1 gs (ABC) Tj` measures 18.00 (fallback) and `/F1 12 Tf … /GS1 gs … (ABC) Tj` keeps Helvetica's 24.67, against Courier's 21.60; Xpdf 4.00 `pdftotext` switches font. The `gs` font is an indirect reference that may be absent from `/Font`, while fonts here are resolved by `/Font` resource name only (`resolve_fonts`).
 - **Does not handle `Do`**: text inside Form XObjects is not extracted. The renderer recurses.
 - Does not look at BDC/OC (optional content) — text in hidden layers is extracted too (#219). Measured 2026-10-06: `(HiddenLayer) Tj` inside `/OC /L BDC … EMC`, with the group `/OFF` in `/OCProperties /D`, is extracted by `justpdf-cli text`; Xpdf 4.00 `pdftotext` leaves it out. Decided in #219: extraction leaves hidden text out by default, with a caller option to include it; the shared interpreter still reports hidden glyphs so redaction erases them.
 - Concatenates page content with its own private function — [Page content assembly](../invariant/page-content-assembly.md).

@@ -35,3 +35,4 @@ Outputs a page as an SVG document. It is not a device but a **second interpreter
 
 ## Known holes / open
 - The test checks only that the output contains `<svg`.
+- `gs` ignores the ExtGState `/Font` entry, like the raster interpreter (inferred). Tracked: #238
