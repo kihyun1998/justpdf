@@ -24,4 +24,4 @@ Parses the header, INDEXes, Top DICT and charset of a Compact Font Format (FontF
 
 ## Known holes / open
 - There is no consumer in product code. The renderer hands a pure CFF (FontFile3) to `ttf_parser::Face::parse` and draws a placeholder box when that fails (inferred).
-- Tracked: #45 (/Differences, CID widths, CFF)
+- Tracked: #224 (rendering FontFile3), #176 (CFF on the writing side)

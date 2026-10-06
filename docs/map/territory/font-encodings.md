@@ -30,5 +30,5 @@ The encoding tables (Standard, WinAnsi, MacRoman, PDFDoc, Identity) that turn a 
 - [ToUnicode](tounicode.md) — the higher-priority mapping.
 
 ## Known holes / open
-- Not handling `/Differences` makes text extraction wrong for fonts with non-standard encodings (one of the most common kinds of real-world file — inferred).
-- Tracked: #33 (text string encoding), #45 (/Differences, CID widths, CFF)
+- Not handling `/Differences` makes text extraction wrong for fonts with non-standard encodings: Helvetica with `/Differences [65 /B]` showing `(A)` extracts `"A"`, and `/MacRomanEncoding` `<8E>` extracts `"Ž"` instead of `"é"` (measured 2026-10-06, synthetic pages, during #45's triage). Such fonts are among the most common in real-world files (inferred).
+- Tracked: #33 (text string encoding), #221 (/Differences and base tables in text), #223 (encoding in render glyph selection)
