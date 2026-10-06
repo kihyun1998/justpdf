@@ -11,7 +11,7 @@ Interprets page content to compute glyph positions (text state, font widths), tu
 - Does font resolution **separately** from the renderer: this side reads `/W` and builds Unicode from ToUnicode and the encoding — [Font resolution](../invariant/font-resolution.md).
 - Does not resolve `/Font` in ExtGState (`gs`) ("We don't resolve ExtGState for now" — it has no document access) (#235).
 - **Does not handle `Do`**: text inside Form XObjects is not extracted. The renderer recurses.
-- Does not look at BDC/OC (optional content) — text in hidden layers is extracted too (#219).
+- Does not look at BDC/OC (optional content) — text in hidden layers is extracted too (#219). Measured 2026-10-06: `(HiddenLayer) Tj` inside `/OC /L BDC … EMC`, with the group `/OFF` in `/OCProperties /D`, is extracted by `justpdf-cli text`; Xpdf 4.00 `pdftotext` leaves it out. Decided in #219: extraction leaves hidden text out by default, with a caller option to include it; the shared interpreter still reports hidden glyphs so redaction erases them.
 - Concatenates page content with its own private function — [Page content assembly](../invariant/page-content-assembly.md).
 - Joins pages with a blank line (`"\n\n"`) (`extract_all_text_string`).
 
@@ -34,5 +34,5 @@ Interprets page content to compute glyph positions (text state, font widths), tu
 - [CLI](cli.md), [Facade](facade.md), [Language bindings](language-bindings.md) — consumers of the public extraction API.
 
 ## Known holes / open
-- Text inside Form XObjects is not extracted (measured 2026-10-06: a page showing `(OnPage) Tj` and drawing a form that shows `(InsideForm) Tj` extracts as `OnPage` with `justpdf-cli text`; Poppler `pdftotext` gives `OnPage InsideForm`).
-- Tracked: #48 (Form XObject text, blocked by #207), #235 (ExtGState `/Font`, blocked by #207), #219 (hidden optional-content text)
+- Text inside Form XObjects is not extracted (measured 2026-10-06: a page showing `(OnPage) Tj` and drawing a form that shows `(InsideForm) Tj` extracts as `OnPage` with `justpdf-cli text`; Xpdf 4.00 `pdftotext` gives `OnPage InsideForm`).
+- Tracked: #48 (Form XObject text, blocked by #207), #235 (ExtGState `/Font`, blocked by #207), #219 (hidden optional-content text, blocked by #207 and #44)
