@@ -12,7 +12,7 @@ use tiny_skia::{FillRule, Mask, PathBuilder, Pixmap, Transform};
 
 use crate::device::PixmapDevice;
 use crate::error::{RenderError, Result};
-use crate::glyph_cache::GlyphCache;
+use crate::glyph_cache::{GlyphCache, font_hash};
 use crate::graphics_state::{
     FontKey, GraphicsState, LineCap, LineJoin, Matrix, PatternSelection, PdfBlendMode, SoftMask,
     SoftMaskSubtype,
@@ -24,11 +24,19 @@ struct ResolvedFont {
     info: FontInfo,
     #[allow(dead_code)]
     cmap: Option<ToUnicodeCMap>,
-    /// Raw embedded font data (TrueType/OpenType/CFF) for glyph outlines.
-    font_data: Option<Vec<u8>>,
+    /// Embedded font program for glyph outlines.
+    font_program: Option<FontProgram>,
     /// CIDToGIDMap for Type0 CID fonts: maps CID → glyph ID.
     /// None = identity mapping (CID == GID).
     cid_to_gid_map: Option<Vec<u16>>,
+}
+
+/// An embedded font program and its [`font_hash`].
+#[derive(Clone)]
+struct FontProgram {
+    /// Raw embedded font data (TrueType/OpenType/CFF).
+    data: Vec<u8>,
+    hash: u64,
 }
 
 /// The rendering interpreter: walks content stream ops and renders onto a device.
@@ -338,12 +346,17 @@ impl<'a> RenderInterpreter<'a> {
         }
 
         // Extract embedded font data from FontDescriptor
-        let font_data = self.extract_font_data(fd, cid_font_descriptor.as_ref());
+        let font_program = self
+            .extract_font_data(fd, cid_font_descriptor.as_ref())
+            .map(|data| FontProgram {
+                hash: font_hash(&data),
+                data,
+            });
 
         Ok(ResolvedFont {
             info,
             cmap,
-            font_data,
+            font_program,
             cid_to_gid_map,
         })
     }
@@ -1133,8 +1146,8 @@ impl<'a> RenderInterpreter<'a> {
             .map(|code| font.info.widths.get_width(*code))
             .collect();
 
-        // Clone font_data and CIDToGIDMap for glyph outline rendering
-        let font_data = font.font_data.clone();
+        // Clone the font program and CIDToGIDMap for glyph outline rendering
+        let font_program = font.font_program.clone();
         let cid_to_gid_map = font.cid_to_gid_map.clone();
 
         // Now we're done borrowing self.fonts, can mutably borrow self
@@ -1149,7 +1162,7 @@ impl<'a> RenderInterpreter<'a> {
                     font_size,
                     text_rise,
                     is_cid,
-                    &font_data,
+                    font_program.as_ref(),
                     cid_to_gid_map.as_deref(),
                 )?;
             }
@@ -1177,7 +1190,7 @@ impl<'a> RenderInterpreter<'a> {
         font_size: f64,
         text_rise: f64,
         is_cid: bool,
-        font_data: &Option<Vec<u8>>,
+        font_program: Option<&FontProgram>,
         cid_to_gid_map: Option<&[u16]>,
     ) -> Result<()> {
         if glyph_width.abs() < 0.001 {
@@ -1185,8 +1198,8 @@ impl<'a> RenderInterpreter<'a> {
         }
 
         // Try to render with real glyph outlines (using glyph cache)
-        if let Some(data) = font_data
-            && let Ok(face) = ttf_parser::Face::parse(data, 0)
+        if let Some(program) = font_program
+            && let Ok(face) = ttf_parser::Face::parse(&program.data, 0)
         {
             let glyph_id = if is_cid {
                 // For CID fonts: apply CIDToGIDMap if available
@@ -1204,7 +1217,7 @@ impl<'a> RenderInterpreter<'a> {
             let gid_raw = glyph_id.0;
             let cached_path = self
                 .glyph_cache
-                .get_or_insert(data, gid_raw, || {
+                .get_or_insert(program.hash, gid_raw, || {
                     crate::glyph::glyph_outline(&face, glyph_id)
                 })
                 .cloned();
