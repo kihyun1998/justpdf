@@ -31,7 +31,7 @@ The 10 knobs of `CompressOptions`, and the four presets (low/medium/high/extreme
 Checklist for changing a preset's name, meaning or default:
 - [Compress WASM](compress-wasm.md) — the `compress` doc comment, the crate README, npm republishing.
 - [CLI](cli.md) — the `--preset` help, the error string in `cmd_compress`, `resolve_options` and its unit tests (which compare preset values directly), the preset list in `justpdf-cli/tests/compress.rs`.
-- The external repo Just-pdf-web (not a node of this map) — the `STRENGTH_TO_WASM` mapping, the preset type, the locale copy (the medium/extreme descriptions currently differ from the actual values), that repo's `CONTEXT.md`.
+- The external repo Just-pdf-web (not a node of this map) — the `STRENGTH_TO_WASM` mapping, the preset type, the locale copy (the medium/extreme descriptions currently differ from the actual values), that repo's `GLOSSARY.md`.
 - [Compress pipeline](compress-pipeline.md) — which stage each knob turns on.
 - The table in `dev/pdf-compress-wasm-design.md` §4.
 
