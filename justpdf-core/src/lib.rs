@@ -36,3 +36,5 @@ pub mod xref;
 pub use error::{JustPdfError, Result};
 pub use object::{IndirectRef, PdfDict, PdfObject};
 pub use parser::PdfDocument;
+
+fn  proof_188 ( ) { }
