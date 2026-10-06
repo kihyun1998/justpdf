@@ -9,7 +9,7 @@ Parses a page's `/Annots` into per-type models, and builds new annotation dictio
 ## Design model
 - Link annotations read `/A /URI` directly and keep `/Dest` as a raw `PdfObject` — they do not use the [Actions](actions.md) parser.
 - Text values: reading uses `from_utf8_lossy`, writing uses UTF-8 bytes — [Text string encoding](../invariant/text-string-encoding.md).
-- `add_annotation`: if the page's `/Annots` is an indirect reference, it drops the existing annotations and replaces them with a new array (inferred).
+- `add_annotation`: if the page's `/Annots` is an indirect reference, it drops the existing annotations and replaces them with a new array (measured: 1 existing + 1 added → 1). `delete_annotation` on such a page reports that the page has no annotations (inferred).
 
 ## Code
 - `justpdf-core/src/annot/types.rs` — `AnnotationType`, `AnnotationData`, `AnnotationFlags`, `AnnotColor`, `BorderStyle`
@@ -31,4 +31,4 @@ Parses a page's `/Annots` into per-type models, and builds new annotation dictio
 
 ## Known holes / open
 - The builder has no Caret creation and no Popup linking (Popup only parses `popup_ref`).
-- Tracked: #33 (text string encoding), #41 (annotation appearance coordinates)
+- Tracked: #33 (text string encoding), #41 (annotation appearance coordinates, indirect `/Annots`)
