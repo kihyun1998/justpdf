@@ -11,7 +11,7 @@ Turns the character codes of text-showing operators into glyph IDs, takes outlin
 - Code → GID: `char_code_to_glyph_id` treats the byte as a Unicode scalar and looks it up in the font's cmap, and if that fails, code == GID. The font's `/Encoding` and `/Differences` are not used ([Font encodings](font-encodings.md)).
 - CID fonts use `/CIDToGIDMap` but not `/W` — [Font resolution](../invariant/font-resolution.md).
 - Text is not filled with patterns (`fill_color_rgba` only — inferred).
-- The cache key is the font's FNV hash + GID, with a default capacity of 4096.
+- The cache key is `glyph_cache::font_hash` + GID, with a default capacity of 4096. `font_hash` is FNV-1a over the font program's length and all of its bytes, computed once when the font is resolved and kept beside the program in `ResolvedFont::font_program` (inferred). It is not keyed by the address of the font data: `render_text_string` clones that data on every call and drops it, so one address names different fonts over time — keyed that way, alternating two same-size fonts drew the other font's glyph on 99–100 of 200 lookups (measured 2026-10-02). Nor by a prefix: two programs can agree in length and in their first 256 bytes and differ only further in (`justpdf-render/tests/render_glyphs.rs` builds such a pair from Noto Sans, measured). Byte-identical programs share entries, which is sound because the outline depends only on the program and the GID (inferred). Hashing takes 0.9 ms for Noto Sans (431 KB) and 27 ms for 20 MiB, against 1.4 ms and 69 ms for Flate-decoding the same bytes (measured 2026-10-06, release build, Apple silicon); both run once per font for each page rendered, since every page gets its own `RenderInterpreter` (inferred). The maintainer kept the whole-program hash after seeing these numbers (2026-10-06, a judgement, not a derivation); hashing and decoding once per document instead of once per page is the open direction. #163
 
 ## Code
 - `justpdf-render/src/interpreter.rs` — `select_font`, `resolve_font`, `extract_font_data`, `get_font_descriptor`, `render_text_string`, `render_glyph`, `adjust_text_position`
@@ -31,6 +31,5 @@ Turns the character codes of text-showing operators into glyph IDs, takes outlin
 - [SVG renderer](svg-renderer.md) — a separate text path.
 
 ## Known holes / open
-- `GlyphCache::font_hash` caches a font's hash by the address of the font data, and `render_text_string` clones and drops that data on every call, so a later font reusing the address gets the earlier font's glyph outlines; which glyphs are affected depends on allocation patterns (measured 2026-09-30: two builds differing only in unrelated code drew different glyphs on four pages, identical once the memo was removed). Tracked: #163
 - Text with no embedded font (#227), CFF (#224), Type1 (#225) and Type3 (#226) are drawn as boxes (inferred; no pixel-checking test). Standard-14 Helvetica rendered as one black box per glyph (measured 2026-10-06, `render_page` at 150 dpi, #184).
 - Tracked: #222 (CID widths), #223 (encoding in glyph selection)

@@ -4,7 +4,7 @@ use tiny_skia::Path;
 /// Cache key for a glyph path.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct GlyphKey {
-    /// Hash of the font data (to distinguish fonts).
+    /// [`font_hash`] of the font program.
     font_hash: u64,
     /// Glyph ID within the font.
     glyph_id: u16,
@@ -14,9 +14,6 @@ struct GlyphKey {
 /// and re-building paths for each character occurrence.
 pub struct GlyphCache {
     paths: HashMap<GlyphKey, Option<Path>>,
-    /// Maps font data pointer (as `usize`) to a fast hash, so we only
-    /// hash each font's bytes once per unique allocation.
-    font_hashes: HashMap<usize, u64>,
     capacity: usize,
     hits: u64,
     misses: u64,
@@ -28,7 +25,6 @@ impl GlyphCache {
     pub fn new(capacity: usize) -> Self {
         Self {
             paths: HashMap::with_capacity(capacity),
-            font_hashes: HashMap::new(),
             capacity,
             hits: 0,
             misses: 0,
@@ -41,16 +37,15 @@ impl GlyphCache {
 
     /// Get or insert a glyph path.
     ///
-    /// `font_data` is the raw font file bytes.
+    /// `font_hash` is the [`font_hash`] of the font program.
     /// `glyph_id` is the glyph index.
     /// `build_fn` is called on cache miss to build the path.
     pub fn get_or_insert(
         &mut self,
-        font_data: &[u8],
+        font_hash: u64,
         glyph_id: u16,
         build_fn: impl FnOnce() -> Option<Path>,
     ) -> Option<&Path> {
-        let font_hash = self.font_hash(font_data);
         let key = GlyphKey {
             font_hash,
             glyph_id,
@@ -66,7 +61,6 @@ impl GlyphCache {
         // Evict all entries if we hit capacity (simple strategy).
         if self.paths.len() >= self.capacity {
             self.paths.clear();
-            self.font_hashes.clear();
         }
 
         let path = build_fn();
@@ -96,51 +90,22 @@ impl GlyphCache {
     /// Clear the cache and reset statistics.
     pub fn clear(&mut self) {
         self.paths.clear();
-        self.font_hashes.clear();
         self.hits = 0;
         self.misses = 0;
     }
-
-    /// Compute (or retrieve cached) hash for font data.
-    ///
-    /// Uses a fast hash of the first 256 bytes + the total length,
-    /// which is sufficient to distinguish fonts without hashing
-    /// megabytes of data. The hash is cached per font data pointer
-    /// so repeated calls for the same allocation are free.
-    fn font_hash(&mut self, font_data: &[u8]) -> u64 {
-        let ptr = font_data.as_ptr() as usize;
-        if let Some(&h) = self.font_hashes.get(&ptr) {
-            return h;
-        }
-        let h = compute_font_hash(font_data);
-        self.font_hashes.insert(ptr, h);
-        h
-    }
 }
 
-/// Fast, non-cryptographic hash of font data for cache keying.
-/// Hashes the first 256 bytes + the total length.
-fn compute_font_hash(data: &[u8]) -> u64 {
-    // FNV-1a 64-bit
+/// FNV-1a 64-bit hash of a font program's length and all of its bytes,
+/// the font part of a [`GlyphCache`] key.
+pub fn font_hash(data: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x00000100000001B3;
 
     let mut hash = FNV_OFFSET;
-
-    // Mix in the length first
-    let len_bytes = (data.len() as u64).to_le_bytes();
-    for &b in &len_bytes {
+    for &b in (data.len() as u64).to_le_bytes().iter().chain(data) {
         hash ^= b as u64;
         hash = hash.wrapping_mul(FNV_PRIME);
     }
-
-    // Hash up to 256 bytes of content
-    let prefix_len = data.len().min(256);
-    for &b in &data[..prefix_len] {
-        hash ^= b as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-
     hash
 }
 
@@ -159,7 +124,6 @@ mod tests {
     }
 
     fn fake_font_data(tag: u8) -> Vec<u8> {
-        // Generate 300 bytes so we exercise the 256-byte prefix window
         let mut data = vec![tag; 300];
         // Vary the "font header" area
         data[0] = tag;
@@ -168,18 +132,27 @@ mod tests {
     }
 
     #[test]
+    fn font_hash_covers_the_whole_program() {
+        // Same length, same first 256 bytes, different last byte.
+        let a = vec![0x11u8; 1000];
+        let mut b = a.clone();
+        b[999] = 0x22;
+        assert_ne!(font_hash(&a), font_hash(&b));
+    }
+
+    #[test]
     fn cache_hit_on_second_access() {
         let mut cache = GlyphCache::new(128);
         let font = fake_font_data(0xAA);
 
         // First access — miss
-        let p = cache.get_or_insert(&font, 42, || make_test_path(0.0));
+        let p = cache.get_or_insert(font_hash(&font), 42, || make_test_path(0.0));
         assert!(p.is_some());
         assert_eq!(cache.misses, 1);
         assert_eq!(cache.hits, 0);
 
         // Second access — hit
-        let p = cache.get_or_insert(&font, 42, || {
+        let p = cache.get_or_insert(font_hash(&font), 42, || {
             panic!("build_fn should not be called on cache hit")
         });
         assert!(p.is_some());
@@ -193,8 +166,8 @@ mod tests {
         let font_a = fake_font_data(0xAA);
         let font_b = fake_font_data(0xBB);
 
-        cache.get_or_insert(&font_a, 1, || make_test_path(0.0));
-        cache.get_or_insert(&font_b, 1, || make_test_path(5.0));
+        cache.get_or_insert(font_hash(&font_a), 1, || make_test_path(0.0));
+        cache.get_or_insert(font_hash(&font_b), 1, || make_test_path(5.0));
 
         // Both should be misses (different fonts, same glyph_id)
         assert_eq!(cache.misses, 2);
@@ -207,17 +180,19 @@ mod tests {
         let mut cache = GlyphCache::new(128);
         let font = fake_font_data(0xCC);
 
-        let p = cache.get_or_insert(&font, 10, || make_test_path(3.0));
+        let p = cache.get_or_insert(font_hash(&font), 10, || make_test_path(3.0));
         assert!(p.is_some());
         assert_eq!(cache.len(), 1);
 
         // None path should also be cached
-        let p = cache.get_or_insert(&font, 99, || None);
+        let p = cache.get_or_insert(font_hash(&font), 99, || None);
         assert!(p.is_none());
         assert_eq!(cache.len(), 2);
 
         // Second access to the None entry should still be a hit
-        let p = cache.get_or_insert(&font, 99, || panic!("should not rebuild None entry"));
+        let p = cache.get_or_insert(font_hash(&font), 99, || {
+            panic!("should not rebuild None entry")
+        });
         assert!(p.is_none());
         assert_eq!(cache.hits, 1);
     }
@@ -229,10 +204,10 @@ mod tests {
 
         assert_eq!(cache.hit_rate(), 0.0);
 
-        cache.get_or_insert(&font, 1, || make_test_path(0.0)); // miss
-        cache.get_or_insert(&font, 1, || make_test_path(0.0)); // hit
-        cache.get_or_insert(&font, 1, || make_test_path(0.0)); // hit
-        cache.get_or_insert(&font, 1, || make_test_path(0.0)); // hit
+        cache.get_or_insert(font_hash(&font), 1, || make_test_path(0.0)); // miss
+        cache.get_or_insert(font_hash(&font), 1, || make_test_path(0.0)); // hit
+        cache.get_or_insert(font_hash(&font), 1, || make_test_path(0.0)); // hit
+        cache.get_or_insert(font_hash(&font), 1, || make_test_path(0.0)); // hit
 
         // 3 hits / 4 total = 0.75
         assert!((cache.hit_rate() - 0.75).abs() < 1e-9);
@@ -243,8 +218,8 @@ mod tests {
         let mut cache = GlyphCache::new(128);
         let font = fake_font_data(0xEE);
 
-        cache.get_or_insert(&font, 1, || make_test_path(0.0));
-        cache.get_or_insert(&font, 2, || make_test_path(0.0));
+        cache.get_or_insert(font_hash(&font), 1, || make_test_path(0.0));
+        cache.get_or_insert(font_hash(&font), 2, || make_test_path(0.0));
         assert_eq!(cache.len(), 2);
         assert!(!cache.is_empty());
 
@@ -259,12 +234,12 @@ mod tests {
         let mut cache = GlyphCache::new(2);
         let font = fake_font_data(0xFF);
 
-        cache.get_or_insert(&font, 1, || make_test_path(0.0));
-        cache.get_or_insert(&font, 2, || make_test_path(0.0));
+        cache.get_or_insert(font_hash(&font), 1, || make_test_path(0.0));
+        cache.get_or_insert(font_hash(&font), 2, || make_test_path(0.0));
         assert_eq!(cache.len(), 2);
 
         // This should trigger eviction (capacity = 2)
-        cache.get_or_insert(&font, 3, || make_test_path(0.0));
+        cache.get_or_insert(font_hash(&font), 3, || make_test_path(0.0));
         // After eviction + insert, we should have 1 entry
         assert_eq!(cache.len(), 1);
     }
