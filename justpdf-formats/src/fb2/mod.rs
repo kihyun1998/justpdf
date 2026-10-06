@@ -38,6 +38,7 @@ impl Fb2Document {
     }
 
     /// Parse an FB2 document from an XML string.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(xml: &str) -> Result<Self> {
         let doc = roxmltree::Document::parse(xml).map_err(|e| FormatError::Xml(format!("{e}")))?;
 

@@ -223,18 +223,16 @@ fn find_signer_certificate<'a>(
     let certs = signed_data.certificates.as_ref()?;
 
     let sid = &signer_info.sid;
-    match sid {
-        cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(iasn) => {
-            for cert_choice in certs.0.iter() {
-                if let cms::cert::CertificateChoices::Certificate(cert) = cert_choice
-                    && cert.tbs_certificate.serial_number == iasn.serial_number
-                    && cert.tbs_certificate.issuer == iasn.issuer
-                {
-                    return Some(cert);
-                }
+    // SubjectKeyIdentifier not implemented yet
+    if let cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(iasn) = sid {
+        for cert_choice in certs.0.iter() {
+            if let cms::cert::CertificateChoices::Certificate(cert) = cert_choice
+                && cert.tbs_certificate.serial_number == iasn.serial_number
+                && cert.tbs_certificate.issuer == iasn.issuer
+            {
+                return Some(cert);
             }
         }
-        _ => {} // SubjectKeyIdentifier not implemented yet
     }
 
     None

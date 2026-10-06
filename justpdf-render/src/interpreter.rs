@@ -291,13 +291,9 @@ impl<'a> RenderInterpreter<'a> {
         // Resolve ToUnicode CMap
         let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {
             let tu_ref = tu_ref.clone();
-            if let Ok(tu_obj) = self.doc.resolve(&tu_ref) {
-                if let PdfObject::Stream { dict, data } = tu_obj {
-                    let decoded = self.doc.decode_stream(&dict, &data).ok();
-                    decoded.map(|d| ToUnicodeCMap::parse(&d))
-                } else {
-                    None
-                }
+            if let Ok(PdfObject::Stream { dict, data }) = self.doc.resolve(&tu_ref) {
+                let decoded = self.doc.decode_stream(&dict, &data).ok();
+                decoded.map(|d| ToUnicodeCMap::parse(&d))
             } else {
                 None
             }
@@ -1173,6 +1169,7 @@ impl<'a> RenderInterpreter<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_glyph(
         &mut self,
         code: u32,
@@ -2040,7 +2037,7 @@ impl<'a> RenderInterpreter<'a> {
         let mask_data = mask.data_mut();
         let src_data = pixmap.data();
 
-        for i in 0..(w * h) as usize {
+        for (i, out) in mask_data.iter_mut().enumerate().take((w * h) as usize) {
             let idx = i * 4;
             if idx + 3 >= src_data.len() {
                 break;
@@ -2055,7 +2052,7 @@ impl<'a> RenderInterpreter<'a> {
                 }
                 SoftMaskSubtype::Alpha => src_data[idx + 3] as f32,
             };
-            mask_data[i] = value as u8;
+            *out = value as u8;
         }
 
         Some(mask)
@@ -2094,7 +2091,9 @@ impl<'a> RenderInterpreter<'a> {
             .abs();
 
         // Pattern cell size in device pixels
+        #[allow(clippy::manual_clamp)]
         let cell_w = (xstep * sx).ceil().max(1.0).min(2048.0) as u32;
+        #[allow(clippy::manual_clamp)]
         let cell_h = (ystep * sy).ceil().max(1.0).min(2048.0) as u32;
 
         let mut cell_pixmap = match Pixmap::new(cell_w, cell_h) {

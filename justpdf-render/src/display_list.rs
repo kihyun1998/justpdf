@@ -155,10 +155,11 @@ impl DisplayList {
                 } => {
                     let target = group_target(&mut group_stack, pixmap);
                     let combined = extra_transform.post_concat(*transform);
-                    let mut ppaint = PixmapPaint::default();
-                    ppaint.opacity = *alpha;
-                    ppaint.blend_mode = *blend_mode;
-                    ppaint.quality = tiny_skia::FilterQuality::Bilinear;
+                    let ppaint = PixmapPaint {
+                        opacity: *alpha,
+                        blend_mode: *blend_mode,
+                        quality: tiny_skia::FilterQuality::Bilinear,
+                    };
                     let mask_ref = current_mask.as_ref();
                     target.draw_pixmap(0, 0, img.as_ref(), &ppaint, combined, mask_ref);
                 }
@@ -218,9 +219,11 @@ impl DisplayList {
                 DisplayCommand::EndGroup => {
                     if let Some(group) = group_stack.pop() {
                         let target = group_target(&mut group_stack, pixmap);
-                        let mut ppaint = PixmapPaint::default();
-                        ppaint.opacity = group.opacity;
-                        ppaint.blend_mode = group.blend_mode;
+                        let ppaint = PixmapPaint {
+                            opacity: group.opacity,
+                            blend_mode: group.blend_mode,
+                            ..Default::default()
+                        };
                         let mask_ref = current_mask.as_ref();
                         target.draw_pixmap(
                             0,
@@ -376,7 +379,7 @@ struct GroupState {
 
 /// Returns a mutable reference to the top-most group pixmap, or to the root
 /// pixmap when there is no active group.
-fn group_target<'a>(stack: &'a mut Vec<GroupState>, root: &'a mut Pixmap) -> &'a mut Pixmap {
+fn group_target<'a>(stack: &'a mut [GroupState], root: &'a mut Pixmap) -> &'a mut Pixmap {
     if let Some(top) = stack.last_mut() {
         &mut top.pixmap
     } else {
@@ -471,8 +474,10 @@ mod tests {
     #[test]
     fn test_record_and_replay_stroke() {
         let mut dl = DisplayList::new(100, 100);
-        let mut stroke = Stroke::default();
-        stroke.width = 4.0;
+        let stroke = Stroke {
+            width: 4.0,
+            ..Default::default()
+        };
 
         dl.push(DisplayCommand::StrokePath {
             path: rect_path(10.0, 10.0, 80.0, 80.0),

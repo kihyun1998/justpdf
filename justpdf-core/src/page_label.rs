@@ -47,7 +47,7 @@ impl PageLabelStyle {
     }
 
     /// Encode to the PDF /S name value. Returns `None` for `PageLabelStyle::None`.
-    fn to_name(&self) -> Option<&'static [u8]> {
+    fn to_name(self) -> Option<&'static [u8]> {
         match self {
             Self::Decimal => Some(b"D"),
             Self::UpperRoman => Some(b"R"),

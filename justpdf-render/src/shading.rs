@@ -176,9 +176,11 @@ fn render_axial(
         None => return,
     };
 
-    let mut paint = Paint::default();
-    paint.shader = gradient;
-    paint.anti_alias = true;
+    let paint = Paint {
+        shader: gradient,
+        anti_alias: true,
+        ..Default::default()
+    };
 
     let transform = ctm.concat(page_transform).to_skia();
 
@@ -234,9 +236,11 @@ fn render_radial(
         None => return,
     };
 
-    let mut paint = Paint::default();
-    paint.shader = gradient;
-    paint.anti_alias = true;
+    let paint = Paint {
+        shader: gradient,
+        anti_alias: true,
+        ..Default::default()
+    };
 
     let transform = ctm.concat(page_transform).to_skia();
 
@@ -708,11 +712,7 @@ pub fn parse_lattice_vertices(
     let coord_max = ((1u64 << bits_per_coordinate) - 1) as f64;
     let comp_max = ((1u64 << bits_per_component) - 1) as f64;
 
-    loop {
-        let raw_x = match reader.read_bits(bits_per_coordinate) {
-            Some(v) => v,
-            None => break,
-        };
+    while let Some(raw_x) = reader.read_bits(bits_per_coordinate) {
         let raw_y = match reader.read_bits(bits_per_coordinate) {
             Some(v) => v,
             None => break,
@@ -758,6 +758,7 @@ pub struct Patch {
 }
 
 /// Parse patches from a Type 6/7 mesh stream.
+#[allow(clippy::too_many_arguments)]
 pub fn parse_patch_mesh(
     data: &[u8],
     bits_per_flag: u32,
@@ -786,11 +787,8 @@ pub fn parse_patch_mesh(
     let mut prev_points: Vec<(f64, f64)> = Vec::new();
     let mut prev_colors: Vec<[u8; 4]> = Vec::new();
 
-    loop {
-        let flag = match reader.read_bits(bits_per_flag) {
-            Some(f) => f as u8,
-            None => break,
-        };
+    while let Some(f) = reader.read_bits(bits_per_flag) {
+        let flag = f as u8;
 
         // Determine how many new points/colors to read based on flag
         let (n_points, n_colors) = if flag == 0 {
@@ -866,6 +864,7 @@ pub fn parse_patch_mesh(
             // Full patch: corners are at indices 0, 3, 6, 9 for Type 6 (12 points)
             // or 0, 3, 8, 11 for Type 7 (16 points)
             let c0 = points[0];
+            #[allow(clippy::if_same_then_else)]
             let c1 = if points_per_patch == 16 {
                 points[3]
             } else {

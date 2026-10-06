@@ -202,7 +202,7 @@ fn remove_null_objects(objects: &mut Vec<(u32, PdfObject)>) -> usize {
     let before = objects.len();
 
     // Remove null objects that are not referenced
-    objects.retain(|(obj_num, obj)| !(obj.is_null() && !referenced.contains(obj_num)));
+    objects.retain(|(obj_num, obj)| !obj.is_null() || referenced.contains(obj_num));
 
     before - objects.len()
 }
@@ -234,7 +234,7 @@ fn collect_references(obj: &PdfObject, refs: &mut std::collections::HashSet<u32>
 
 /// Compact object numbers sequentially starting from 1, rewriting every
 /// reference to a held object at generation 0.
-fn compact_object_numbers(objects: &mut Vec<(u32, PdfObject)>) {
+fn compact_object_numbers(objects: &mut [(u32, PdfObject)]) {
     // Build a mapping from every held obj_num -> new obj_num
     let remap: HashMap<u32, u32> = objects
         .iter()

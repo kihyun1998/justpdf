@@ -13,8 +13,8 @@ struct Rc4State {
 impl Rc4State {
     fn new(key: &[u8]) -> Self {
         let mut s = [0u8; 256];
-        for i in 0..256 {
-            s[i] = i as u8;
+        for (i, b) in s.iter_mut().enumerate() {
+            *b = i as u8;
         }
         let mut j: u8 = 0;
         for i in 0..256 {

@@ -90,19 +90,21 @@ impl PixmapDevice {
         paint.anti_alias = true;
         paint.blend_mode = blend_mode;
 
-        let mut stroke = Stroke::default();
-        stroke.width = gs.line_width as f32;
-        stroke.line_cap = match gs.line_cap {
-            graphics_state::LineCap::Butt => SkiaLineCap::Butt,
-            graphics_state::LineCap::Round => SkiaLineCap::Round,
-            graphics_state::LineCap::Square => SkiaLineCap::Square,
+        let mut stroke = Stroke {
+            width: gs.line_width as f32,
+            line_cap: match gs.line_cap {
+                graphics_state::LineCap::Butt => SkiaLineCap::Butt,
+                graphics_state::LineCap::Round => SkiaLineCap::Round,
+                graphics_state::LineCap::Square => SkiaLineCap::Square,
+            },
+            line_join: match gs.line_join {
+                graphics_state::LineJoin::Miter => SkiaLineJoin::Miter,
+                graphics_state::LineJoin::Round => SkiaLineJoin::Round,
+                graphics_state::LineJoin::Bevel => SkiaLineJoin::Bevel,
+            },
+            miter_limit: gs.miter_limit as f32,
+            ..Default::default()
         };
-        stroke.line_join = match gs.line_join {
-            graphics_state::LineJoin::Miter => SkiaLineJoin::Miter,
-            graphics_state::LineJoin::Round => SkiaLineJoin::Round,
-            graphics_state::LineJoin::Bevel => SkiaLineJoin::Bevel,
-        };
-        stroke.miter_limit = gs.miter_limit as f32;
 
         if !gs.dash_pattern.is_empty() {
             let dashes: Vec<f32> = gs.dash_pattern.iter().map(|d| *d as f32).collect();
@@ -124,10 +126,11 @@ impl PixmapDevice {
         alpha: f32,
         blend_mode: BlendMode,
     ) {
-        let mut paint = tiny_skia::PixmapPaint::default();
-        paint.opacity = alpha;
-        paint.blend_mode = blend_mode;
-        paint.quality = tiny_skia::FilterQuality::Bilinear;
+        let paint = tiny_skia::PixmapPaint {
+            opacity: alpha,
+            blend_mode,
+            quality: tiny_skia::FilterQuality::Bilinear,
+        };
 
         let clip = self.clip_mask.as_ref();
         self.pixmap
@@ -142,10 +145,11 @@ impl PixmapDevice {
         alpha: f32,
         blend_mode: BlendMode,
     ) {
-        let mut paint = tiny_skia::PixmapPaint::default();
-        paint.opacity = alpha;
-        paint.blend_mode = blend_mode;
-        paint.quality = tiny_skia::FilterQuality::Bilinear;
+        let paint = tiny_skia::PixmapPaint {
+            opacity: alpha,
+            blend_mode,
+            quality: tiny_skia::FilterQuality::Bilinear,
+        };
 
         let clip = self.clip_mask.as_ref();
         self.pixmap.draw_pixmap(0, 0, *src, &paint, transform, clip);
@@ -161,17 +165,18 @@ impl PixmapDevice {
         pattern_transform: Transform,
         blend_mode: BlendMode,
     ) {
-        let mut paint = Paint::default();
-        paint.anti_alias = true;
-        paint.blend_mode = blend_mode;
-
-        paint.shader = tiny_skia::Pattern::new(
-            *pattern_pixmap,
-            tiny_skia::SpreadMode::Repeat,
-            tiny_skia::FilterQuality::Bilinear,
-            1.0,
-            pattern_transform,
-        );
+        let paint = Paint {
+            anti_alias: true,
+            blend_mode,
+            shader: tiny_skia::Pattern::new(
+                *pattern_pixmap,
+                tiny_skia::SpreadMode::Repeat,
+                tiny_skia::FilterQuality::Bilinear,
+                1.0,
+                pattern_transform,
+            ),
+            ..Default::default()
+        };
 
         let clip = self.clip_mask.as_ref();
         self.pixmap
@@ -188,31 +193,34 @@ impl PixmapDevice {
         pattern_transform: Transform,
         blend_mode: BlendMode,
     ) {
-        let mut paint = Paint::default();
-        paint.anti_alias = true;
-        paint.blend_mode = blend_mode;
-
-        paint.shader = tiny_skia::Pattern::new(
-            *pattern_pixmap,
-            tiny_skia::SpreadMode::Repeat,
-            tiny_skia::FilterQuality::Bilinear,
-            1.0,
-            pattern_transform,
-        );
-
-        let mut stroke = Stroke::default();
-        stroke.width = gs.line_width as f32;
-        stroke.line_cap = match gs.line_cap {
-            graphics_state::LineCap::Butt => SkiaLineCap::Butt,
-            graphics_state::LineCap::Round => SkiaLineCap::Round,
-            graphics_state::LineCap::Square => SkiaLineCap::Square,
+        let paint = Paint {
+            anti_alias: true,
+            blend_mode,
+            shader: tiny_skia::Pattern::new(
+                *pattern_pixmap,
+                tiny_skia::SpreadMode::Repeat,
+                tiny_skia::FilterQuality::Bilinear,
+                1.0,
+                pattern_transform,
+            ),
+            ..Default::default()
         };
-        stroke.line_join = match gs.line_join {
-            graphics_state::LineJoin::Miter => SkiaLineJoin::Miter,
-            graphics_state::LineJoin::Round => SkiaLineJoin::Round,
-            graphics_state::LineJoin::Bevel => SkiaLineJoin::Bevel,
+
+        let mut stroke = Stroke {
+            width: gs.line_width as f32,
+            line_cap: match gs.line_cap {
+                graphics_state::LineCap::Butt => SkiaLineCap::Butt,
+                graphics_state::LineCap::Round => SkiaLineCap::Round,
+                graphics_state::LineCap::Square => SkiaLineCap::Square,
+            },
+            line_join: match gs.line_join {
+                graphics_state::LineJoin::Miter => SkiaLineJoin::Miter,
+                graphics_state::LineJoin::Round => SkiaLineJoin::Round,
+                graphics_state::LineJoin::Bevel => SkiaLineJoin::Bevel,
+            },
+            miter_limit: gs.miter_limit as f32,
+            ..Default::default()
         };
-        stroke.miter_limit = gs.miter_limit as f32;
 
         if !gs.dash_pattern.is_empty() {
             let dashes: Vec<f32> = gs.dash_pattern.iter().map(|d| *d as f32).collect();

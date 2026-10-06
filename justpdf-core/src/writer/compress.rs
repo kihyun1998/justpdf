@@ -480,6 +480,7 @@ fn collect_image_display_sizes(modifier: &mut DocumentModifier) -> HashMap<u32, 
     let mut result: HashMap<u32, (f64, f64)> = HashMap::new();
 
     // Collect page data
+    #[allow(clippy::type_complexity)]
     let mut pages: Vec<(Vec<u32>, HashMap<Vec<u8>, u32>)> = Vec::new();
 
     let page_raw: Vec<(Vec<u32>, PdfDict)> = modifier
@@ -1173,6 +1174,7 @@ fn subset_embedded_fonts(modifier: &mut DocumentModifier, stats: &mut CompressSt
     }
 
     // Now resolve font maps outside the borrow
+    #[allow(clippy::type_complexity)]
     let mut page_data: Vec<(Vec<u32>, HashMap<Vec<u8>, u32>)> = Vec::new();
     for (content_obj_nums, page_dict) in page_raw {
         let font_map = extract_font_map(&page_dict, modifier);
@@ -3747,26 +3749,6 @@ mod tests {
     }
 
     // ── Phase E: Unused resource removal tests ──────────────────────
-
-    /// Helper: create a PDF with an extra unused font in Resources.
-    fn create_pdf_with_unused_font() -> Vec<u8> {
-        let mut doc = DocumentBuilder::new();
-        let font1 = doc.add_standard_font("Helvetica");
-        let _font2 = doc.add_standard_font("Courier"); // added but not used in content
-
-        let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font1, "Helvetica");
-        // Note: font2 is NOT added to the page, so it won't be in Resources.
-        // To truly test this, we need to manually add an unused font to Resources.
-        page.begin_text();
-        page.set_font(&font1, 12.0);
-        page.move_to(72.0, 720.0);
-        page.show_text("Only using Helvetica");
-        page.end_text();
-        doc.add_page(page);
-
-        doc.build().unwrap()
-    }
 
     /// E-T1: Unused resource removal doesn't break valid PDF.
     #[test]

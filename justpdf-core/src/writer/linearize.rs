@@ -536,16 +536,6 @@ fn write_linearized_inner(
     // and first-page objects. We write the entries we know about for
     // first-page consumption.
     let _first_xref_offset = buf.len();
-    {
-        // Collect all object numbers that will appear before the main xref.
-        let mut first_xref_entries: Vec<(u32, usize)> = Vec::new();
-        // The linearization dict itself.
-        first_xref_entries.push((lin_dict_obj_num, lin_dict_offset));
-        // We'll patch in the hint stream and first-page object offsets after writing them.
-        // For now, write a placeholder xref. We'll overwrite it in the patching step.
-        // Actually, for traditional xref tables, we just reserve space and write at the end.
-        // Instead, let's write the xref after all first-page objects.
-    }
     // We skip writing a first-page xref for now in the basic implementation.
     // The spec allows the first-page xref to be omitted when a full xref is at the end.
     // This simplification still produces a valid linearized PDF that readers can detect.

@@ -545,25 +545,27 @@ pub fn generate_datamatrix(data: &str, module_size: u32) -> Result<BarcodeImage>
     let mut grid = vec![vec![false; matrix_size]; matrix_size];
 
     // L-shaped finder pattern: solid bottom row and solid left column
-    for i in 0..matrix_size {
-        grid[matrix_size - 1][i] = true; // bottom row
-        grid[i][0] = true; // left column
+    grid[matrix_size - 1].fill(true); // bottom row
+    for grid_row in grid.iter_mut() {
+        grid_row[0] = true; // left column
     }
 
     // Timing patterns: alternating on top row and right column
-    for i in 0..matrix_size {
-        grid[0][i] = i % 2 == 0; // top row
-        grid[i][matrix_size - 1] = i % 2 != 0; // right column (odd = dark)
+    for (i, grid_row) in grid.iter_mut().enumerate() {
+        grid_row[matrix_size - 1] = i % 2 != 0; // right column (odd = dark)
+    }
+    for (i, cell) in grid[0].iter_mut().enumerate() {
+        *cell = i % 2 == 0; // top row
     }
 
     // Fill data modules in the interior (row 1..size-1, col 1..size-1)
     let mut bit_idx = 0;
-    for row in 1..matrix_size - 1 {
-        for col in 1..matrix_size - 1 {
+    for grid_row in grid.iter_mut().take(matrix_size - 1).skip(1) {
+        for cell in grid_row.iter_mut().take(matrix_size - 1).skip(1) {
             let byte_idx = bit_idx / 8;
             let bit_pos = 7 - (bit_idx % 8);
             if byte_idx < codewords.len() {
-                grid[row][col] = (codewords[byte_idx] >> bit_pos) & 1 == 1;
+                *cell = (codewords[byte_idx] >> bit_pos) & 1 == 1;
             }
             bit_idx += 1;
         }
@@ -618,12 +620,12 @@ pub fn generate_pdf417(data: &str, width: u32, height: u32) -> Result<BarcodeIma
     // Build bit grid
     let mut grid = vec![vec![false; modules_per_row]; num_rows];
 
-    for row in 0..num_rows {
+    for (row, grid_row) in grid.iter_mut().enumerate() {
         let mut col_offset = 0;
 
         // Start pattern
         for (i, &bit) in start_pattern.iter().enumerate() {
-            grid[row][col_offset + i] = bit;
+            grid_row[col_offset + i] = bit;
         }
         col_offset += start_pattern.len();
 
@@ -638,14 +640,14 @@ pub fn generate_pdf417(data: &str, width: u32, height: u32) -> Result<BarcodeIma
             // Encode codeword as 17-module pattern
             let pattern = pdf417_codeword_pattern(cw_val);
             for (i, &bit) in pattern.iter().enumerate() {
-                grid[row][col_offset + i] = bit;
+                grid_row[col_offset + i] = bit;
             }
             col_offset += 17;
         }
 
         // Stop pattern
         for (i, &bit) in stop_pattern.iter().enumerate() {
-            grid[row][col_offset + i] = bit;
+            grid_row[col_offset + i] = bit;
         }
     }
 
@@ -660,9 +662,9 @@ pub fn generate_pdf417(data: &str, width: u32, height: u32) -> Result<BarcodeIma
 
     let mut rgba = vec![255u8; actual_width * actual_height * 4];
 
-    for row in 0..num_rows {
-        for col in 0..modules_per_row {
-            if grid[row][col] {
+    for (row, grid_row) in grid.iter().enumerate() {
+        for (col, &dark) in grid_row.iter().enumerate() {
+            if dark {
                 for dy in 0..module_h {
                     for dx in 0..module_w {
                         let x = col * module_w + dx;
@@ -732,9 +734,7 @@ pub fn generate_aztec(data: &str, size: u32) -> Result<BarcodeImage> {
     // Determine grid size based on data length
     // Compact Aztec: 15x15 core, data in layers of 4 modules each side
     let core_size = 11; // Bull's eye is 11x11
-    let num_layers = ((data_bits.len() as f64 / 40.0).ceil() as usize)
-        .max(1)
-        .min(4);
+    let num_layers = ((data_bits.len() as f64 / 40.0).ceil() as usize).clamp(1, 4);
     let grid_size = core_size + num_layers * 4;
 
     let mut grid = vec![vec![false; grid_size]; grid_size];
@@ -758,7 +758,7 @@ pub fn generate_aztec(data: &str, size: u32) -> Result<BarcodeImage> {
     // Orientation marks at corners of the finder
     let finder_half = 5;
     // Top-left corner mark
-    if center >= finder_half && center >= finder_half {
+    if center >= finder_half {
         grid[center - finder_half][center - finder_half] = true;
     }
     // Top-right corner mark
@@ -770,24 +770,20 @@ pub fn generate_aztec(data: &str, size: u32) -> Result<BarcodeImage> {
     let mut bit_idx = 0;
     for layer in 0..num_layers {
         let offset = 6 + layer * 2;
+        let lo = center.saturating_sub(offset);
+        let hi = (center + offset).min(grid_size - 1);
         // Top side
-        for col in (center.saturating_sub(offset))..=(center + offset).min(grid_size - 1) {
+        for cell in grid[lo].iter_mut().take(hi + 1).skip(lo) {
             if bit_idx < data_bits.len() {
-                let r = center.saturating_sub(offset);
-                if r < grid_size && col < grid_size {
-                    grid[r][col] = data_bits[bit_idx];
-                    bit_idx += 1;
-                }
+                *cell = data_bits[bit_idx];
+                bit_idx += 1;
             }
         }
         // Right side
-        for row in (center.saturating_sub(offset))..=(center + offset).min(grid_size - 1) {
+        for grid_row in grid.iter_mut().take(hi + 1).skip(lo) {
             if bit_idx < data_bits.len() {
-                let c = (center + offset).min(grid_size - 1);
-                if row < grid_size {
-                    grid[row][c] = data_bits[bit_idx];
-                    bit_idx += 1;
-                }
+                grid_row[hi] = data_bits[bit_idx];
+                bit_idx += 1;
             }
         }
         // Bottom side
@@ -825,20 +821,18 @@ fn draw_ring(grid: &mut [Vec<bool>], center: usize, dist: usize, value: bool) {
     let left = center.saturating_sub(dist);
     let right = (center + dist).min(size - 1);
 
-    for col in left..=right {
-        if top < size && col < size {
-            grid[top][col] = value;
-        }
-        if bottom < size && col < size {
-            grid[bottom][col] = value;
-        }
+    if top < size {
+        grid[top][left..=right].fill(value);
     }
-    for row in top..=bottom {
-        if row < size && left < size {
-            grid[row][left] = value;
+    if bottom < size {
+        grid[bottom][left..=right].fill(value);
+    }
+    for grid_row in grid.iter_mut().take(bottom + 1).skip(top) {
+        if left < size {
+            grid_row[left] = value;
         }
-        if row < size && right < size {
-            grid[row][right] = value;
+        if right < size {
+            grid_row[right] = value;
         }
     }
 }
@@ -854,9 +848,9 @@ fn render_2d_grid(grid: &[Vec<bool>], module_size: u32) -> Result<BarcodeImage> 
 
     let mut rgba = vec![255u8; img_w * img_h * 4];
 
-    for row in 0..grid_h {
-        for col in 0..grid_w {
-            if grid[row][col] {
+    for (row, grid_row) in grid.iter().enumerate() {
+        for (col, &dark) in grid_row.iter().enumerate() {
+            if dark {
                 for dy in 0..module_size {
                     for dx in 0..module_size {
                         let x = col * module_size + dx;

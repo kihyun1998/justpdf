@@ -418,6 +418,7 @@ pub fn generate_o_u_values_r234(
 /// Generate encryption entries for R=6 (AES-256).
 ///
 /// Returns (O, U, OE, UE, Perms).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn generate_values_r6(
     user_password: &[u8],
     owner_password: &[u8],

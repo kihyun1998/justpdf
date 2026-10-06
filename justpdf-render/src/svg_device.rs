@@ -157,13 +157,9 @@ impl<'a> SvgRenderer<'a> {
 
         let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {
             let tu_ref = tu_ref.clone();
-            if let Ok(tu_obj) = self.doc.resolve(&tu_ref) {
-                if let PdfObject::Stream { dict, data } = tu_obj {
-                    let decoded = self.doc.decode_stream(&dict, &data).ok();
-                    decoded.map(|d| ToUnicodeCMap::parse(&d))
-                } else {
-                    None
-                }
+            if let Ok(PdfObject::Stream { dict, data }) = self.doc.resolve(&tu_ref) {
+                let decoded = self.doc.decode_stream(&dict, &data).ok();
+                decoded.map(|d| ToUnicodeCMap::parse(&d))
             } else {
                 None
             }

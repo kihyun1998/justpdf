@@ -130,6 +130,7 @@ fn find_opf_path(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<String>
 /// Parse OPF file for metadata, manifest, and spine.
 ///
 /// Returns (title, author, manifest_items[(id, href)], spine_idrefs[]).
+#[allow(clippy::type_complexity)]
 fn parse_opf(
     xml: &str,
 ) -> Result<(

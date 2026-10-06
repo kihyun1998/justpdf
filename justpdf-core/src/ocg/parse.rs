@@ -183,7 +183,7 @@ fn parse_config(doc: &PdfDocument, dict: &PdfDict) -> Result<OCConfig> {
     let order = match dict.get(b"Order") {
         Some(PdfObject::Array(arr)) => {
             let arr = arr.clone();
-            parse_order(doc, &arr)?
+            parse_order(&arr)?
         }
         Some(PdfObject::Reference(r)) => {
             let r = r.clone();
@@ -191,7 +191,7 @@ fn parse_config(doc: &PdfDocument, dict: &PdfDict) -> Result<OCConfig> {
             match resolved.as_array() {
                 Some(arr) => {
                     let arr = arr.to_vec();
-                    parse_order(doc, &arr)?
+                    parse_order(&arr)?
                 }
                 None => Vec::new(),
             }
@@ -227,7 +227,7 @@ fn collect_ref_array(doc: &PdfDocument, dict: &PdfDict, key: &[u8]) -> Result<Ve
 /// - Indirect refs to OCGs
 /// - Strings (labels for the following sub-array)
 /// - Sub-arrays (grouped OCGs, optionally preceded by a label string)
-fn parse_order(doc: &PdfDocument, arr: &[PdfObject]) -> Result<Vec<OCOrderItem>> {
+fn parse_order(arr: &[PdfObject]) -> Result<Vec<OCOrderItem>> {
     let mut items = Vec::new();
     let mut i = 0;
 
@@ -244,7 +244,7 @@ fn parse_order(doc: &PdfDocument, arr: &[PdfObject]) -> Result<Vec<OCOrderItem>>
                     && let Some(sub_arr) = arr[i + 1].as_array()
                 {
                     let sub_arr = sub_arr.to_vec();
-                    let children = parse_order(doc, &sub_arr)?;
+                    let children = parse_order(&sub_arr)?;
                     items.push(OCOrderItem::SubGroup { name, children });
                     i += 2;
                     continue;
@@ -258,7 +258,7 @@ fn parse_order(doc: &PdfDocument, arr: &[PdfObject]) -> Result<Vec<OCOrderItem>>
             }
             PdfObject::Array(sub_arr) => {
                 let sub_arr = sub_arr.clone();
-                let children = parse_order(doc, &sub_arr)?;
+                let children = parse_order(&sub_arr)?;
                 items.push(OCOrderItem::SubGroup {
                     name: None,
                     children,
@@ -654,15 +654,12 @@ mod tests {
 
     #[test]
     fn test_parse_order_refs_only() {
-        let pdf_bytes = build_minimal_pdf_with_ocg();
-        let doc = PdfDocument::from_bytes(pdf_bytes).unwrap();
-
         let arr = vec![
             PdfObject::Reference(make_ref(5)),
             PdfObject::Reference(make_ref(6)),
         ];
 
-        let items = parse_order(&doc, &arr).unwrap();
+        let items = parse_order(&arr).unwrap();
         assert_eq!(items.len(), 2);
         match &items[0] {
             OCOrderItem::Group(r) => assert_eq!(r, &make_ref(5)),
@@ -672,9 +669,6 @@ mod tests {
 
     #[test]
     fn test_parse_order_with_sub_group() {
-        let pdf_bytes = build_minimal_pdf_with_ocg();
-        let doc = PdfDocument::from_bytes(pdf_bytes).unwrap();
-
         let arr = vec![
             PdfObject::String(b"Background".to_vec()),
             PdfObject::Array(vec![
@@ -683,7 +677,7 @@ mod tests {
             ]),
         ];
 
-        let items = parse_order(&doc, &arr).unwrap();
+        let items = parse_order(&arr).unwrap();
         assert_eq!(items.len(), 1);
         match &items[0] {
             OCOrderItem::SubGroup { name, children } => {
@@ -696,12 +690,9 @@ mod tests {
 
     #[test]
     fn test_parse_order_unnamed_sub_group() {
-        let pdf_bytes = build_minimal_pdf_with_ocg();
-        let doc = PdfDocument::from_bytes(pdf_bytes).unwrap();
-
         let arr = vec![PdfObject::Array(vec![PdfObject::Reference(make_ref(7))])];
 
-        let items = parse_order(&doc, &arr).unwrap();
+        let items = parse_order(&arr).unwrap();
         assert_eq!(items.len(), 1);
         match &items[0] {
             OCOrderItem::SubGroup { name, children } => {
@@ -714,15 +705,12 @@ mod tests {
 
     #[test]
     fn test_parse_order_label_without_array() {
-        let pdf_bytes = build_minimal_pdf_with_ocg();
-        let doc = PdfDocument::from_bytes(pdf_bytes).unwrap();
-
         let arr = vec![
             PdfObject::String(b"Orphan Label".to_vec()),
             PdfObject::Reference(make_ref(1)),
         ];
 
-        let items = parse_order(&doc, &arr).unwrap();
+        let items = parse_order(&arr).unwrap();
         // "Orphan Label" followed by a ref, not an array: creates empty sub-group + group
         assert_eq!(items.len(), 2);
         match &items[0] {

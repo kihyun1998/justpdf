@@ -298,28 +298,16 @@ fn parse_svg_dimensions(root: &roxmltree::Node<'_, '_>) -> Result<(f64, f64)> {
 /// Parse a CSS length value (e.g., "100", "100px", "72pt").
 fn parse_length(s: &str) -> Option<f64> {
     let s = s.trim();
-    if s.ends_with("px") {
-        s[..s.len() - 2].trim().parse().ok()
-    } else if s.ends_with("pt") {
-        s[..s.len() - 2].trim().parse().ok()
-    } else if s.ends_with("in") {
-        s[..s.len() - 2]
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(|v| v * 72.0)
-    } else if s.ends_with("mm") {
-        s[..s.len() - 2]
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(|v| v * 72.0 / 25.4)
-    } else if s.ends_with("cm") {
-        s[..s.len() - 2]
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(|v| v * 72.0 / 2.54)
+    if let Some(n) = s.strip_suffix("px") {
+        n.trim().parse().ok()
+    } else if let Some(n) = s.strip_suffix("pt") {
+        n.trim().parse().ok()
+    } else if let Some(n) = s.strip_suffix("in") {
+        n.trim().parse::<f64>().ok().map(|v| v * 72.0)
+    } else if let Some(n) = s.strip_suffix("mm") {
+        n.trim().parse::<f64>().ok().map(|v| v * 72.0 / 25.4)
+    } else if let Some(n) = s.strip_suffix("cm") {
+        n.trim().parse::<f64>().ok().map(|v| v * 72.0 / 2.54)
     } else if s.ends_with('%') {
         None // percentages need parent context, skip
     } else {
@@ -1119,6 +1107,7 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
 }
 
 /// Fill a rectangle in the pixel buffer.
+#[allow(clippy::too_many_arguments)]
 fn fill_rect_pixels(
     pixels: &mut [u8],
     buf_w: u32,
@@ -1142,6 +1131,7 @@ fn fill_rect_pixels(
 }
 
 /// Fill an ellipse in the pixel buffer.
+#[allow(clippy::too_many_arguments)]
 fn fill_ellipse_pixels(
     pixels: &mut [u8],
     buf_w: u32,
@@ -1174,6 +1164,7 @@ fn fill_ellipse_pixels(
 }
 
 /// Draw a line using Bresenham's algorithm.
+#[allow(clippy::too_many_arguments)]
 fn draw_line_pixels(
     pixels: &mut [u8],
     buf_w: u32,
