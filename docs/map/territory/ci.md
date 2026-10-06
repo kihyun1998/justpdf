@@ -32,4 +32,3 @@ GitHub Actions jobs that run on every push and PR: workspace check, test, all-fe
 ## Known holes / open
 - The gate's "all" is not the whole repository (above).
 - Tracked: #59 (CI gate gaps), #188 (fmt), #189 (clippy)
-- PROOF #187: [broken](no-such-note.md)

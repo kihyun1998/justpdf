@@ -1331,7 +1331,7 @@ mod tests {
             f.write_all(&data).unwrap();
         }
         let doc = PdfDocument::open_mmap(&path).unwrap();
-        assert_eq!(doc.version, (9, 9), "PROOF #187: open_mmap test ran");
+        assert_eq!(doc.version, (1, 4));
         assert!(!doc.is_encrypted());
 
         let catalog_ref = doc.catalog_ref().unwrap().clone();
