@@ -31,10 +31,7 @@ pub fn set_outlines(modifier: &mut DocumentModifier, items: &[OutlineItem]) -> R
     let catalog_ref = modifier.catalog_ref();
     if let Some(catalog_obj) = modifier.find_object_pub(catalog_ref.obj_num).cloned() {
         if let PdfObject::Dict(mut catalog_dict) = catalog_obj {
-            catalog_dict.insert(
-                b"Outlines".to_vec(),
-                PdfObject::Reference(outlines_ref),
-            );
+            catalog_dict.insert(b"Outlines".to_vec(), PdfObject::Reference(outlines_ref));
             modifier.set_object(catalog_ref.obj_num, PdfObject::Dict(catalog_dict));
         }
     }
@@ -70,10 +67,7 @@ fn build_outline_children(
             b"Title".to_vec(),
             PdfObject::String(item.title.as_bytes().to_vec()),
         );
-        dict.insert(
-            b"Parent".to_vec(),
-            PdfObject::Reference(parent_ref.clone()),
-        );
+        dict.insert(b"Parent".to_vec(), PdfObject::Reference(parent_ref.clone()));
 
         // Prev/Next links
         if i > 0 {

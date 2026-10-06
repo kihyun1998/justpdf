@@ -1,11 +1,11 @@
 //! BBox Device: a lightweight device that tracks the bounding box of all drawing operations
 //! without actually rendering pixels.
 
-use justpdf_core::page::{Rect, collect_pages};
 use justpdf_core::PdfDocument;
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
 use justpdf_core::object::PdfObject;
 use justpdf_core::page::PageInfo;
+use justpdf_core::page::{Rect, collect_pages};
 
 use crate::error::{RenderError, Result};
 use crate::graphics_state::Matrix;
@@ -271,9 +271,7 @@ fn get_page_content(doc: &PdfDocument, page: &PageInfo) -> Result<Vec<u8>> {
                 _ => Ok(Vec::new()),
             }
         }
-        PdfObject::Stream { dict, data } => {
-            Ok(doc.decode_stream(dict, data).unwrap_or_default())
-        }
+        PdfObject::Stream { dict, data } => Ok(doc.decode_stream(dict, data).unwrap_or_default()),
         PdfObject::Array(arr) => {
             let arr = arr.clone();
             concat_streams(doc, &arr)

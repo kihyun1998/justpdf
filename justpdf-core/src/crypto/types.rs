@@ -133,10 +133,7 @@ impl Permissions {
 impl EncryptionDict {
     /// Parse an encryption dictionary from a PdfDict.
     pub fn from_dict(dict: &PdfDict) -> Result<Self> {
-        let filter = dict
-            .get_name(b"Filter")
-            .unwrap_or(b"Standard")
-            .to_vec();
+        let filter = dict.get_name(b"Filter").unwrap_or(b"Standard").to_vec();
 
         let v = dict.get_i64(b"V").unwrap_or(0);
         let length = dict.get_i64(b"Length").unwrap_or(40);
@@ -172,10 +169,7 @@ impl EncryptionDict {
                         _ => CryptMethod::None,
                     };
                     let key_length = fd.get_i64(b"Length").unwrap_or(0);
-                    filters.push((
-                        name.clone(),
-                        CryptFilter { cfm, key_length },
-                    ));
+                    filters.push((name.clone(), CryptFilter { cfm, key_length }));
                 }
             }
             CryptFilterMap { filters }
@@ -224,14 +218,8 @@ impl SecurityState {
             1 | 2 => (CryptMethod::V2, CryptMethod::V2), // RC4
             4 => {
                 // Look up named crypt filters
-                let str_method = resolve_crypt_method(
-                    &encrypt_dict,
-                    encrypt_dict.str_f.as_deref(),
-                );
-                let stm_method = resolve_crypt_method(
-                    &encrypt_dict,
-                    encrypt_dict.stm_f.as_deref(),
-                );
+                let str_method = resolve_crypt_method(&encrypt_dict, encrypt_dict.str_f.as_deref());
+                let stm_method = resolve_crypt_method(&encrypt_dict, encrypt_dict.stm_f.as_deref());
                 (str_method, stm_method)
             }
             5 => (CryptMethod::AESV3, CryptMethod::AESV3), // AES-256
@@ -326,14 +314,8 @@ impl EncryptionDict {
                     CryptMethod::AESV3 => b"AESV3".to_vec(),
                 };
                 fd.insert(b"CFM".to_vec(), PdfObject::Name(cfm_name));
-                fd.insert(
-                    b"Length".to_vec(),
-                    PdfObject::Integer(filter.key_length),
-                );
-                fd.insert(
-                    b"AuthEvent".to_vec(),
-                    PdfObject::Name(b"DocOpen".to_vec()),
-                );
+                fd.insert(b"Length".to_vec(), PdfObject::Integer(filter.key_length));
+                fd.insert(b"AuthEvent".to_vec(), PdfObject::Name(b"DocOpen".to_vec()));
                 fd.insert(b"Type".to_vec(), PdfObject::Name(b"CryptFilter".to_vec()));
                 cf_dict.insert(name.clone(), PdfObject::Dict(fd));
             }

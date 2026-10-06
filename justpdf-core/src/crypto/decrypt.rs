@@ -234,10 +234,7 @@ fn stream_crypt_method(dict: &PdfDict, state: &SecurityState) -> CryptMethod {
     if let Some(filters) = dict.get(b"Filter") {
         let filter_names: Vec<&[u8]> = match filters {
             PdfObject::Name(n) => vec![n.as_slice()],
-            PdfObject::Array(arr) => arr
-                .iter()
-                .filter_map(|o| o.as_name())
-                .collect(),
+            PdfObject::Array(arr) => arr.iter().filter_map(|o| o.as_name()).collect(),
             _ => vec![],
         };
 
@@ -331,7 +328,10 @@ pub(super) fn remove_crypt_filter(mut dict: PdfDict) -> PdfDict {
                         if new_params.is_empty() {
                             dict.remove(b"DecodeParms");
                         } else if new_params.len() == 1 {
-                            dict.insert(b"DecodeParms".to_vec(), new_params.into_iter().next().unwrap());
+                            dict.insert(
+                                b"DecodeParms".to_vec(),
+                                new_params.into_iter().next().unwrap(),
+                            );
                         } else {
                             dict.insert(b"DecodeParms".to_vec(), PdfObject::Array(new_params));
                         }

@@ -21,8 +21,12 @@
 //! std::fs::write("page1.png", &png).unwrap();
 //! ```
 
-#![doc(html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png")]
-#![doc(html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png")]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png"
+)]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png"
+)]
 
 mod error;
 
@@ -45,8 +49,8 @@ pub use justpdf_render::render::{OutputFormat, RenderOptions};
 
 use std::path::Path;
 
-use justpdf_core::page::{PageInfo, Rect};
 use justpdf_core::PdfDocument;
+use justpdf_core::page::{PageInfo, Rect};
 
 /// A high-level PDF document handle.
 ///
@@ -265,15 +269,15 @@ impl Document {
     }
 
     /// Get annotations for a specific page.
-    pub fn annotations(
-        &self,
-        page_index: usize,
-    ) -> Result<Vec<justpdf_core::annot::Annotation>> {
+    pub fn annotations(&self, page_index: usize) -> Result<Vec<justpdf_core::annot::Annotation>> {
         let page_info = self.pages.get(page_index).ok_or(Error::PageOutOfRange {
             index: page_index,
             count: self.pages.len(),
         })?;
-        Ok(justpdf_core::annot::get_annotations(&self.inner, page_info)?)
+        Ok(justpdf_core::annot::get_annotations(
+            &self.inner,
+            page_info,
+        )?)
     }
 
     /// Get form fields (if any).
@@ -283,7 +287,9 @@ impl Document {
 
     /// Get embedded files.
     pub fn embedded_files(&self) -> Result<Vec<justpdf_core::embedded_file::FileSpec>> {
-        Ok(justpdf_core::embedded_file::read_embedded_files(&self.inner)?)
+        Ok(justpdf_core::embedded_file::read_embedded_files(
+            &self.inner,
+        )?)
     }
 
     /// Get digital signature information.
@@ -410,7 +416,9 @@ impl<'a> Page<'a> {
 
     /// Extract text from this page as a plain string.
     pub fn text(&self) -> Result<String> {
-        Ok(justpdf_core::text::extract_page_text_string(self.doc, &self.info)?)
+        Ok(justpdf_core::text::extract_page_text_string(
+            self.doc, &self.info,
+        )?)
     }
 
     /// Extract structured text (with positions, fonts, etc.).
@@ -425,7 +433,9 @@ impl<'a> Page<'a> {
             format: OutputFormat::Png,
             ..Default::default()
         };
-        Ok(justpdf_render::render::render_page_info(self.doc, &self.info, &opts)?)
+        Ok(justpdf_render::render::render_page_info(
+            self.doc, &self.info, &opts,
+        )?)
     }
 
     /// Render to JPEG at the given DPI and quality (0-100).
@@ -435,12 +445,16 @@ impl<'a> Page<'a> {
             format: OutputFormat::Jpeg { quality },
             ..Default::default()
         };
-        Ok(justpdf_render::render::render_page_info(self.doc, &self.info, &opts)?)
+        Ok(justpdf_render::render::render_page_info(
+            self.doc, &self.info, &opts,
+        )?)
     }
 
     /// Render to SVG.
     pub fn render_svg(&self) -> Result<String> {
-        Ok(justpdf_render::render::render_page_to_svg(self.doc, self.index)?)
+        Ok(justpdf_render::render::render_page_to_svg(
+            self.doc, self.index,
+        )?)
     }
 
     /// Render to raw RGBA pixel data.
@@ -450,12 +464,16 @@ impl<'a> Page<'a> {
             format: OutputFormat::RawRgba,
             ..Default::default()
         };
-        Ok(justpdf_render::render::render_page_to_pixmap(self.doc, self.index, &opts)?)
+        Ok(justpdf_render::render::render_page_to_pixmap(
+            self.doc, self.index, &opts,
+        )?)
     }
 
     /// Render with custom options.
     pub fn render(&self, options: &RenderOptions) -> Result<Vec<u8>> {
-        Ok(justpdf_render::render::render_page_info(self.doc, &self.info, options)?)
+        Ok(justpdf_render::render::render_page_info(
+            self.doc, &self.info, options,
+        )?)
     }
 
     /// Render to a file (PNG format).
@@ -469,7 +487,9 @@ impl<'a> Page<'a> {
     pub fn search(&self, query: &str) -> Result<Vec<justpdf_core::text::search::SearchResult>> {
         let page_text = justpdf_core::text::extract_page_text(self.doc, &self.info)?;
         let options = justpdf_core::text::search::SearchOptions::default();
-        Ok(justpdf_core::text::search::search_page(&page_text, query, &options))
+        Ok(justpdf_core::text::search::search_page(
+            &page_text, query, &options,
+        ))
     }
 
     /// Search for text on this page (case-insensitive).
@@ -482,7 +502,9 @@ impl<'a> Page<'a> {
             case_insensitive: true,
             ..Default::default()
         };
-        Ok(justpdf_core::text::search::search_page(&page_text, query, &options))
+        Ok(justpdf_core::text::search::search_page(
+            &page_text, query, &options,
+        ))
     }
 
     /// Get the underlying PageInfo for low-level access.
@@ -637,7 +659,11 @@ impl Document {
 #[cfg(feature = "async")]
 impl<'a> Page<'a> {
     /// Render to PNG and save to a file asynchronously.
-    pub async fn render_to_file_async(&self, path: impl AsRef<std::path::Path>, dpi: f64) -> Result<()> {
+    pub async fn render_to_file_async(
+        &self,
+        path: impl AsRef<std::path::Path>,
+        dpi: f64,
+    ) -> Result<()> {
         let png = self.render_png(dpi)?;
         tokio::fs::write(path, &png).await?;
         Ok(())
@@ -689,7 +715,10 @@ mod tests {
         let doc = Document::from_bytes(pdf).unwrap();
         let page = doc.page(0).unwrap();
         let text = page.text().unwrap();
-        assert!(text.contains("Hello"), "text should contain 'Hello', got: {text}");
+        assert!(
+            text.contains("Hello"),
+            "text should contain 'Hello', got: {text}"
+        );
     }
 
     #[test]
@@ -773,7 +802,10 @@ mod tests {
         let pdf = build_test_pdf();
         let doc = Document::from_bytes(pdf).unwrap();
         let meta = doc.metadata();
-        assert!(meta.iter().any(|(k, v)| k == "Title" && v == "Test Document"));
+        assert!(
+            meta.iter()
+                .any(|(k, v)| k == "Title" && v == "Test Document")
+        );
         assert!(meta.iter().any(|(k, v)| k == "Author" && v == "justpdf"));
     }
 

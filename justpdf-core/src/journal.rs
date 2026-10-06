@@ -111,9 +111,10 @@ impl Journal {
                 obj_num: *obj_num,
                 old_value: old_value.clone(),
             },
-            Operation::DeleteObject { obj_num, old_value: _ } => Operation::AddObject {
-                obj_num: *obj_num,
-            },
+            Operation::DeleteObject {
+                obj_num,
+                old_value: _,
+            } => Operation::AddObject { obj_num: *obj_num },
             Operation::Batch { ops, description } => Operation::Batch {
                 ops: ops.iter().rev().map(Journal::inverse).collect(),
                 description: format!("Undo: {}", description),

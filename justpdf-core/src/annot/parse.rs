@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::object::{IndirectRef, PdfDict, PdfObject};
-use crate::page::{collect_pages, PageInfo, Rect};
+use crate::page::{PageInfo, Rect, collect_pages};
 use crate::parser::PdfDocument;
 
 use super::types::*;
@@ -81,13 +81,9 @@ fn parse_annotation_dict(dict: &PdfDict, obj_ref: Option<&IndirectRef>) -> Optio
         .and_then(|o| o.as_str())
         .map(|b| String::from_utf8_lossy(b).into_owned());
 
-    let flags = AnnotationFlags(
-        dict.get_i64(b"F").unwrap_or(0) as u32,
-    );
+    let flags = AnnotationFlags(dict.get_i64(b"F").unwrap_or(0) as u32);
 
-    let color = dict
-        .get_array(b"C")
-        .and_then(AnnotColor::from_array);
+    let color = dict.get_array(b"C").and_then(AnnotColor::from_array);
 
     let border = parse_border_style(dict);
 
@@ -119,10 +115,7 @@ fn parse_annotation_dict(dict: &PdfDict, obj_ref: Option<&IndirectRef>) -> Optio
 /// Parse border style from /BS dict or /Border array.
 fn parse_border_style(dict: &PdfDict) -> Option<BorderStyle> {
     if let Some(bs) = dict.get_dict(b"BS") {
-        let width = bs
-            .get(b"W")
-            .and_then(|o| o.as_f64())
-            .unwrap_or(1.0);
+        let width = bs.get(b"W").and_then(|o| o.as_f64()).unwrap_or(1.0);
         let style = bs
             .get_name(b"S")
             .map(BorderStyleType::from_name)
@@ -183,8 +176,16 @@ fn parse_annotation_data(dict: &PdfDict, annot_type: &AnnotationType) -> Annotat
                 .get_array(b"L")
                 .map(|arr| arr.iter().filter_map(|o| o.as_f64()).collect::<Vec<_>>())
                 .unwrap_or_default();
-            let start = if l.len() >= 2 { (l[0], l[1]) } else { (0.0, 0.0) };
-            let end = if l.len() >= 4 { (l[2], l[3]) } else { (0.0, 0.0) };
+            let start = if l.len() >= 2 {
+                (l[0], l[1])
+            } else {
+                (0.0, 0.0)
+            };
+            let end = if l.len() >= 4 {
+                (l[2], l[3])
+            } else {
+                (0.0, 0.0)
+            };
 
             let line_endings = dict
                 .get_array(b"LE")
@@ -203,21 +204,10 @@ fn parse_annotation_data(dict: &PdfDict, annot_type: &AnnotationType) -> Annotat
                 })
                 .unwrap_or((LineEndingStyle::None, LineEndingStyle::None));
 
-            let leader_line_length = dict
-                .get(b"LL")
-                .and_then(|o| o.as_f64())
-                .unwrap_or(0.0);
-            let leader_line_extension = dict
-                .get(b"LLE")
-                .and_then(|o| o.as_f64())
-                .unwrap_or(0.0);
-            let caption = dict
-                .get(b"Cap")
-                .and_then(|o| o.as_bool())
-                .unwrap_or(false);
-            let interior_color = dict
-                .get_array(b"IC")
-                .and_then(AnnotColor::from_array);
+            let leader_line_length = dict.get(b"LL").and_then(|o| o.as_f64()).unwrap_or(0.0);
+            let leader_line_extension = dict.get(b"LLE").and_then(|o| o.as_f64()).unwrap_or(0.0);
+            let caption = dict.get(b"Cap").and_then(|o| o.as_bool()).unwrap_or(false);
+            let interior_color = dict.get_array(b"IC").and_then(AnnotColor::from_array);
 
             AnnotationData::Line {
                 start,
@@ -310,9 +300,7 @@ fn parse_annotation_data(dict: &PdfDict, annot_type: &AnnotationType) -> Annotat
                         .collect()
                 })
                 .unwrap_or_default();
-            let interior_color = dict
-                .get_array(b"IC")
-                .and_then(AnnotColor::from_array);
+            let interior_color = dict.get_array(b"IC").and_then(AnnotColor::from_array);
             AnnotationData::Shape {
                 vertices,
                 interior_color,
@@ -328,9 +316,7 @@ fn parse_annotation_data(dict: &PdfDict, annot_type: &AnnotationType) -> Annotat
                 .get(b"Repeat")
                 .and_then(|o| o.as_bool())
                 .unwrap_or(false);
-            let interior_color = dict
-                .get_array(b"IC")
-                .and_then(AnnotColor::from_array);
+            let interior_color = dict.get_array(b"IC").and_then(AnnotColor::from_array);
             AnnotationData::Redact {
                 overlay_text,
                 repeat,

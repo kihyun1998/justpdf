@@ -2,19 +2,16 @@
 
 use der::{Decode, Encode};
 
-use crate::error::Result;
 use super::byterange;
 use super::cert;
 use super::types::*;
+use crate::error::Result;
 
 /// Verify a single PDF signature.
 ///
 /// Computes the digest over the byte ranges, parses the CMS/PKCS#7 data,
 /// verifies the cryptographic signature, and checks the certificate chain.
-pub fn verify_signature(
-    pdf_data: &[u8],
-    sig_info: &SignatureInfo,
-) -> Result<VerificationResult> {
+pub fn verify_signature(pdf_data: &[u8], sig_info: &SignatureInfo) -> Result<VerificationResult> {
     // Check byte range validity
     if sig_info.byte_range.len() != 4 {
         return Ok(VerificationResult {
@@ -113,16 +110,14 @@ pub fn verify_signature(
     };
 
     // Verify the cryptographic signature
-    let signature_valid = verify_cms_signature(
-        &signed_data,
-        signer_info,
-    );
+    let signature_valid = verify_cms_signature(&signed_data, signer_info);
 
     // Validate certificate chain
     let (cert_chain_valid, _root_self_signed) = cert::validate_chain(&sig_info.cert_chain);
 
     // Determine overall validity
-    let validity = if digest_valid && signature_valid && cert_chain_valid && !modified_after_signing {
+    let validity = if digest_valid && signature_valid && cert_chain_valid && !modified_after_signing
+    {
         SignatureValidity::Valid
     } else if !digest_valid {
         SignatureValidity::DigestMismatch
@@ -253,8 +248,8 @@ fn verify_rsa_signature(
     signature: &[u8],
     signer_info: &cms::signed_data::SignerInfo,
 ) -> bool {
-    use rsa::pkcs1v15::VerifyingKey;
     use rsa::RsaPublicKey;
+    use rsa::pkcs1v15::VerifyingKey;
     use signature::Verifier;
 
     // Re-encode SPKI to DER and parse as reference type for RsaPublicKey
@@ -326,7 +321,10 @@ mod tests {
     fn test_verify_invalid_cms() {
         let sig = SignatureInfo {
             field_name: "Sig1".to_string(),
-            field_ref: crate::object::IndirectRef { obj_num: 1, gen_num: 0 },
+            field_ref: crate::object::IndirectRef {
+                obj_num: 1,
+                gen_num: 0,
+            },
             signer_name: None,
             signing_time: None,
             reason: None,

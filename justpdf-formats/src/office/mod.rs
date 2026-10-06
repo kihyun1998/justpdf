@@ -6,9 +6,9 @@
 use std::io::{Cursor, Read};
 use std::path::Path;
 
+use crate::Result;
 use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
 use crate::error::FormatError;
-use crate::Result;
 
 /// Supported Office document types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,8 +54,8 @@ impl OfficeDocument {
     /// Parse Office document from bytes.
     pub fn from_bytes(data: &[u8], doc_type: OfficeType) -> Result<Self> {
         let reader = Cursor::new(data);
-        let mut archive = zip::ZipArchive::new(reader)
-            .map_err(|e| FormatError::Zip(format!("{e}")))?;
+        let mut archive =
+            zip::ZipArchive::new(reader).map_err(|e| FormatError::Zip(format!("{e}")))?;
 
         let (title, author) = extract_office_metadata(&mut archive);
 
@@ -121,9 +121,7 @@ fn extract_office_metadata(
 ///
 /// DOCX structure: word/document.xml contains paragraphs (<w:p>) with runs
 /// (<w:r>) containing text (<w:t>).
-fn extract_docx_text(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-) -> Result<Vec<String>> {
+fn extract_docx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<Vec<String>> {
     let xml = read_zip_text(archive, "word/document.xml")?;
     let doc = roxmltree::Document::parse(&xml)
         .map_err(|e| FormatError::Xml(format!("parsing document.xml: {e}")))?;
@@ -132,9 +130,7 @@ fn extract_docx_text(
 
     for node in doc.descendants() {
         // Match paragraph elements (w:p)
-        if node.tag_name().name() == "p"
-            && is_word_namespace(node.tag_name().namespace())
-        {
+        if node.tag_name().name() == "p" && is_word_namespace(node.tag_name().namespace()) {
             let mut para_text = String::new();
             extract_docx_paragraph_text(&node, &mut para_text);
             paragraphs.push(para_text);
@@ -203,9 +199,7 @@ fn is_word_namespace(ns: Option<&str>) -> bool {
 /// XLSX structure:
 /// - xl/sharedStrings.xml contains the shared string table
 /// - xl/worksheets/sheet*.xml contains cell data referencing the string table
-fn extract_xlsx_text(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-) -> Result<Vec<String>> {
+fn extract_xlsx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<Vec<String>> {
     // Step 1: Parse shared strings table
     let shared_strings = parse_shared_strings(archive)?;
 
@@ -236,9 +230,7 @@ fn extract_xlsx_text(
 }
 
 /// Parse the shared strings table.
-fn parse_shared_strings(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-) -> Result<Vec<String>> {
+fn parse_shared_strings(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<Vec<String>> {
     let xml = match read_zip_text(archive, "xl/sharedStrings.xml") {
         Ok(xml) => xml,
         Err(_) => return Ok(Vec::new()), // Some XLSX files don't have shared strings
@@ -309,10 +301,7 @@ fn parse_xlsx_sheet(
                     "s" => {
                         // Shared string reference
                         if let Ok(idx) = value.parse::<usize>() {
-                            shared_strings
-                                .get(idx)
-                                .cloned()
-                                .unwrap_or_default()
+                            shared_strings.get(idx).cloned().unwrap_or_default()
                         } else {
                             String::new()
                         }
@@ -375,9 +364,7 @@ fn column_index_from_ref(cell_ref: &str) -> u32 {
 /// Extract text from a PPTX file.
 ///
 /// PPTX structure: ppt/slides/slide*.xml contains text in <a:t> elements.
-fn extract_pptx_text(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-) -> Result<Vec<String>> {
+fn extract_pptx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<Vec<String>> {
     // Find all slide files
     let mut slide_names: Vec<String> = Vec::new();
     for i in 0..archive.len() {
@@ -457,10 +444,7 @@ fn extract_slide_number(name: &str) -> u32 {
 }
 
 /// Read a text file from the ZIP archive.
-fn read_zip_text(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-    path: &str,
-) -> Result<String> {
+fn read_zip_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, path: &str) -> Result<String> {
     let mut file = archive
         .by_name(path)
         .map_err(|e| FormatError::Zip(format!("reading {path}: {e}")))?;
@@ -594,7 +578,8 @@ mod tests {
             let opts = zip::write::SimpleFileOptions::default();
 
             zip.start_file("word/document.xml", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
     <w:p>
@@ -604,7 +589,9 @@ mod tests {
       <w:r><w:t>Second paragraph</w:t></w:r>
     </w:p>
   </w:body>
-</w:document>"#).unwrap();
+</w:document>"#,
+            )
+            .unwrap();
 
             zip.start_file("docProps/core.xml", opts).unwrap();
             zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
@@ -627,15 +614,19 @@ mod tests {
             let opts = zip::write::SimpleFileOptions::default();
 
             zip.start_file("xl/sharedStrings.xml", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?>
 <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="3">
   <si><t>Name</t></si>
   <si><t>Age</t></si>
   <si><t>Alice</t></si>
-</sst>"#).unwrap();
+</sst>"#,
+            )
+            .unwrap();
 
             zip.start_file("xl/worksheets/sheet1.xml", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetData>
     <row r="1">
@@ -647,7 +638,9 @@ mod tests {
       <c r="B2"><v>30</v></c>
     </row>
   </sheetData>
-</worksheet>"#).unwrap();
+</worksheet>"#,
+            )
+            .unwrap();
 
             zip.finish().unwrap();
         }
@@ -662,7 +655,8 @@ mod tests {
             let opts = zip::write::SimpleFileOptions::default();
 
             zip.start_file("ppt/slides/slide1.xml", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?>
 <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
        xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <p:cSld>
@@ -675,10 +669,13 @@ mod tests {
       </p:sp>
     </p:spTree>
   </p:cSld>
-</p:sld>"#).unwrap();
+</p:sld>"#,
+            )
+            .unwrap();
 
             zip.start_file("ppt/slides/slide2.xml", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?>
 <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
        xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <p:cSld>
@@ -690,7 +687,9 @@ mod tests {
       </p:sp>
     </p:spTree>
   </p:cSld>
-</p:sld>"#).unwrap();
+</p:sld>"#,
+            )
+            .unwrap();
 
             zip.finish().unwrap();
         }

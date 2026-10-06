@@ -143,7 +143,10 @@ mod tests {
             options: Vec::new(),
             rect: None,
             default_appearance: None,
-            field_ref: IndirectRef { obj_num: 1, gen_num: 0 },
+            field_ref: IndirectRef {
+                obj_num: 1,
+                gen_num: 0,
+            },
             page_obj_num: None,
         };
         assert_eq!(field.value_as_string(), Some("Hello".to_string()));
@@ -161,7 +164,10 @@ mod tests {
             options: Vec::new(),
             rect: None,
             default_appearance: None,
-            field_ref: IndirectRef { obj_num: 1, gen_num: 0 },
+            field_ref: IndirectRef {
+                obj_num: 1,
+                gen_num: 0,
+            },
             page_obj_num: None,
         };
         assert!(checked.is_checked());
@@ -176,7 +182,10 @@ mod tests {
             options: Vec::new(),
             rect: None,
             default_appearance: None,
-            field_ref: IndirectRef { obj_num: 1, gen_num: 0 },
+            field_ref: IndirectRef {
+                obj_num: 1,
+                gen_num: 0,
+            },
             page_obj_num: None,
         };
         assert!(!unchecked.is_checked());

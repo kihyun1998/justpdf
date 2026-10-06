@@ -386,8 +386,13 @@ fn group_target<'a>(stack: &'a mut Vec<GroupState>, root: &'a mut Pixmap) -> &'a
 
 /// Apply an alpha multiplier to a color's existing alpha channel.
 fn apply_alpha(color: Color, alpha: f32) -> Color {
-    Color::from_rgba(color.red(), color.green(), color.blue(), color.alpha() * alpha)
-        .unwrap_or(color)
+    Color::from_rgba(
+        color.red(),
+        color.green(),
+        color.blue(),
+        color.alpha() * alpha,
+    )
+    .unwrap_or(color)
 }
 
 /// Compute the union of two axis-aligned rectangles.

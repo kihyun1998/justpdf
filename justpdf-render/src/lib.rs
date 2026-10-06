@@ -1,5 +1,9 @@
-#![doc(html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png")]
-#![doc(html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png")]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png"
+)]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png"
+)]
 
 pub mod bbox_device;
 pub mod device;
@@ -17,8 +21,8 @@ pub mod svg_device;
 pub use bbox_device::compute_page_bbox;
 pub use error::{RenderError, Result};
 pub use render::{
-    render_page, render_page_to_pixmap, render_page_to_svg, OutputFormat, RenderedPixmap,
-    RenderOptions,
+    OutputFormat, RenderOptions, RenderedPixmap, render_page, render_page_to_pixmap,
+    render_page_to_svg,
 };
 
 #[cfg(feature = "parallel")]

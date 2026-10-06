@@ -6,11 +6,11 @@ use std::path::Path;
 
 use crate::error::Result;
 use crate::object::{IndirectRef, PdfDict, PdfObject};
-use crate::page::{collect_pages, PageInfo};
+use crate::page::{PageInfo, collect_pages};
 use crate::parser::PdfDocument;
+use crate::writer::PdfWriter;
 use crate::writer::page::PageBuilder;
 use crate::writer::serialize::serialize_pdf;
-use crate::writer::PdfWriter;
 
 /// Modifier for existing PDF documents.
 /// Loads all objects from a PdfDocument, allows modification, then saves.
@@ -111,7 +111,8 @@ impl DocumentModifier {
         let pages_obj_num = pages_ref.obj_num;
 
         // Find the Pages dict
-        let pages_obj = self.find_object(pages_obj_num)
+        let pages_obj = self
+            .find_object(pages_obj_num)
             .cloned()
             .unwrap_or(PdfObject::Null);
 
@@ -122,7 +123,8 @@ impl DocumentModifier {
                     let count = kids.len() as i64;
                     pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(kids));
                     pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(count));
-                    self.writer.set_object(pages_obj_num, PdfObject::Dict(pages_dict));
+                    self.writer
+                        .set_object(pages_obj_num, PdfObject::Dict(pages_dict));
                 }
             }
         }
@@ -137,7 +139,8 @@ impl DocumentModifier {
 
         let page_ref = page.build(&mut self.writer, &pages_ref);
 
-        let pages_obj = self.find_object(pages_obj_num)
+        let pages_obj = self
+            .find_object(pages_obj_num)
             .cloned()
             .unwrap_or(PdfObject::Null);
 
@@ -148,7 +151,8 @@ impl DocumentModifier {
                 let count = kids.len() as i64;
                 pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(kids));
                 pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(count));
-                self.writer.set_object(pages_obj_num, PdfObject::Dict(pages_dict));
+                self.writer
+                    .set_object(pages_obj_num, PdfObject::Dict(pages_dict));
             }
         }
 
@@ -160,7 +164,8 @@ impl DocumentModifier {
         let pages_ref = self.find_pages_ref()?;
         let pages_obj_num = pages_ref.obj_num;
 
-        let pages_obj = self.find_object(pages_obj_num)
+        let pages_obj = self
+            .find_object(pages_obj_num)
             .cloned()
             .unwrap_or(PdfObject::Null);
 
@@ -175,7 +180,8 @@ impl DocumentModifier {
                 let count = new_kids.len() as i64;
                 pages_dict.insert(b"Kids".to_vec(), PdfObject::Array(new_kids));
                 pages_dict.insert(b"Count".to_vec(), PdfObject::Integer(count));
-                self.writer.set_object(pages_obj_num, PdfObject::Dict(pages_dict));
+                self.writer
+                    .set_object(pages_obj_num, PdfObject::Dict(pages_dict));
             }
         }
 
@@ -194,15 +200,13 @@ impl DocumentModifier {
         };
 
         // Get or create info dict
-        let info_obj = self.find_object(info_num)
+        let info_obj = self
+            .find_object(info_num)
             .cloned()
             .unwrap_or(PdfObject::Dict(PdfDict::new()));
 
         if let PdfObject::Dict(mut info_dict) = info_obj {
-            info_dict.insert(
-                key.to_vec(),
-                PdfObject::String(value.as_bytes().to_vec()),
-            );
+            info_dict.insert(key.to_vec(), PdfObject::String(value.as_bytes().to_vec()));
             self.writer.set_object(info_num, PdfObject::Dict(info_dict));
         }
     }
@@ -234,7 +238,9 @@ impl DocumentModifier {
         }
 
         // Remove unreachable objects
-        self.writer.objects.retain(|(num, _)| reachable.contains(num));
+        self.writer
+            .objects
+            .retain(|(num, _)| reachable.contains(num));
     }
 
     /// Encrypt the document written by `build` with `config`.

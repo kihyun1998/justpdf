@@ -1,6 +1,6 @@
-use criterion::{criterion_group, criterion_main, Criterion};
-use justpdf_core::parser::PdfDocument;
+use criterion::{Criterion, criterion_group, criterion_main};
 use justpdf_core::page::collect_pages;
+use justpdf_core::parser::PdfDocument;
 use justpdf_core::text::extract_all_text;
 use std::path::Path;
 
@@ -90,5 +90,10 @@ fn bench_corpus_pages(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_corpus_parse, bench_corpus_text, bench_corpus_pages);
+criterion_group!(
+    benches,
+    bench_corpus_parse,
+    bench_corpus_text,
+    bench_corpus_pages
+);
 criterion_main!(benches);

@@ -300,11 +300,7 @@ fn decode_1d_line(reader: &mut BitReader, columns: usize) -> Result<Vec<u8>> {
 // 2D line decoder (Group 3 2D / Group 4)
 // ---------------------------------------------------------------------------
 
-fn decode_2d_line(
-    reader: &mut BitReader,
-    ref_line: &[u8],
-    columns: usize,
-) -> Result<Vec<u8>> {
+fn decode_2d_line(reader: &mut BitReader, ref_line: &[u8], columns: usize) -> Result<Vec<u8>> {
     let mut row = vec![0u8; columns];
     let mut a0: i64 = -1; // current position (-1 = imaginary white pixel before line start)
     let mut is_white = true; // color at a0 (starts white)
@@ -437,10 +433,12 @@ fn read_2d_mode(reader: &mut BitReader) -> Result<Mode2D> {
     // 0000011  -> VR(3)
     // 0000010  -> VL(3)
 
-    let b = reader.read_bit().ok_or_else(|| JustPdfError::StreamDecode {
-        filter: "CCITTFaxDecode".into(),
-        detail: "unexpected end of data in 2D mode".into(),
-    })?;
+    let b = reader
+        .read_bit()
+        .ok_or_else(|| JustPdfError::StreamDecode {
+            filter: "CCITTFaxDecode".into(),
+            detail: "unexpected end of data in 2D mode".into(),
+        })?;
 
     if b == 1 {
         return Ok(Mode2D::Vertical(0));
@@ -588,7 +586,7 @@ fn match_white_code(bits: u32, len: u32) -> Option<usize> {
         (6, 0b000011) => Some(15),
         (6, 0b110100) => Some(16),
         (6, 0b110101) => Some(17),
-        (6, 0b101010) => Some(192), // makeup
+        (6, 0b101010) => Some(192),  // makeup
         (6, 0b101011) => Some(1664), // makeup
         (7, 0b0100111) => Some(13),
         (7, 0b0011000) => Some(18),
@@ -646,22 +644,22 @@ fn match_white_code(bits: u32, len: u32) -> Option<usize> {
         (8, 0b01100111) => Some(640), // makeup
         (9, 0b011001100) => Some(62),
         (9, 0b011001101) => Some(63),
-        (9, 0b011010010) => Some(704), // makeup
-        (9, 0b011010011) => Some(768), // makeup
-        (9, 0b011010100) => Some(832), // makeup
-        (9, 0b011010101) => Some(896), // makeup
-        (9, 0b011010110) => Some(960), // makeup
-        (9, 0b011010111) => Some(1024), // makeup
-        (9, 0b011011000) => Some(1088), // makeup
-        (9, 0b011011001) => Some(1152), // makeup
-        (9, 0b011011010) => Some(1216), // makeup
-        (9, 0b011011011) => Some(1280), // makeup
-        (9, 0b011011100) => Some(1344), // makeup
-        (9, 0b011011101) => Some(1408), // makeup
-        (9, 0b011011110) => Some(1472), // makeup
-        (9, 0b011011111) => Some(1536), // makeup
-        (9, 0b011001000) => Some(1600), // makeup
-        (11, 0b00000001000) => Some(1728), // makeup
+        (9, 0b011010010) => Some(704),      // makeup
+        (9, 0b011010011) => Some(768),      // makeup
+        (9, 0b011010100) => Some(832),      // makeup
+        (9, 0b011010101) => Some(896),      // makeup
+        (9, 0b011010110) => Some(960),      // makeup
+        (9, 0b011010111) => Some(1024),     // makeup
+        (9, 0b011011000) => Some(1088),     // makeup
+        (9, 0b011011001) => Some(1152),     // makeup
+        (9, 0b011011010) => Some(1216),     // makeup
+        (9, 0b011011011) => Some(1280),     // makeup
+        (9, 0b011011100) => Some(1344),     // makeup
+        (9, 0b011011101) => Some(1408),     // makeup
+        (9, 0b011011110) => Some(1472),     // makeup
+        (9, 0b011011111) => Some(1536),     // makeup
+        (9, 0b011001000) => Some(1600),     // makeup
+        (11, 0b00000001000) => Some(1728),  // makeup
         (12, 0b000000010010) => Some(1792), // makeup (shared w/ black)
         (12, 0b000000010011) => Some(1856),
         (12, 0b000000010100) => Some(1920),
@@ -754,18 +752,18 @@ fn match_black_code(bits: u32, len: u32) -> Option<usize> {
         // Black makeup codes
         (10, 0b0000001111) => Some(64),
         // (12, 0b000011001000) already matched above for run=26
-        (12, 0b000011001010) => Some(256), // makeup
-        (12, 0b000011001011) => Some(320), // makeup
-        (12, 0b000011001100) => Some(384), // makeup
-        (12, 0b000011001101) => Some(448), // makeup
-        (13, 0b0000001101100) => Some(512), // makeup
-        (13, 0b0000001101101) => Some(576), // makeup
-        (13, 0b0000001001010) => Some(640), // makeup
-        (13, 0b0000001001011) => Some(704), // makeup
-        (13, 0b0000001001100) => Some(768), // makeup
-        (13, 0b0000001001101) => Some(832), // makeup
-        (13, 0b0000001110010) => Some(896), // makeup
-        (13, 0b0000001110011) => Some(960), // makeup
+        (12, 0b000011001010) => Some(256),   // makeup
+        (12, 0b000011001011) => Some(320),   // makeup
+        (12, 0b000011001100) => Some(384),   // makeup
+        (12, 0b000011001101) => Some(448),   // makeup
+        (13, 0b0000001101100) => Some(512),  // makeup
+        (13, 0b0000001101101) => Some(576),  // makeup
+        (13, 0b0000001001010) => Some(640),  // makeup
+        (13, 0b0000001001011) => Some(704),  // makeup
+        (13, 0b0000001001100) => Some(768),  // makeup
+        (13, 0b0000001001101) => Some(832),  // makeup
+        (13, 0b0000001110010) => Some(896),  // makeup
+        (13, 0b0000001110011) => Some(960),  // makeup
         (13, 0b0000001110100) => Some(1024), // makeup
         (13, 0b0000001110101) => Some(1088), // makeup
         (13, 0b0000001110110) => Some(1152), // makeup
@@ -776,8 +774,8 @@ fn match_black_code(bits: u32, len: u32) -> Option<usize> {
         (13, 0b0000001010101) => Some(1472), // makeup
         (13, 0b0000001011010) => Some(1536), // makeup
         (13, 0b0000001011011) => Some(1600), // makeup
-        (11, 0b00000001000) => Some(1664), // makeup
-        (12, 0b000000010010) => Some(1792), // makeup (shared)
+        (11, 0b00000001000) => Some(1664),   // makeup
+        (12, 0b000000010010) => Some(1792),  // makeup (shared)
         (12, 0b000000010011) => Some(1856),
         (12, 0b000000010100) => Some(1920),
         (12, 0b000000010101) => Some(1984),
@@ -966,18 +964,9 @@ mod tests {
 
         // For a truly blank page, Group 4 just needs EOFB
         let mut params = PdfDict::new();
-        params.insert(
-            b"K".to_vec(),
-            crate::object::PdfObject::Integer(-1),
-        );
-        params.insert(
-            b"Columns".to_vec(),
-            crate::object::PdfObject::Integer(8),
-        );
-        params.insert(
-            b"Rows".to_vec(),
-            crate::object::PdfObject::Integer(1),
-        );
+        params.insert(b"K".to_vec(), crate::object::PdfObject::Integer(-1));
+        params.insert(b"Columns".to_vec(), crate::object::PdfObject::Integer(8));
+        params.insert(b"Rows".to_vec(), crate::object::PdfObject::Integer(1));
         params.insert(
             b"EndOfBlock".to_vec(),
             crate::object::PdfObject::Bool(false),

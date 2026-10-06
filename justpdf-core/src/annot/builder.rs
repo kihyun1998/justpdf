@@ -250,18 +250,9 @@ impl AnnotationBuilder {
 
     pub fn interior_color(mut self, color: AnnotColor) -> Self {
         match &mut self.data {
-            AnnotationData::Line {
-                interior_color,
-                ..
-            }
-            | AnnotationData::Shape {
-                interior_color,
-                ..
-            }
-            | AnnotationData::Redact {
-                interior_color,
-                ..
-            } => {
+            AnnotationData::Line { interior_color, .. }
+            | AnnotationData::Shape { interior_color, .. }
+            | AnnotationData::Redact { interior_color, .. } => {
                 *interior_color = Some(color);
             }
             _ => {}
@@ -270,22 +261,14 @@ impl AnnotationBuilder {
     }
 
     pub fn overlay_text(mut self, text: &str) -> Self {
-        if let AnnotationData::Redact {
-            overlay_text,
-            ..
-        } = &mut self.data
-        {
+        if let AnnotationData::Redact { overlay_text, .. } = &mut self.data {
             *overlay_text = Some(text.to_string());
         }
         self
     }
 
     pub fn justification(mut self, q: i64) -> Self {
-        if let AnnotationData::FreeText {
-            justification,
-            ..
-        } = &mut self.data
-        {
+        if let AnnotationData::FreeText { justification, .. } = &mut self.data {
             *justification = q;
         }
         self
@@ -352,9 +335,7 @@ impl AnnotationBuilder {
                 if !quad_points.is_empty() {
                     dict.insert(
                         b"QuadPoints".to_vec(),
-                        PdfObject::Array(
-                            quad_points.iter().map(|&v| PdfObject::Real(v)).collect(),
-                        ),
+                        PdfObject::Array(quad_points.iter().map(|&v| PdfObject::Real(v)).collect()),
                     );
                 }
             }
@@ -413,10 +394,7 @@ impl AnnotationBuilder {
                 if let Some(uri) = uri {
                     let mut action = PdfDict::new();
                     action.insert(b"S".to_vec(), PdfObject::Name(b"URI".to_vec()));
-                    action.insert(
-                        b"URI".to_vec(),
-                        PdfObject::String(uri.as_bytes().to_vec()),
-                    );
+                    action.insert(b"URI".to_vec(), PdfObject::String(uri.as_bytes().to_vec()));
                     dict.insert(b"A".to_vec(), PdfObject::Dict(action));
                 } else if let Some(dest) = dest {
                     dict.insert(b"Dest".to_vec(), dest.clone());
@@ -574,8 +552,7 @@ mod tests {
             ury: 220.0,
         };
         let qp = vec![100.0, 220.0, 300.0, 220.0, 100.0, 200.0, 300.0, 200.0];
-        let builder =
-            AnnotationBuilder::highlight(rect, qp, AnnotColor::Rgb(1.0, 1.0, 0.0));
+        let builder = AnnotationBuilder::highlight(rect, qp, AnnotColor::Rgb(1.0, 1.0, 0.0));
         let dict = builder.build_dict();
 
         assert_eq!(dict.get_name(b"Subtype"), Some(b"Highlight".as_slice()));

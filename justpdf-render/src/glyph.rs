@@ -1,4 +1,4 @@
-use tiny_skia::{PathBuilder, Path};
+use tiny_skia::{Path, PathBuilder};
 use ttf_parser::Face;
 
 /// Build a tiny-skia Path from a glyph outline.

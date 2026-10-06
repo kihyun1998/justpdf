@@ -46,10 +46,7 @@ pub fn rebuild_xref(data: &[u8]) -> Result<Xref> {
     // Ensure /Size is present in the trailer.
     let mut trailer = trailer;
     if trailer.get_i64(b"Size").is_none() {
-        trailer.insert(
-            b"Size".to_vec(),
-            PdfObject::Integer((max_obj + 1) as i64),
-        );
+        trailer.insert(b"Size".to_vec(), PdfObject::Integer((max_obj + 1) as i64));
     }
 
     xref.trailer = trailer;
@@ -135,7 +132,10 @@ fn match_obj_header(data: &[u8], pos: usize) -> Option<(u32, u16, usize)> {
     if i == num_start || i >= len {
         return None;
     }
-    let obj_num: u32 = std::str::from_utf8(&data[num_start..i]).ok()?.parse().ok()?;
+    let obj_num: u32 = std::str::from_utf8(&data[num_start..i])
+        .ok()?
+        .parse()
+        .ok()?;
 
     // Whitespace between numbers.
     if i >= len || data[i] != b' ' {
@@ -153,7 +153,10 @@ fn match_obj_header(data: &[u8], pos: usize) -> Option<(u32, u16, usize)> {
     if i == gen_start || i >= len {
         return None;
     }
-    let gen_num: u16 = std::str::from_utf8(&data[gen_start..i]).ok()?.parse().ok()?;
+    let gen_num: u16 = std::str::from_utf8(&data[gen_start..i])
+        .ok()?
+        .parse()
+        .ok()?;
 
     // Whitespace before `obj`.
     if i >= len || data[i] != b' ' {
@@ -217,10 +220,7 @@ fn find_trailer_dict(data: &[u8]) -> Result<PdfDict> {
 /// When no explicit trailer can be found, build a minimal one by
 /// locating the catalog object (an object whose dictionary contains
 /// `/Type /Catalog`).
-fn synthesise_trailer(
-    data: &[u8],
-    entries: &HashMap<u32, (usize, u16)>,
-) -> Result<PdfDict> {
+fn synthesise_trailer(data: &[u8], entries: &HashMap<u32, (usize, u16)>) -> Result<PdfDict> {
     let mut root_ref: Option<IndirectRef> = None;
 
     for (&obj_num, &(offset, gen_num)) in entries {
@@ -237,14 +237,8 @@ fn synthesise_trailer(
     let max_obj = entries.keys().copied().max().unwrap_or(0);
 
     let mut trailer = PdfDict::new();
-    trailer.insert(
-        b"Root".to_vec(),
-        PdfObject::Reference(root),
-    );
-    trailer.insert(
-        b"Size".to_vec(),
-        PdfObject::Integer((max_obj + 1) as i64),
-    );
+    trailer.insert(b"Root".to_vec(), PdfObject::Reference(root));
+    trailer.insert(b"Size".to_vec(), PdfObject::Integer((max_obj + 1) as i64));
 
     Ok(trailer)
 }
@@ -323,9 +317,7 @@ mod tests {
         pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
 
         let obj2_offset = pdf.len();
-        pdf.extend_from_slice(
-            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
-        );
+        pdf.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
 
         let obj3_offset = pdf.len();
         pdf.extend_from_slice(
@@ -395,10 +387,7 @@ mod tests {
         let mut data = build_minimal_pdf();
 
         // Remove everything from `xref` onward so there is no trailer.
-        if let Some(pos) = data
-            .windows(4)
-            .position(|w| w == b"xref")
-        {
+        if let Some(pos) = data.windows(4).position(|w| w == b"xref") {
             data.truncate(pos);
         }
 
@@ -426,12 +415,8 @@ mod tests {
         // Build a PDF body with no trailer at all.
         let mut data = Vec::new();
         data.extend_from_slice(b"%PDF-1.7\n");
-        data.extend_from_slice(
-            b"5 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n",
-        );
-        data.extend_from_slice(
-            b"10 0 obj\n<< /Type /Catalog /Pages 5 0 R >>\nendobj\n",
-        );
+        data.extend_from_slice(b"5 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n");
+        data.extend_from_slice(b"10 0 obj\n<< /Type /Catalog /Pages 5 0 R >>\nendobj\n");
 
         let repaired = rebuild_xref(&data).unwrap();
 

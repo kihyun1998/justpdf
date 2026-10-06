@@ -270,9 +270,13 @@ mod tests {
         let mut objects = vec![
             (1, PdfObject::Integer(42)),
             (2, PdfObject::Integer(42)), // duplicate of 1
-            (3, PdfObject::Array(vec![
-                PdfObject::Reference(IndirectRef { obj_num: 2, gen_num: 0 }),
-            ])),
+            (
+                3,
+                PdfObject::Array(vec![PdfObject::Reference(IndirectRef {
+                    obj_num: 2,
+                    gen_num: 0,
+                })]),
+            ),
         ];
 
         let stats = clean_objects(&mut objects);
@@ -313,7 +317,13 @@ mod tests {
     #[test]
     fn test_clean_preserves_referenced_null() {
         let mut objects = vec![
-            (1, PdfObject::Reference(IndirectRef { obj_num: 2, gen_num: 0 })),
+            (
+                1,
+                PdfObject::Reference(IndirectRef {
+                    obj_num: 2,
+                    gen_num: 0,
+                }),
+            ),
             (2, PdfObject::Null), // referenced null -> kept
         ];
 
@@ -328,7 +338,13 @@ mod tests {
         let mut objects = vec![
             (1, PdfObject::Integer(10)),
             (5, PdfObject::Integer(20)),
-            (10, PdfObject::Reference(IndirectRef { obj_num: 5, gen_num: 0 })),
+            (
+                10,
+                PdfObject::Reference(IndirectRef {
+                    obj_num: 5,
+                    gen_num: 0,
+                }),
+            ),
         ];
 
         compact_object_numbers(&mut objects);
@@ -365,8 +381,8 @@ mod tests {
     fn test_clean_stats_correct() {
         let mut objects = vec![
             (1, PdfObject::Integer(42)),
-            (2, PdfObject::Integer(42)),  // dup
-            (3, PdfObject::Null),          // unreferenced null
+            (2, PdfObject::Integer(42)), // dup
+            (3, PdfObject::Null),        // unreferenced null
             (4, PdfObject::String(b"keep".to_vec())),
             (5, PdfObject::Integer(99)),
         ];
@@ -386,10 +402,7 @@ mod tests {
         let mut d2 = PdfDict::new();
         d2.insert(b"Key".to_vec(), PdfObject::Integer(1));
 
-        let mut objects = vec![
-            (1, PdfObject::Dict(d1)),
-            (2, PdfObject::Dict(d2)),
-        ];
+        let mut objects = vec![(1, PdfObject::Dict(d1)), (2, PdfObject::Dict(d2))];
 
         let removed = dedup_objects(&mut objects);
         assert_eq!(removed, 1);
@@ -401,16 +414,17 @@ mod tests {
         let mut remap = HashMap::new();
         remap.insert(5u32, 1u32);
 
-        let mut obj = PdfObject::Array(vec![
-            PdfObject::Dict({
-                let mut d = PdfDict::new();
-                d.insert(
-                    b"Ref".to_vec(),
-                    PdfObject::Reference(IndirectRef { obj_num: 5, gen_num: 0 }),
-                );
-                d
-            }),
-        ]);
+        let mut obj = PdfObject::Array(vec![PdfObject::Dict({
+            let mut d = PdfDict::new();
+            d.insert(
+                b"Ref".to_vec(),
+                PdfObject::Reference(IndirectRef {
+                    obj_num: 5,
+                    gen_num: 0,
+                }),
+            );
+            d
+        })]);
 
         rewrite_references(&mut obj, &remap, None);
 
@@ -517,10 +531,7 @@ mod tests {
             PdfObject::Name(b"Pretendard Black".to_vec()),
         );
 
-        let mut objects = vec![
-            (1, PdfObject::Dict(d1)),
-            (2, PdfObject::Dict(d2)),
-        ];
+        let mut objects = vec![(1, PdfObject::Dict(d1)), (2, PdfObject::Dict(d2))];
 
         let removed = dedup_objects(&mut objects);
         assert_eq!(removed, 1, "Identical dicts with space-names should dedup");
@@ -540,10 +551,7 @@ mod tests {
             PdfObject::Name(b"Pretendard Bold".to_vec()),
         );
 
-        let mut objects = vec![
-            (1, PdfObject::Dict(d1)),
-            (2, PdfObject::Dict(d2)),
-        ];
+        let mut objects = vec![(1, PdfObject::Dict(d1)), (2, PdfObject::Dict(d2))];
 
         let removed = dedup_objects(&mut objects);
         assert_eq!(removed, 0, "Different names must not dedup");

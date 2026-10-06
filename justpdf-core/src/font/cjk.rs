@@ -344,10 +344,7 @@ pub fn build_cid_font(
         b"CIDSystemInfo".to_vec(),
         PdfObject::Dict(sys_info.to_pdf_dict()),
     );
-    cid_font_dict.insert(
-        b"FontDescriptor".to_vec(),
-        PdfObject::Reference(desc_ref),
-    );
+    cid_font_dict.insert(b"FontDescriptor".to_vec(), PdfObject::Reference(desc_ref));
     if !w_array.is_empty() {
         cid_font_dict.insert(b"W".to_vec(), PdfObject::Array(w_array));
     }
@@ -360,10 +357,8 @@ pub fn build_cid_font(
     let cid_font_ref = writer.add_object(PdfObject::Dict(cid_font_dict));
 
     // 5. Generate the ToUnicode CMap.
-    let to_unicode_mappings: Vec<(u16, char)> = used_chars
-        .iter()
-        .map(|&(ch, gid)| (gid, ch))
-        .collect();
+    let to_unicode_mappings: Vec<(u16, char)> =
+        used_chars.iter().map(|&(ch, gid)| (gid, ch)).collect();
     let cmap_data = generate_to_unicode_cmap(&to_unicode_mappings);
     let (cmap_dict, cmap_encoded) = make_stream(&cmap_data, true);
     let to_unicode_ref = writer.add_object(PdfObject::Stream {
@@ -375,10 +370,7 @@ pub fn build_cid_font(
     let mut type0_dict = PdfDict::new();
     type0_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
     type0_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Type0".to_vec()));
-    type0_dict.insert(
-        b"BaseFont".to_vec(),
-        PdfObject::Name(base_font_bytes),
-    );
+    type0_dict.insert(b"BaseFont".to_vec(), PdfObject::Name(base_font_bytes));
     type0_dict.insert(
         b"Encoding".to_vec(),
         PdfObject::Name(b"Identity-H".to_vec()),
@@ -387,10 +379,7 @@ pub fn build_cid_font(
         b"DescendantFonts".to_vec(),
         PdfObject::Array(vec![PdfObject::Reference(cid_font_ref)]),
     );
-    type0_dict.insert(
-        b"ToUnicode".to_vec(),
-        PdfObject::Reference(to_unicode_ref),
-    );
+    type0_dict.insert(b"ToUnicode".to_vec(), PdfObject::Reference(to_unicode_ref));
 
     Some(writer.add_object(PdfObject::Dict(type0_dict)))
 }
@@ -473,13 +462,19 @@ mod tests {
     #[test]
     fn test_detect_japanese_hiragana() {
         // Contains Hiragana characters
-        assert_eq!(detect_ordering("\u{3042}\u{3044}\u{3046}"), CJKOrdering::Japan1);
+        assert_eq!(
+            detect_ordering("\u{3042}\u{3044}\u{3046}"),
+            CJKOrdering::Japan1
+        );
     }
 
     #[test]
     fn test_detect_japanese_katakana() {
         // Contains Katakana characters
-        assert_eq!(detect_ordering("\u{30A2}\u{30A4}\u{30A6}"), CJKOrdering::Japan1);
+        assert_eq!(
+            detect_ordering("\u{30A2}\u{30A4}\u{30A6}"),
+            CJKOrdering::Japan1
+        );
     }
 
     #[test]
@@ -509,7 +504,10 @@ mod tests {
     #[test]
     fn test_detect_simplified_chinese_cjk_only() {
         // CJK Unified Ideographs without script-specific indicators -> GB1
-        assert_eq!(detect_ordering("\u{4E00}\u{4E8C}\u{4E09}"), CJKOrdering::GB1);
+        assert_eq!(
+            detect_ordering("\u{4E00}\u{4E8C}\u{4E09}"),
+            CJKOrdering::GB1
+        );
     }
 
     #[test]
@@ -629,10 +627,7 @@ mod tests {
         // Should produce: [5 [600]]
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], PdfObject::Integer(5));
-        assert_eq!(
-            result[1],
-            PdfObject::Array(vec![PdfObject::Integer(600)])
-        );
+        assert_eq!(result[1], PdfObject::Array(vec![PdfObject::Integer(600)]));
     }
 
     #[test]
@@ -657,15 +652,9 @@ mod tests {
         // Should produce: [1 [500] 5 [600]]
         assert_eq!(result.len(), 4);
         assert_eq!(result[0], PdfObject::Integer(1));
-        assert_eq!(
-            result[1],
-            PdfObject::Array(vec![PdfObject::Integer(500)])
-        );
+        assert_eq!(result[1], PdfObject::Array(vec![PdfObject::Integer(500)]));
         assert_eq!(result[2], PdfObject::Integer(5));
-        assert_eq!(
-            result[3],
-            PdfObject::Array(vec![PdfObject::Integer(600)])
-        );
+        assert_eq!(result[3], PdfObject::Array(vec![PdfObject::Integer(600)]));
     }
 
     #[test]
@@ -742,10 +731,7 @@ mod tests {
         let cid_font_obj = &writer.objects[2].1;
         if let PdfObject::Dict(dict) = cid_font_obj {
             assert_eq!(dict.get_name(b"Subtype"), Some(b"CIDFontType2".as_slice()));
-            assert_eq!(
-                dict.get_name(b"CIDToGIDMap"),
-                Some(b"Identity".as_slice())
-            );
+            assert_eq!(dict.get_name(b"CIDToGIDMap"), Some(b"Identity".as_slice()));
             assert!(dict.get(b"W").is_some());
             assert_eq!(dict.get_i64(b"DW"), Some(1000));
         } else {
@@ -755,14 +741,8 @@ mod tests {
         // Verify the font descriptor
         let desc_obj = &writer.objects[1].1;
         if let PdfObject::Dict(dict) = desc_obj {
-            assert_eq!(
-                dict.get_name(b"Type"),
-                Some(b"FontDescriptor".as_slice())
-            );
-            assert_eq!(
-                dict.get_name(b"FontName"),
-                Some(b"TestCJKFont".as_slice())
-            );
+            assert_eq!(dict.get_name(b"Type"), Some(b"FontDescriptor".as_slice()));
+            assert_eq!(dict.get_name(b"FontName"), Some(b"TestCJKFont".as_slice()));
             assert!(dict.get(b"FontFile2").is_some());
         } else {
             panic!("Expected FontDescriptor to be a Dict");

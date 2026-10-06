@@ -2,8 +2,8 @@
 
 use sha2::Digest;
 
-use crate::error::{JustPdfError, Result};
 use super::types::DigestAlgorithm;
+use crate::error::{JustPdfError, Result};
 
 /// Compute the digest over the signed byte ranges of a PDF.
 ///
@@ -31,7 +31,9 @@ pub fn compute_byterange_digest(
             return Err(JustPdfError::SignatureError {
                 detail: format!(
                     "ByteRange exceeds file size: offset={} length={} file_size={}",
-                    offset, length, pdf_data.len()
+                    offset,
+                    length,
+                    pdf_data.len()
                 ),
             });
         }
@@ -66,10 +68,7 @@ pub fn compute_byterange_digest(
 ///
 /// If the signed byte range doesn't extend to the end of the file,
 /// there are extra bytes appended after signing.
-pub fn detect_modification_after_signing(
-    pdf_data: &[u8],
-    byte_range: &[i64],
-) -> bool {
+pub fn detect_modification_after_signing(pdf_data: &[u8], byte_range: &[i64]) -> bool {
     if byte_range.len() != 4 {
         return false;
     }
@@ -89,7 +88,8 @@ mod tests {
     #[test]
     fn test_compute_digest_sha256() {
         // 80 bytes total: [0..36] + skip [36..57] + [57..80]
-        let data = b"Hello, World! This is signed content.SIGNATURE_PLACEHOLDERMore signed content!!";
+        let data =
+            b"Hello, World! This is signed content.SIGNATURE_PLACEHOLDERMore signed content!!";
         assert_eq!(data.len(), 79);
         let byte_range = vec![0i64, 36, 57, 22];
         let digest = compute_byterange_digest(data, &byte_range, DigestAlgorithm::Sha256).unwrap();
@@ -126,9 +126,15 @@ mod tests {
     #[test]
     fn test_detect_modification() {
         // File is 100 bytes, signed range covers [0,40]+[60,40] = ends at 100
-        assert!(!detect_modification_after_signing(&[0u8; 100], &[0, 40, 60, 40]));
+        assert!(!detect_modification_after_signing(
+            &[0u8; 100],
+            &[0, 40, 60, 40]
+        ));
 
         // File is 120 bytes, signed range ends at 100 => modified
-        assert!(detect_modification_after_signing(&[0u8; 120], &[0, 40, 60, 40]));
+        assert!(detect_modification_after_signing(
+            &[0u8; 120],
+            &[0, 40, 60, 40]
+        ));
     }
 }

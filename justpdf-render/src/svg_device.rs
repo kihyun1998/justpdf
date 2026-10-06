@@ -3,13 +3,13 @@
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 
+use justpdf_core::PdfDocument;
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
 use justpdf_core::font::{FontInfo, ToUnicodeCMap, parse_font_info};
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::page::PageInfo;
-use justpdf_core::PdfDocument;
 
 use crate::error::{RenderError, Result};
 use crate::graphics_state::{FontKey, GraphicsState, LineCap, LineJoin, Matrix, PdfBlendMode};
@@ -321,8 +321,7 @@ impl<'a> SvgRenderer<'a> {
             "d" => {
                 if operands.len() >= 2 {
                     if let Some(arr) = operands[0].as_array() {
-                        self.state.dash_pattern =
-                            arr.iter().filter_map(|o| o.as_f64()).collect();
+                        self.state.dash_pattern = arr.iter().filter_map(|o| o.as_f64()).collect();
                     }
                     self.state.dash_phase = f(operands, 1);
                 }
@@ -404,10 +403,14 @@ impl<'a> SvgRenderer<'a> {
                     let _ = write!(
                         pd,
                         "M{} {} L{} {} L{} {} L{} {} Z ",
-                        fmt_f(x), fmt_f(y),
-                        fmt_f(x + w), fmt_f(y),
-                        fmt_f(x + w), fmt_f(y + h),
-                        fmt_f(x), fmt_f(y + h),
+                        fmt_f(x),
+                        fmt_f(y),
+                        fmt_f(x + w),
+                        fmt_f(y),
+                        fmt_f(x + w),
+                        fmt_f(y + h),
+                        fmt_f(x),
+                        fmt_f(y + h),
                     );
                 }
             }
@@ -698,7 +701,12 @@ impl<'a> SvgRenderer<'a> {
         let m = self.effective_transform();
         format!(
             "transform=\"matrix({},{},{},{},{},{})\"",
-            fmt_f(m.a), fmt_f(m.b), fmt_f(m.c), fmt_f(m.d), fmt_f(m.e), fmt_f(m.f)
+            fmt_f(m.a),
+            fmt_f(m.b),
+            fmt_f(m.c),
+            fmt_f(m.d),
+            fmt_f(m.e),
+            fmt_f(m.f)
         )
     }
 
@@ -728,7 +736,11 @@ impl<'a> SvgRenderer<'a> {
             let _ = write!(attrs, " fill-opacity=\"{}\"", fmt_f(self.state.fill_alpha));
         }
         if for_stroke && self.state.stroke_alpha < 1.0 {
-            let _ = write!(attrs, " stroke-opacity=\"{}\"", fmt_f(self.state.stroke_alpha));
+            let _ = write!(
+                attrs,
+                " stroke-opacity=\"{}\"",
+                fmt_f(self.state.stroke_alpha)
+            );
         }
         attrs
     }
@@ -776,13 +788,21 @@ impl<'a> SvgRenderer<'a> {
             LineJoin::Bevel => attrs.push_str(" stroke-linejoin=\"bevel\""),
         }
         if self.state.miter_limit != 4.0 {
-            let _ = write!(attrs, " stroke-miterlimit=\"{}\"", fmt_f(self.state.miter_limit));
+            let _ = write!(
+                attrs,
+                " stroke-miterlimit=\"{}\"",
+                fmt_f(self.state.miter_limit)
+            );
         }
         if !self.state.dash_pattern.is_empty() {
             let dashes: Vec<String> = self.state.dash_pattern.iter().map(|d| fmt_f(*d)).collect();
             let _ = write!(attrs, " stroke-dasharray=\"{}\"", dashes.join(","));
             if self.state.dash_phase != 0.0 {
-                let _ = write!(attrs, " stroke-dashoffset=\"{}\"", fmt_f(self.state.dash_phase));
+                let _ = write!(
+                    attrs,
+                    " stroke-dashoffset=\"{}\"",
+                    fmt_f(self.state.dash_phase)
+                );
             }
         }
         attrs
@@ -802,7 +822,13 @@ impl<'a> SvgRenderer<'a> {
             };
             self.elements.push(format!(
                 "<path d=\"{}\" fill=\"{}\"{} stroke=\"none\" {}{}{}{}/>",
-                pd.trim(), fill, rule, transform, opacity, clip, bm,
+                pd.trim(),
+                fill,
+                rule,
+                transform,
+                opacity,
+                clip,
+                bm,
             ));
         }
     }
@@ -817,7 +843,13 @@ impl<'a> SvgRenderer<'a> {
             let stroke_attrs = self.stroke_attrs();
             self.elements.push(format!(
                 "<path d=\"{}\" fill=\"none\" stroke=\"{}\"{}{}{}{}{}/>",
-                pd.trim(), stroke, stroke_attrs, transform, opacity, clip, bm,
+                pd.trim(),
+                stroke,
+                stroke_attrs,
+                transform,
+                opacity,
+                clip,
+                bm,
             ));
         }
     }
@@ -838,7 +870,15 @@ impl<'a> SvgRenderer<'a> {
             };
             self.elements.push(format!(
                 "<path d=\"{}\" fill=\"{}\"{} stroke=\"{}\"{}{}{}{}{}/>",
-                pd.trim(), fill, rule, stroke, stroke_attrs, transform, opacity, clip, bm,
+                pd.trim(),
+                fill,
+                rule,
+                stroke,
+                stroke_attrs,
+                transform,
+                opacity,
+                clip,
+                bm,
             ));
         }
     }
@@ -854,7 +894,10 @@ impl<'a> SvgRenderer<'a> {
             };
             self.defs.push(format!(
                 "<clipPath id=\"{}\"><path d=\"{}\"{}  {}/></clipPath>",
-                clip_id, pd.trim(), rule, transform,
+                clip_id,
+                pd.trim(),
+                rule,
+                transform,
             ));
             self.active_clip_id = Some(clip_id);
         }
@@ -904,7 +947,10 @@ impl<'a> SvgRenderer<'a> {
         let cmap = font.cmap.as_ref();
 
         // Get widths
-        let widths: Vec<f64> = char_codes.iter().map(|code| font.info.widths.get_width(*code)).collect();
+        let widths: Vec<f64> = char_codes
+            .iter()
+            .map(|code| font.info.widths.get_width(*code))
+            .collect();
 
         // Get font family name from font info
         let font_family = extract_font_family(&font.info);
@@ -977,10 +1023,14 @@ impl<'a> SvgRenderer<'a> {
 
                         let pd = format!(
                             "M{} {} L{} {} L{} {} L{} {} Z",
-                            fmt_f(rx), fmt_f(ry),
-                            fmt_f(rx + rw), fmt_f(ry),
-                            fmt_f(rx + rw), fmt_f(ry + rh),
-                            fmt_f(rx), fmt_f(ry + rh),
+                            fmt_f(rx),
+                            fmt_f(ry),
+                            fmt_f(rx + rw),
+                            fmt_f(ry),
+                            fmt_f(rx + rw),
+                            fmt_f(ry + rh),
+                            fmt_f(rx),
+                            fmt_f(ry + rh),
                         );
 
                         self.elements.push(format!(

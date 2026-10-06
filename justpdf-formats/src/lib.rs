@@ -8,12 +8,16 @@
 //! - **CBZ** — Comic Book Archive (feature `cbz`)
 //! - **Plain Text** → PDF (feature `plaintext`)
 
-#![doc(html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png")]
-#![doc(html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png")]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png"
+)]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png"
+)]
 
-pub mod error;
 pub mod common;
 pub mod detect;
+pub mod error;
 
 #[cfg(feature = "plaintext")]
 pub mod plaintext;
@@ -39,5 +43,5 @@ pub mod mobi;
 #[cfg(feature = "fb2")]
 pub mod fb2;
 
+pub use common::{FormatDocument, FormatMetadata, FormatPage};
 pub use error::{FormatError, Result};
-pub use common::{FormatDocument, FormatPage, FormatMetadata};

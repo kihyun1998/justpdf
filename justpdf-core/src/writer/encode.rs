@@ -35,17 +35,11 @@ pub fn make_stream(data: &[u8], compress: bool) -> (PdfDict, Vec<u8>) {
             b"Length".to_vec(),
             PdfObject::Integer(compressed.len() as i64),
         );
-        dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"FlateDecode".to_vec()),
-        );
+        dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
         (dict, compressed)
     } else {
         let mut dict = PdfDict::new();
-        dict.insert(
-            b"Length".to_vec(),
-            PdfObject::Integer(data.len() as i64),
-        );
+        dict.insert(b"Length".to_vec(), PdfObject::Integer(data.len() as i64));
         (dict, data.to_vec())
     }
 }
@@ -92,10 +86,7 @@ mod tests {
         let data = b"some content to compress";
         let (dict, out_data) = make_stream(data, true);
 
-        assert_eq!(
-            dict.get_i64(b"Length"),
-            Some(out_data.len() as i64)
-        );
+        assert_eq!(dict.get_i64(b"Length"), Some(out_data.len() as i64));
         assert_eq!(dict.get_name(b"Filter"), Some(b"FlateDecode".as_slice()));
 
         // Verify decompression gives back original

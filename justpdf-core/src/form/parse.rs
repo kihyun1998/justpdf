@@ -41,9 +41,7 @@ pub fn parse_acroform(doc: &PdfDocument) -> Result<Option<AcroForm>> {
         .and_then(|o| o.as_bool())
         .unwrap_or(false);
 
-    let sig_flags = acroform_dict
-        .get_i64(b"SigFlags")
-        .unwrap_or(0) as u32;
+    let sig_flags = acroform_dict.get_i64(b"SigFlags").unwrap_or(0) as u32;
 
     let default_appearance = acroform_dict
         .get(b"DA")
@@ -52,12 +50,14 @@ pub fn parse_acroform(doc: &PdfDocument) -> Result<Option<AcroForm>> {
 
     let fields_arr = match acroform_dict.get(b"Fields") {
         Some(PdfObject::Array(arr)) => arr.clone(),
-        _ => return Ok(Some(AcroForm {
-            fields: Vec::new(),
-            need_appearances,
-            sig_flags,
-            default_appearance,
-        })),
+        _ => {
+            return Ok(Some(AcroForm {
+                fields: Vec::new(),
+                need_appearances,
+                sig_flags,
+                default_appearance,
+            }));
+        }
     };
 
     let mut fields = Vec::new();
@@ -134,9 +134,7 @@ fn walk_field_tree(
     };
 
     // Get field type — either from this dict or inherited
-    let ft = dict
-        .get_name(b"FT")
-        .or(inherited.ft);
+    let ft = dict.get_name(b"FT").or(inherited.ft);
 
     // Get field flags — either from this dict or inherited
     let ff = dict
@@ -222,9 +220,7 @@ fn walk_field_tree(
         })
         .unwrap_or_default();
 
-    let rect = dict
-        .get_array(b"Rect")
-        .and_then(Rect::from_pdf_array);
+    let rect = dict.get_array(b"Rect").and_then(Rect::from_pdf_array);
 
     fields.push(FormField {
         name: full_name,

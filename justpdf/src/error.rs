@@ -28,7 +28,10 @@ impl fmt::Display for Error {
             Error::Render(e) => write!(f, "{e}"),
             Error::Io(e) => write!(f, "{e}"),
             Error::PageOutOfRange { index, count } => {
-                write!(f, "page index {index} out of range (document has {count} pages)")
+                write!(
+                    f,
+                    "page index {index} out of range (document has {count} pages)"
+                )
             }
         }
     }

@@ -157,18 +157,18 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict) -> Result<DecodedImage> {
             })
         }
         Some(b"JBIG2Decode") => {
-            let pages = justbig2::decode_embedded(raw_data).map_err(|e| {
-                JustPdfError::StreamDecode {
+            let pages =
+                justbig2::decode_embedded(raw_data).map_err(|e| JustPdfError::StreamDecode {
                     filter: "JBIG2Decode".into(),
                     detail: format!("JBIG2 decode error: {e}"),
-                }
-            })?;
-            let page = pages.into_iter().next().ok_or_else(|| {
-                JustPdfError::StreamDecode {
+                })?;
+            let page = pages
+                .into_iter()
+                .next()
+                .ok_or_else(|| JustPdfError::StreamDecode {
                     filter: "JBIG2Decode".into(),
                     detail: "no pages decoded from JBIG2 stream".into(),
-                }
-            })?;
+                })?;
             // JBIG2: 1BPP packed, MSB-first, stride-aligned rows
             // Expand to 1-byte-per-pixel grayscale
             // JBIG2 convention: 1=black→0x00, 0=white→0xFF

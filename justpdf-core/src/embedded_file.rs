@@ -70,10 +70,7 @@ fn obj_to_string(obj: &PdfObject) -> Option<String> {
 }
 
 /// Parse a single FileSpec dictionary into a `FileSpec`.
-fn parse_file_spec_dict(
-    doc: &PdfDocument,
-    dict: &PdfDict,
-) -> Result<FileSpec> {
+fn parse_file_spec_dict(doc: &PdfDocument, dict: &PdfDict) -> Result<FileSpec> {
     // Filename: prefer /UF (Unicode), fall back to /F
     let filename = dict
         .get(b"UF")
@@ -133,11 +130,7 @@ fn parse_file_spec_dict(
 }
 
 /// Resolve a dict entry that might be an indirect reference to a dict.
-fn resolve_dict<'a>(
-    doc: &'a PdfDocument,
-    parent: &PdfDict,
-    key: &[u8],
-) -> Result<Option<PdfDict>> {
+fn resolve_dict<'a>(doc: &'a PdfDocument, parent: &PdfDict, key: &[u8]) -> Result<Option<PdfDict>> {
     match parent.get(key) {
         Some(PdfObject::Dict(d)) => Ok(Some(d.clone())),
         Some(PdfObject::Reference(r)) => {
@@ -271,12 +264,14 @@ fn collect_name_tree_values(
 /// Resolves the EF stream reference, decodes the stream through its filter
 /// chain, and optionally verifies the MD5 checksum when present.
 pub fn extract_file(doc: &PdfDocument, file_spec: &FileSpec) -> Result<Vec<u8>> {
-    let stream_ref = file_spec.ef_stream_ref.as_ref().ok_or_else(|| {
-        JustPdfError::StreamDecode {
-            filter: String::new(),
-            detail: "FileSpec has no embedded file stream reference".into(),
-        }
-    })?;
+    let stream_ref =
+        file_spec
+            .ef_stream_ref
+            .as_ref()
+            .ok_or_else(|| JustPdfError::StreamDecode {
+                filter: String::new(),
+                detail: "FileSpec has no embedded file stream reference".into(),
+            })?;
 
     let stream_obj = doc.resolve(stream_ref)?;
     let (dict, raw_data) = match &stream_obj {
@@ -371,10 +366,7 @@ pub fn add_embedded_file(
 
     // /EF << /F stream_ref >>
     let mut ef_dict = PdfDict::new();
-    ef_dict.insert(
-        b"F".to_vec(),
-        PdfObject::Reference(stream_ref),
-    );
+    ef_dict.insert(b"F".to_vec(), PdfObject::Reference(stream_ref));
     fs_dict.insert(b"EF".to_vec(), PdfObject::Dict(ef_dict));
 
     let fs_ref = modifier.add_object(PdfObject::Dict(fs_dict));
@@ -442,10 +434,7 @@ fn wire_into_name_tree(
         }
         None => {
             let ef_ref = modifier.add_object(PdfObject::Dict(ef_dict));
-            names_dict.insert(
-                b"EmbeddedFiles".to_vec(),
-                PdfObject::Reference(ef_ref),
-            );
+            names_dict.insert(b"EmbeddedFiles".to_vec(), PdfObject::Reference(ef_ref));
         }
     }
 
@@ -492,10 +481,7 @@ mod tests {
         );
 
         if let Some(d) = desc {
-            dict.insert(
-                b"Desc".to_vec(),
-                PdfObject::String(d.as_bytes().to_vec()),
-            );
+            dict.insert(b"Desc".to_vec(), PdfObject::String(d.as_bytes().to_vec()));
         }
 
         if let Some(sr) = stream_ref {
@@ -511,10 +497,7 @@ mod tests {
     fn test_parse_file_spec_minimal() {
         // Minimal FileSpec: just a filename
         let mut dict = PdfDict::new();
-        dict.insert(
-            b"F".to_vec(),
-            PdfObject::String(b"report.pdf".to_vec()),
-        );
+        dict.insert(b"F".to_vec(), PdfObject::String(b"report.pdf".to_vec()));
 
         // We cannot call parse_file_spec_dict without a PdfDocument, so test
         // the helper `obj_to_string` and dict access directly.
@@ -534,14 +517,14 @@ mod tests {
         let dict = make_sample_fs_dict(
             "attachment.txt",
             Some("A text attachment"),
-            Some(IndirectRef { obj_num: 42, gen_num: 0 }),
+            Some(IndirectRef {
+                obj_num: 42,
+                gen_num: 0,
+            }),
         );
 
         // Filename from /UF
-        let filename = dict
-            .get(b"UF")
-            .and_then(obj_to_string)
-            .unwrap();
+        let filename = dict.get(b"UF").and_then(obj_to_string).unwrap();
         assert_eq!(filename, "attachment.txt");
 
         // Description
@@ -600,7 +583,10 @@ mod tests {
             checksum: Some(checksum.clone()),
             creation_date: Some("D:20260101120000".into()),
             mod_date: Some("D:20260315090000".into()),
-            ef_stream_ref: Some(IndirectRef { obj_num: 99, gen_num: 0 }),
+            ef_stream_ref: Some(IndirectRef {
+                obj_num: 99,
+                gen_num: 0,
+            }),
         };
 
         assert_eq!(fs.filename, "data.csv");
@@ -709,18 +695,9 @@ mod tests {
         let dict = make_sample_fs_dict("test.pdf", Some("Test"), None);
 
         assert_eq!(dict.get_name(b"Type"), Some(b"Filespec".as_slice()));
-        assert_eq!(
-            dict.get_string(b"UF"),
-            Some(b"test.pdf".as_slice())
-        );
-        assert_eq!(
-            dict.get_string(b"F"),
-            Some(b"test.pdf".as_slice())
-        );
-        assert_eq!(
-            dict.get_string(b"Desc"),
-            Some(b"Test".as_slice())
-        );
+        assert_eq!(dict.get_string(b"UF"), Some(b"test.pdf".as_slice()));
+        assert_eq!(dict.get_string(b"F"), Some(b"test.pdf".as_slice()));
+        assert_eq!(dict.get_string(b"Desc"), Some(b"Test".as_slice()));
         assert!(dict.get(b"EF").is_none());
     }
 
@@ -729,7 +706,10 @@ mod tests {
         let dict = make_sample_fs_dict(
             "data.bin",
             None,
-            Some(IndirectRef { obj_num: 7, gen_num: 0 }),
+            Some(IndirectRef {
+                obj_num: 7,
+                gen_num: 0,
+            }),
         );
 
         assert!(dict.get(b"Desc").is_none());

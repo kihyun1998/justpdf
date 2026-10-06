@@ -21,7 +21,7 @@ use std::io::Write;
 
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
-use crate::page::{collect_pages, PageInfo};
+use crate::page::{PageInfo, collect_pages};
 use crate::parser::PdfDocument;
 use crate::writer::generation_of;
 use crate::writer::serialize::{serialize_dict, serialize_object};
@@ -67,10 +67,8 @@ pub fn linearize(doc: &PdfDocument) -> Result<Vec<u8>> {
     }
 
     // Build a lookup map for objects.
-    let obj_map: std::collections::HashMap<u32, PdfObject> = all_objects
-        .iter()
-        .map(|(n, o)| (*n, o.clone()))
-        .collect();
+    let obj_map: std::collections::HashMap<u32, PdfObject> =
+        all_objects.iter().map(|(n, o)| (*n, o.clone())).collect();
 
     // Identify first-page objects: the page dict itself plus all objects
     // reachable from it (resources, content streams, fonts, etc.).
@@ -175,7 +173,9 @@ fn compute_page_object_info(
         {
             page_objs.push(page.page_ref.obj_num);
         }
-        result.push(PageObjectSlice { obj_nums: page_objs });
+        result.push(PageObjectSlice {
+            obj_nums: page_objs,
+        });
     }
     result
 }
@@ -244,8 +244,16 @@ fn build_hint_stream(
     }
 
     let min_objects = page_offsets.iter().map(|p| p.2).min().unwrap_or(0);
-    let max_delta_objects = page_offsets.iter().map(|p| p.2 - min_objects).max().unwrap_or(0);
-    let bits_delta_objects = if max_delta_objects == 0 { 0 } else { 32 - max_delta_objects.leading_zeros() };
+    let max_delta_objects = page_offsets
+        .iter()
+        .map(|p| p.2 - min_objects)
+        .max()
+        .unwrap_or(0);
+    let bits_delta_objects = if max_delta_objects == 0 {
+        0
+    } else {
+        32 - max_delta_objects.leading_zeros()
+    };
 
     let first_page_offset = page_offsets[0].0 as u32;
 
@@ -255,7 +263,11 @@ fn build_hint_stream(
         .map(|p| p.1 as u32 - min_page_length)
         .max()
         .unwrap_or(0);
-    let bits_delta_length = if max_delta_length == 0 { 0 } else { 32 - max_delta_length.leading_zeros() };
+    let bits_delta_length = if max_delta_length == 0 {
+        0
+    } else {
+        32 - max_delta_length.leading_zeros()
+    };
 
     let mut buf = Vec::new();
     // Header: 9 x u32
@@ -391,12 +403,8 @@ fn write_linearized_pdf(
     )?;
 
     // Compute real hint data from pass 1 layout.
-    let page_offsets_data = compute_page_offsets(
-        &pass1_layout,
-        first_page_objects,
-        rest_objects,
-        page_info,
-    );
+    let page_offsets_data =
+        compute_page_offsets(&pass1_layout, first_page_objects, rest_objects, page_info);
     let hint_data = build_hint_stream(&page_offsets_data);
 
     // --- Pass 2: write with correct hint data size, placeholder params ---
@@ -517,7 +525,11 @@ fn write_linearized_inner(
         )?;
     }
     let lin_dict_end = buf.len();
-    object_offsets.push((lin_dict_obj_num, lin_dict_offset, lin_dict_end - lin_dict_offset));
+    object_offsets.push((
+        lin_dict_obj_num,
+        lin_dict_offset,
+        lin_dict_end - lin_dict_offset,
+    ));
 
     // --- 3. First-page cross-reference table ---
     // This is a partial xref covering the linearization dict, hint stream,
@@ -603,7 +615,8 @@ fn write_linearized_inner(
         buf.extend_from_slice(b"0000000000 65535 f \n");
 
         // Build offset map
-        let mut offset_map: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+        let mut offset_map: std::collections::HashMap<u32, usize> =
+            std::collections::HashMap::new();
         for (num, off, _len) in &object_offsets {
             offset_map.insert(*num, *off);
         }
@@ -626,10 +639,7 @@ fn write_linearized_inner(
     {
         let mut trailer = PdfDict::new();
         trailer.insert(b"Size".to_vec(), PdfObject::Integer(xref_size as i64));
-        trailer.insert(
-            b"Root".to_vec(),
-            PdfObject::Reference(catalog_ref.clone()),
-        );
+        trailer.insert(b"Root".to_vec(), PdfObject::Reference(catalog_ref.clone()));
         if let Some(info) = info_ref {
             trailer.insert(b"Info".to_vec(), PdfObject::Reference(info.clone()));
         }
@@ -686,7 +696,11 @@ fn compute_page_offsets(
             if min_offset == usize::MAX {
                 min_offset = 0;
             }
-            let length = if max_end > min_offset { max_end - min_offset } else { 0 };
+            let length = if max_end > min_offset {
+                max_end - min_offset
+            } else {
+                0
+            };
             result.push((min_offset as u64, length as u64, count));
         } else {
             // Subsequent pages: objects are in rest_objects.
@@ -702,7 +716,11 @@ fn compute_page_offsets(
             if min_offset == usize::MAX {
                 min_offset = 0;
             }
-            let length = if max_end > min_offset { max_end - min_offset } else { 0 };
+            let length = if max_end > min_offset {
+                max_end - min_offset
+            } else {
+                0
+            };
             result.push((min_offset as u64, length as u64, count));
         }
     }
@@ -811,7 +829,9 @@ mod tests {
 
         // After header + binary comment, the first object should contain /Linearized.
         let text = String::from_utf8_lossy(&result);
-        let lin_pos = text.find("/Linearized").expect("should contain /Linearized");
+        let lin_pos = text
+            .find("/Linearized")
+            .expect("should contain /Linearized");
         let first_obj_pos = text.find("obj").expect("should contain obj");
         // /Linearized should appear in the first object.
         assert!(
@@ -902,10 +922,7 @@ mod tests {
     #[test]
     fn build_hint_stream_roundtrip() {
         // Build a hint stream for 2 pages and verify we can parse it back.
-        let page_data = vec![
-            (100u64, 500u64, 5u32),
-            (600u64, 300u64, 3u32),
-        ];
+        let page_data = vec![(100u64, 500u64, 5u32), (600u64, 300u64, 3u32)];
         let stream = build_hint_stream(&page_data);
 
         let params = crate::linearized::LinearizationParams {

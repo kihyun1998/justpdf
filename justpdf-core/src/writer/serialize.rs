@@ -217,10 +217,7 @@ fn serialize_pdf_impl(
     // --- Trailer ---
     let mut trailer = PdfDict::new();
     trailer.insert(b"Size".to_vec(), PdfObject::Integer(xref_size as i64));
-    trailer.insert(
-        b"Root".to_vec(),
-        PdfObject::Reference(catalog_ref.clone()),
-    );
+    trailer.insert(b"Root".to_vec(), PdfObject::Reference(catalog_ref.clone()));
     if let Some(info) = info_ref {
         trailer.insert(b"Info".to_vec(), PdfObject::Reference(info.clone()));
     }
@@ -231,10 +228,7 @@ fn serialize_pdf_impl(
             b"Encrypt".to_vec(),
             PdfObject::Reference((*encrypt_ref).clone()),
         );
-        trailer.insert(
-            b"ID".to_vec(),
-            PdfObject::Array(id_array.to_vec()),
-        );
+        trailer.insert(b"ID".to_vec(), PdfObject::Array(id_array.to_vec()));
     }
 
     write!(buf, "trailer\n")?;
@@ -253,10 +247,7 @@ pub(crate) fn serialize_object(buf: &mut Vec<u8>, obj: &PdfObject) -> Result<()>
         PdfObject::Stream { dict, data } => {
             // Build a dict copy with /Length set
             let mut stream_dict = dict.clone();
-            stream_dict.insert(
-                b"Length".to_vec(),
-                PdfObject::Integer(data.len() as i64),
-            );
+            stream_dict.insert(b"Length".to_vec(), PdfObject::Integer(data.len() as i64));
             serialize_dict(buf, &stream_dict)?;
             buf.extend_from_slice(b"\nstream\r\n");
             buf.extend_from_slice(data);
@@ -429,10 +420,7 @@ mod tests {
     #[test]
     fn test_serialize_stream_object() {
         let mut dict = PdfDict::new();
-        dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"FlateDecode".to_vec()),
-        );
+        dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
 
         let data = b"raw stream data here".to_vec();
         let stream = PdfObject::Stream { dict, data };
@@ -604,7 +592,10 @@ mod tests {
         let mut catalog = PdfDict::new();
         catalog.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
 
-        let catalog_ref = IndirectRef { obj_num: 1, gen_num: 0 };
+        let catalog_ref = IndirectRef {
+            obj_num: 1,
+            gen_num: 0,
+        };
         let objects = vec![
             (1, PdfObject::Dict(catalog)),
             (2, PdfObject::Dict(font_dict)),
@@ -614,14 +605,16 @@ mod tests {
 
         // Re-parse
         let doc = crate::parser::PdfDocument::from_bytes(bytes).unwrap();
-        let font_ref = IndirectRef { obj_num: 2, gen_num: 0 };
+        let font_ref = IndirectRef {
+            obj_num: 2,
+            gen_num: 0,
+        };
         let font_obj = doc.resolve(&font_ref).unwrap();
 
         if let PdfObject::Dict(d) = &font_obj {
             let basefont = d.get_name(b"BaseFont").unwrap();
             assert_eq!(
-                basefont,
-                b"Noto Sans KR",
+                basefont, b"Noto Sans KR",
                 "BaseFont with spaces must survive roundtrip",
             );
         } else {
@@ -730,7 +723,10 @@ mod tests {
         let mut catalog = PdfDict::new();
         catalog.insert(b"Type".to_vec(), PdfObject::Name(b"Catalog".to_vec()));
 
-        let catalog_ref = IndirectRef { obj_num: 1, gen_num: 0 };
+        let catalog_ref = IndirectRef {
+            obj_num: 1,
+            gen_num: 0,
+        };
         let objects = vec![
             (1, PdfObject::Dict(catalog)),
             (2, PdfObject::String(b"hello(world)end".to_vec())),
@@ -739,11 +735,17 @@ mod tests {
         let bytes = serialize_pdf(&objects, (1, 7), &catalog_ref, None).unwrap();
 
         let doc = crate::parser::PdfDocument::from_bytes(bytes).unwrap();
-        let ref2 = IndirectRef { obj_num: 2, gen_num: 0 };
+        let ref2 = IndirectRef {
+            obj_num: 2,
+            gen_num: 0,
+        };
         let obj = doc.resolve(&ref2).unwrap();
 
         if let PdfObject::String(s) = &obj {
-            assert_eq!(s, b"hello(world)end", "String with parens must survive roundtrip");
+            assert_eq!(
+                s, b"hello(world)end",
+                "String with parens must survive roundtrip"
+            );
         } else {
             panic!("Expected String, got {:?}", obj);
         }

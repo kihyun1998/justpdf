@@ -19,7 +19,12 @@ pub enum DocumentFormat {
 
 /// Detect document format from file extension.
 pub fn detect_format(path: &Path) -> DocumentFormat {
-    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .as_deref()
+    {
         Some("pdf") => DocumentFormat::Pdf,
         Some("xps" | "oxps") => DocumentFormat::Xps,
         Some("epub") => DocumentFormat::Epub,

@@ -3,12 +3,12 @@
 //! A CBZ file is a ZIP archive containing image files (JPEG, PNG, etc.)
 //! sorted by filename. Each image represents one page.
 
-use std::io::{Read, Cursor};
+use std::io::{Cursor, Read};
 use std::path::Path;
 
+use crate::Result;
 use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
 use crate::error::FormatError;
-use crate::Result;
 
 /// A CBZ comic book document.
 pub struct CbzDocument {
@@ -38,13 +38,14 @@ impl CbzDocument {
     /// Parse CBZ from bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let reader = Cursor::new(data);
-        let mut archive = zip::ZipArchive::new(reader)
-            .map_err(|e| FormatError::Zip(format!("{e}")))?;
+        let mut archive =
+            zip::ZipArchive::new(reader).map_err(|e| FormatError::Zip(format!("{e}")))?;
 
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
 
         for i in 0..archive.len() {
-            let mut file = archive.by_index(i)
+            let mut file = archive
+                .by_index(i)
                 .map_err(|e| FormatError::Zip(format!("{e}")))?;
             let name = file.name().to_string();
 
@@ -66,7 +67,12 @@ impl CbzDocument {
         for (name, data) in entries {
             let (width, height) = image_dimensions(&data).unwrap_or((0, 0));
             if width > 0 && height > 0 {
-                images.push(CbzImage { name, data, width, height });
+                images.push(CbzImage {
+                    name,
+                    data,
+                    width,
+                    height,
+                });
             }
         }
 
@@ -110,7 +116,10 @@ impl FormatDocument for CbzDocument {
 
     fn page_text(&self, index: usize) -> Result<String> {
         if index >= self.images.len() {
-            return Err(FormatError::OutOfRange { index, count: self.images.len() });
+            return Err(FormatError::OutOfRange {
+                index,
+                count: self.images.len(),
+            });
         }
         // Images don't have text
         Ok(String::new())
@@ -121,8 +130,9 @@ impl FormatDocument for CbzDocument {
             index,
             count: self.images.len(),
         })?;
-        let decoded = image::load_from_memory(&img.data)
-            .map_err(|e| FormatError::Format { detail: format!("image decode: {e}") })?;
+        let decoded = image::load_from_memory(&img.data).map_err(|e| FormatError::Format {
+            detail: format!("image decode: {e}"),
+        })?;
 
         // Scale if DPI != 72
         let scale = dpi / 72.0;
@@ -153,7 +163,10 @@ impl FormatDocument for CbzDocument {
             rendered.width,
             rendered.height,
             image::ExtendedColorType::Rgba8,
-        ).map_err(|e| FormatError::Format { detail: format!("PNG encode: {e}") })?;
+        )
+        .map_err(|e| FormatError::Format {
+            detail: format!("PNG encode: {e}"),
+        })?;
         Ok(buf)
     }
 
@@ -168,10 +181,12 @@ impl FormatDocument for CbzDocument {
             let mut page = PageBuilder::new(w, h);
 
             // Decode to raw RGB for an image XObject covering the page
-            let decoded = image::load_from_memory(&img.data)
-                .map_err(|e| FormatError::Format { detail: format!("image decode: {e}") })?;
+            let decoded = image::load_from_memory(&img.data).map_err(|e| FormatError::Format {
+                detail: format!("image decode: {e}"),
+            })?;
             let rgb = decoded.to_rgb8();
-            let (name, image_ref) = embed_rgb(&mut builder, rgb.width(), rgb.height(), rgb.as_raw())?;
+            let (name, image_ref) =
+                embed_rgb(&mut builder, rgb.width(), rgb.height(), rgb.as_raw())?;
             page.add_image(&name, image_ref);
             page.draw_image(&name, 0.0, 0.0, w, h);
 
@@ -337,17 +352,28 @@ mod tests {
         let pages = justpdf_core::page::collect_pages(&doc).unwrap();
         let page = doc.resolve(&pages[0].page_ref).unwrap();
         let page = page.as_dict().unwrap();
-        let Some(PdfObject::Reference(contents)) = page.get(b"Contents") else { panic!("no contents") };
-        let PdfObject::Stream { dict, data } = doc.resolve(contents).unwrap() else { panic!("no stream") };
+        let Some(PdfObject::Reference(contents)) = page.get(b"Contents") else {
+            panic!("no contents")
+        };
+        let PdfObject::Stream { dict, data } = doc.resolve(contents).unwrap() else {
+            panic!("no stream")
+        };
         let ops = justpdf_core::content::parse_content_stream(
             &justpdf_core::stream::decode_stream(&data, &dict).unwrap(),
         )
         .unwrap();
         let resources = page.get_dict(b"Resources").unwrap();
         let xobjects = resources.get_dict(b"XObject").unwrap();
-        let (_, PdfObject::Reference(image)) = xobjects.iter().next().unwrap() else { panic!("no image") };
-        let PdfObject::Stream { dict, data } = doc.resolve(image).unwrap() else { panic!("no image stream") };
-        (ops, justpdf_core::stream::decode_stream(&data, &dict).unwrap())
+        let (_, PdfObject::Reference(image)) = xobjects.iter().next().unwrap() else {
+            panic!("no image")
+        };
+        let PdfObject::Stream { dict, data } = doc.resolve(image).unwrap() else {
+            panic!("no image stream")
+        };
+        (
+            ops,
+            justpdf_core::stream::decode_stream(&data, &dict).unwrap(),
+        )
     }
 
     #[test]
@@ -367,7 +393,8 @@ mod tests {
         {
             use std::io::Write;
             let mut zip = zip::ZipWriter::new(Cursor::new(&mut buf));
-            zip.start_file("img.png", zip::write::SimpleFileOptions::default()).unwrap();
+            zip.start_file("img.png", zip::write::SimpleFileOptions::default())
+                .unwrap();
             zip.write_all(&png).unwrap();
             zip.finish().unwrap();
         }
@@ -388,9 +415,11 @@ mod tests {
         image::ImageEncoder::write_image(
             encoder,
             &[255u8, 255, 255, 255], // 1 pixel RGBA white
-            1, 1,
+            1,
+            1,
             image::ExtendedColorType::Rgba8,
-        ).unwrap();
+        )
+        .unwrap();
         buf
     }
 }

@@ -6,9 +6,9 @@
 use std::io::{Cursor, Read};
 use std::path::Path;
 
+use crate::Result;
 use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
 use crate::error::FormatError;
-use crate::Result;
 
 /// A parsed EPUB document.
 #[derive(Debug)]
@@ -41,8 +41,8 @@ impl EpubDocument {
     /// Parse EPUB from bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let reader = Cursor::new(data);
-        let mut archive = zip::ZipArchive::new(reader)
-            .map_err(|e| FormatError::Zip(format!("{e}")))?;
+        let mut archive =
+            zip::ZipArchive::new(reader).map_err(|e| FormatError::Zip(format!("{e}")))?;
 
         // Check for DRM protection (META-INF/encryption.xml)
         if archive.by_name("META-INF/encryption.xml").is_ok() {
@@ -109,9 +109,7 @@ impl EpubDocument {
 }
 
 /// Find the OPF (rootfile) path from META-INF/container.xml.
-fn find_opf_path(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-) -> Result<String> {
+fn find_opf_path(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<String> {
     let xml = read_zip_text(archive, "META-INF/container.xml")?;
     let doc = roxmltree::Document::parse(&xml)
         .map_err(|e| FormatError::Xml(format!("parsing container.xml: {e}")))?;
@@ -172,9 +170,7 @@ fn parse_opf(
             }
             "item" => {
                 // Manifest item
-                if let (Some(id), Some(href)) =
-                    (node.attribute("id"), node.attribute("href"))
-                {
+                if let (Some(id), Some(href)) = (node.attribute("id"), node.attribute("href")) {
                     manifest.push((id.to_string(), href.to_string()));
                 }
             }
@@ -249,8 +245,21 @@ fn extract_text_recursive(node: &roxmltree::Node<'_, '_>, result: &mut String) {
         // Add newline before block-level elements
         let is_block = matches!(
             tag,
-            "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "br"
-                | "tr" | "blockquote" | "section" | "article" | "header" | "footer"
+            "p" | "div"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+                | "li"
+                | "br"
+                | "tr"
+                | "blockquote"
+                | "section"
+                | "article"
+                | "header"
+                | "footer"
                 | "pre"
         );
         if is_block && !result.is_empty() && !result.ends_with('\n') {
@@ -266,8 +275,18 @@ fn extract_text_recursive(node: &roxmltree::Node<'_, '_>, result: &mut String) {
         let tag = node.tag_name().name();
         let is_block = matches!(
             tag,
-            "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li"
-                | "tr" | "blockquote" | "section" | "article"
+            "p" | "div"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+                | "li"
+                | "tr"
+                | "blockquote"
+                | "section"
+                | "article"
         );
         if is_block && !result.ends_with('\n') {
             result.push('\n');
@@ -282,10 +301,7 @@ fn normalize_whitespace(s: &str) -> String {
 
     for line in s.lines() {
         // Collapse whitespace within line
-        let trimmed: String = line
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let trimmed: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
 
         if trimmed.is_empty() {
             if !prev_blank && !result.is_empty() {
@@ -308,10 +324,7 @@ fn normalize_whitespace(s: &str) -> String {
 }
 
 /// Read a text file from the ZIP archive.
-fn read_zip_text(
-    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
-    path: &str,
-) -> Result<String> {
+fn read_zip_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, path: &str) -> Result<String> {
     let mut file = archive
         .by_name(path)
         .map_err(|e| FormatError::Zip(format!("reading {path}: {e}")))?;
@@ -460,16 +473,20 @@ mod tests {
 
             // container.xml
             zip.start_file("META-INF/container.xml", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?>
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
   <rootfiles>
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
-</container>"#).unwrap();
+</container>"#,
+            )
+            .unwrap();
 
             // OPF file
             zip.start_file("OEBPS/content.opf", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>Test Book</dc:title>
@@ -483,11 +500,14 @@ mod tests {
     <itemref idref="ch1"/>
     <itemref idref="ch2"/>
   </spine>
-</package>"#).unwrap();
+</package>"#,
+            )
+            .unwrap();
 
             // Chapter 1
             zip.start_file("OEBPS/chapter1.xhtml", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head><title>Chapter 1</title></head>
 <body>
@@ -495,18 +515,23 @@ mod tests {
   <p>This is the first paragraph of chapter one.</p>
   <p>This is the second paragraph.</p>
 </body>
-</html>"#).unwrap();
+</html>"#,
+            )
+            .unwrap();
 
             // Chapter 2
             zip.start_file("OEBPS/chapter2.xhtml", opts).unwrap();
-            zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head><title>Chapter 2</title></head>
 <body>
   <h1>Chapter Two</h1>
   <p>Content of chapter two goes here.</p>
 </body>
-</html>"#).unwrap();
+</html>"#,
+            )
+            .unwrap();
 
             zip.finish().unwrap();
         }
@@ -600,7 +625,8 @@ mod tests {
             zip.write_all(b"<?xml version='1.0'?><container xmlns='urn:oasis:names:tc:opendocument:xmlns:container' version='1.0'><rootfiles><rootfile full-path='content.opf' media-type='application/oebps-package+xml'/></rootfiles></container>").unwrap();
 
             zip.start_file("META-INF/encryption.xml", opts).unwrap();
-            zip.write_all(b"<encryption><EncryptedData/></encryption>").unwrap();
+            zip.write_all(b"<encryption><EncryptedData/></encryption>")
+                .unwrap();
 
             zip.start_file("content.opf", opts).unwrap();
             zip.write_all(b"<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' version='3.0'><metadata></metadata><manifest></manifest><spine></spine></package>").unwrap();
@@ -614,7 +640,10 @@ mod tests {
             Err(e) => format!("{e}"),
             Ok(_) => panic!("expected DRM error"),
         };
-        assert!(err.to_lowercase().contains("drm"), "error should mention DRM: {err}");
+        assert!(
+            err.to_lowercase().contains("drm"),
+            "error should mention DRM: {err}"
+        );
     }
 
     #[test]

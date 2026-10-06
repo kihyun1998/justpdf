@@ -89,7 +89,11 @@ fn test_render_multiple_pages() {
     // Render first 3 pages
     for i in 0..3 {
         let result = render_page(&mut doc, i, &options);
-        assert!(result.is_ok(), "failed to render page {i}: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "failed to render page {i}: {:?}",
+            result.err()
+        );
     }
 }
 
@@ -130,7 +134,11 @@ fn test_render_all_20_pages() {
 
     for i in 0..20 {
         let result = render_page(&mut doc, i, &options);
-        assert!(result.is_ok(), "failed to render page {i}: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "failed to render page {i}: {:?}",
+            result.err()
+        );
     }
 }
 
@@ -150,7 +158,13 @@ fn test_render_page_to_svg() {
         "SVG output should start with <?xml or <svg, got: {}",
         &svg[..svg.len().min(80)],
     );
-    assert!(svg.contains("<svg"), "SVG output should contain <svg element");
-    assert!(svg.contains("</svg>"), "SVG output should contain closing </svg>");
+    assert!(
+        svg.contains("<svg"),
+        "SVG output should contain <svg element"
+    );
+    assert!(
+        svg.contains("</svg>"),
+        "SVG output should contain closing </svg>"
+    );
     assert!(svg.len() > 100, "SVG output too small: {} bytes", svg.len());
 }

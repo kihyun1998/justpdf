@@ -1,5 +1,5 @@
-use crate::object::{IndirectRef, PdfObject};
 use crate::annot::types::AnnotColor;
+use crate::object::{IndirectRef, PdfObject};
 
 /// PDF destination (section 12.3.2 of PDF spec).
 #[derive(Debug, Clone, PartialEq)]
@@ -409,10 +409,7 @@ mod tests {
 
     #[test]
     fn test_destination_page_index_integer() {
-        let arr = vec![
-            PdfObject::Integer(0),
-            PdfObject::Name(b"Fit".to_vec()),
-        ];
+        let arr = vec![PdfObject::Integer(0), PdfObject::Name(b"Fit".to_vec())];
         let dest = Destination::from_array(&arr).unwrap();
         match dest {
             Destination::Fit { page_ref: pr } => assert_eq!(pr.obj_num, 0),

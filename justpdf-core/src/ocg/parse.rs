@@ -91,11 +91,7 @@ pub fn read_oc_properties(doc: &PdfDocument) -> Result<Option<OCProperties>> {
 }
 
 /// Helper to get an array from a dict, resolving indirect refs.
-fn get_array_from_dict(
-    doc: &PdfDocument,
-    dict: &PdfDict,
-    key: &[u8],
-) -> Result<Vec<PdfObject>> {
+fn get_array_from_dict(doc: &PdfDocument, dict: &PdfDict, key: &[u8]) -> Result<Vec<PdfObject>> {
     match dict.get(key) {
         Some(PdfObject::Array(arr)) => Ok(arr.clone()),
         Some(PdfObject::Reference(r)) => {
@@ -214,11 +210,7 @@ fn parse_config(doc: &PdfDocument, dict: &PdfDict) -> Result<OCConfig> {
 }
 
 /// Collect indirect references from an array entry in a dict.
-fn collect_ref_array(
-    doc: &PdfDocument,
-    dict: &PdfDict,
-    key: &[u8],
-) -> Result<Vec<IndirectRef>> {
+fn collect_ref_array(doc: &PdfDocument, dict: &PdfDict, key: &[u8]) -> Result<Vec<IndirectRef>> {
     let arr = get_array_from_dict(doc, dict, key)?;
     let mut refs = Vec::new();
     for item in &arr {
@@ -494,10 +486,7 @@ mod tests {
     fn test_parse_ocmd_single_ref() {
         let mut dict = PdfDict::new();
         dict.insert(b"Type".to_vec(), PdfObject::Name(b"OCMD".to_vec()));
-        dict.insert(
-            b"OCGs".to_vec(),
-            PdfObject::Reference(make_ref(5)),
-        );
+        dict.insert(b"OCGs".to_vec(), PdfObject::Reference(make_ref(5)));
         dict.insert(b"P".to_vec(), PdfObject::Name(b"AllOn".to_vec()));
 
         let ocmd = parse_ocmd(&dict).unwrap();
@@ -532,10 +521,7 @@ mod tests {
     fn test_parse_ocmd_wrong_type() {
         let mut dict = PdfDict::new();
         dict.insert(b"Type".to_vec(), PdfObject::Name(b"OCG".to_vec()));
-        dict.insert(
-            b"OCGs".to_vec(),
-            PdfObject::Reference(make_ref(1)),
-        );
+        dict.insert(b"OCGs".to_vec(), PdfObject::Reference(make_ref(1)));
         assert!(parse_ocmd(&dict).is_none());
     }
 
@@ -548,10 +534,7 @@ mod tests {
             (b"AnyOff", VisibilityPolicy::AnyOff),
         ] {
             let mut dict = PdfDict::new();
-            dict.insert(
-                b"OCGs".to_vec(),
-                PdfObject::Reference(make_ref(1)),
-            );
+            dict.insert(b"OCGs".to_vec(), PdfObject::Reference(make_ref(1)));
             dict.insert(b"P".to_vec(), PdfObject::Name(name.to_vec()));
 
             let ocmd = parse_ocmd(&dict).unwrap();
@@ -576,7 +559,10 @@ mod tests {
     #[test]
     fn test_parse_ocg_with_intent_name() {
         let mut dict = PdfDict::new();
-        dict.insert(b"Name".to_vec(), PdfObject::String(b"Design Layer".to_vec()));
+        dict.insert(
+            b"Name".to_vec(),
+            PdfObject::String(b"Design Layer".to_vec()),
+        );
         dict.insert(b"Intent".to_vec(), PdfObject::Name(b"Design".to_vec()));
 
         let ocg = parse_ocg(&dict, make_ref(1));
@@ -713,9 +699,7 @@ mod tests {
         let pdf_bytes = build_minimal_pdf_with_ocg();
         let mut doc = PdfDocument::from_bytes(pdf_bytes).unwrap();
 
-        let arr = vec![PdfObject::Array(vec![
-            PdfObject::Reference(make_ref(7)),
-        ])];
+        let arr = vec![PdfObject::Array(vec![PdfObject::Reference(make_ref(7))])];
 
         let items = parse_order(&doc, &arr).unwrap();
         assert_eq!(items.len(), 1);
@@ -820,15 +804,11 @@ mod tests {
 
         // Object 4: OCG "Layer 1"
         let obj4_offset = pdf.len();
-        pdf.extend_from_slice(
-            b"4 0 obj\n<< /Type /OCG /Name (Layer 1) >>\nendobj\n",
-        );
+        pdf.extend_from_slice(b"4 0 obj\n<< /Type /OCG /Name (Layer 1) >>\nendobj\n");
 
         // Object 5: OCG "Layer 2"
         let obj5_offset = pdf.len();
-        pdf.extend_from_slice(
-            b"5 0 obj\n<< /Type /OCG /Name (Layer 2) >>\nendobj\n",
-        );
+        pdf.extend_from_slice(b"5 0 obj\n<< /Type /OCG /Name (Layer 2) >>\nendobj\n");
 
         // Object 1: Catalog with OCProperties
         let obj1_offset = pdf.len();

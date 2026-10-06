@@ -23,7 +23,11 @@ pub fn parse_action(dict: &PdfDict) -> Option<PdfAction> {
                 .and_then(Destination::from_object)
                 .unwrap_or(Destination::Named(String::new()));
             let new_window = dict.get(b"NewWindow").and_then(|o| o.as_bool());
-            Some(PdfAction::GoToR { file, dest, new_window })
+            Some(PdfAction::GoToR {
+                file,
+                dest,
+                new_window,
+            })
         }
         b"URI" => {
             let uri = dict
@@ -52,15 +56,11 @@ pub fn parse_action(dict: &PdfDict) -> Option<PdfAction> {
             Some(PdfAction::Launch { file, new_window })
         }
         b"JavaScript" => {
-            let script = dict
-                .get(b"JS")
-                .and_then(|o| match o {
-                    PdfObject::String(s) => Some(String::from_utf8_lossy(s).into_owned()),
-                    PdfObject::Stream { data, .. } => {
-                        Some(String::from_utf8_lossy(data).into_owned())
-                    }
-                    _ => None,
-                })?;
+            let script = dict.get(b"JS").and_then(|o| match o {
+                PdfObject::String(s) => Some(String::from_utf8_lossy(s).into_owned()),
+                PdfObject::Stream { data, .. } => Some(String::from_utf8_lossy(data).into_owned()),
+                _ => None,
+            })?;
             Some(PdfAction::JavaScript { script })
         }
         b"SubmitForm" => {
@@ -111,7 +111,10 @@ mod tests {
     use crate::object::{IndirectRef, PdfDict, PdfObject};
 
     fn page_ref(num: u32) -> IndirectRef {
-        IndirectRef { obj_num: num, gen_num: 0 }
+        IndirectRef {
+            obj_num: num,
+            gen_num: 0,
+        }
     }
 
     fn make_dest_array(page_num: u32) -> PdfObject {
@@ -252,7 +255,12 @@ mod tests {
             dict.insert(b"S".to_vec(), PdfObject::Name(b"Named".to_vec()));
             dict.insert(b"N".to_vec(), PdfObject::Name(name_bytes.to_vec()));
             let action = parse_action(&dict).unwrap();
-            assert_eq!(action, PdfAction::Named { name: expected.clone() });
+            assert_eq!(
+                action,
+                PdfAction::Named {
+                    name: expected.clone()
+                }
+            );
         }
     }
 
@@ -440,10 +448,7 @@ mod tests {
         );
         dict.insert(
             b"Next".to_vec(),
-            PdfObject::Array(vec![
-                PdfObject::Dict(next1),
-                PdfObject::Dict(next2),
-            ]),
+            PdfObject::Array(vec![PdfObject::Dict(next1), PdfObject::Dict(next2)]),
         );
 
         let chain = parse_action_chain(&dict);
@@ -481,9 +486,24 @@ mod tests {
 
         let chain = parse_action_chain(&dict_a);
         assert_eq!(chain.len(), 3);
-        assert_eq!(chain[0], PdfAction::Named { name: NamedAction::NextPage });
-        assert_eq!(chain[1], PdfAction::Named { name: NamedAction::PrevPage });
-        assert_eq!(chain[2], PdfAction::Named { name: NamedAction::LastPage });
+        assert_eq!(
+            chain[0],
+            PdfAction::Named {
+                name: NamedAction::NextPage
+            }
+        );
+        assert_eq!(
+            chain[1],
+            PdfAction::Named {
+                name: NamedAction::PrevPage
+            }
+        );
+        assert_eq!(
+            chain[2],
+            PdfAction::Named {
+                name: NamedAction::LastPage
+            }
+        );
     }
 
     #[test]

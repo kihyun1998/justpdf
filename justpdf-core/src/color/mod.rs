@@ -60,20 +60,84 @@ impl PartialEq for ColorSpace {
             (Self::DeviceGray, Self::DeviceGray) => true,
             (Self::DeviceRGB, Self::DeviceRGB) => true,
             (Self::DeviceCMYK, Self::DeviceCMYK) => true,
-            (Self::CalGray { white_point: w1, black_point: b1, gamma: g1 },
-             Self::CalGray { white_point: w2, black_point: b2, gamma: g2 }) => w1 == w2 && b1 == b2 && g1 == g2,
-            (Self::CalRGB { white_point: w1, black_point: b1, gamma: g1, matrix: m1 },
-             Self::CalRGB { white_point: w2, black_point: b2, gamma: g2, matrix: m2 }) => w1 == w2 && b1 == b2 && g1 == g2 && m1 == m2,
-            (Self::Lab { white_point: w1, black_point: b1, range: r1 },
-             Self::Lab { white_point: w2, black_point: b2, range: r2 }) => w1 == w2 && b1 == b2 && r1 == r2,
-            (Self::Indexed { base: b1, hival: h1, lookup: l1 },
-             Self::Indexed { base: b2, hival: h2, lookup: l2 }) => b1 == b2 && h1 == h2 && l1 == l2,
-            (Self::Separation { name: n1, alternate: a1 },
-             Self::Separation { name: n2, alternate: a2 }) => n1 == n2 && a1 == a2,
-            (Self::DeviceN { names: n1, alternate: a1 },
-             Self::DeviceN { names: n2, alternate: a2 }) => n1 == n2 && a1 == a2,
-            (Self::ICCBased { num_components: n1, .. },
-             Self::ICCBased { num_components: n2, .. }) => n1 == n2,
+            (
+                Self::CalGray {
+                    white_point: w1,
+                    black_point: b1,
+                    gamma: g1,
+                },
+                Self::CalGray {
+                    white_point: w2,
+                    black_point: b2,
+                    gamma: g2,
+                },
+            ) => w1 == w2 && b1 == b2 && g1 == g2,
+            (
+                Self::CalRGB {
+                    white_point: w1,
+                    black_point: b1,
+                    gamma: g1,
+                    matrix: m1,
+                },
+                Self::CalRGB {
+                    white_point: w2,
+                    black_point: b2,
+                    gamma: g2,
+                    matrix: m2,
+                },
+            ) => w1 == w2 && b1 == b2 && g1 == g2 && m1 == m2,
+            (
+                Self::Lab {
+                    white_point: w1,
+                    black_point: b1,
+                    range: r1,
+                },
+                Self::Lab {
+                    white_point: w2,
+                    black_point: b2,
+                    range: r2,
+                },
+            ) => w1 == w2 && b1 == b2 && r1 == r2,
+            (
+                Self::Indexed {
+                    base: b1,
+                    hival: h1,
+                    lookup: l1,
+                },
+                Self::Indexed {
+                    base: b2,
+                    hival: h2,
+                    lookup: l2,
+                },
+            ) => b1 == b2 && h1 == h2 && l1 == l2,
+            (
+                Self::Separation {
+                    name: n1,
+                    alternate: a1,
+                },
+                Self::Separation {
+                    name: n2,
+                    alternate: a2,
+                },
+            ) => n1 == n2 && a1 == a2,
+            (
+                Self::DeviceN {
+                    names: n1,
+                    alternate: a1,
+                },
+                Self::DeviceN {
+                    names: n2,
+                    alternate: a2,
+                },
+            ) => n1 == n2 && a1 == a2,
+            (
+                Self::ICCBased {
+                    num_components: n1, ..
+                },
+                Self::ICCBased {
+                    num_components: n2, ..
+                },
+            ) => n1 == n2,
             (Self::Unknown(a), Self::Unknown(b)) => a == b,
             _ => false,
         }
@@ -448,16 +512,9 @@ pub fn parse_overprint(gs_dict: &PdfDict) -> OverprintState {
     let stroke = gs_dict.get_bool(b"OP").unwrap_or(false);
     // Per the spec, /op defaults to the value of /OP when absent.
     let fill = gs_dict.get_bool(b"op").unwrap_or(stroke);
-    let mode = gs_dict
-        .get_i64(b"OPM")
-        .map(|v| v as u32)
-        .unwrap_or(0);
+    let mode = gs_dict.get_i64(b"OPM").map(|v| v as u32).unwrap_or(0);
 
-    OverprintState {
-        stroke,
-        fill,
-        mode,
-    }
+    OverprintState { stroke, fill, mode }
 }
 
 // --- Helpers ---
@@ -611,10 +668,7 @@ mod tests {
         assert_eq!(oi.subtype, "GTS_PDFX");
         assert_eq!(oi.output_condition_identifier, "CGATS TR 001");
         assert_eq!(oi.output_condition.as_deref(), Some("SWOP (Publication)"));
-        assert_eq!(
-            oi.registry_name.as_deref(),
-            Some("http://www.color.org")
-        );
+        assert_eq!(oi.registry_name.as_deref(), Some("http://www.color.org"));
         assert_eq!(oi.info.as_deref(), Some("U.S. Web Coated"));
         assert_eq!(
             oi.dest_output_profile_ref,

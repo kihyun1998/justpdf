@@ -44,10 +44,7 @@ impl EncryptionConfig {
     ///
     /// Also returns the encryption PdfDict to be added as an indirect object,
     /// and the `/ID` array of a newly written file: `file_id` in both elements.
-    pub fn build(
-        &self,
-        file_id: &[u8],
-    ) -> Result<(SecurityState, PdfDict, Vec<PdfObject>)> {
+    pub fn build(&self, file_id: &[u8]) -> Result<(SecurityState, PdfDict, Vec<PdfObject>)> {
         match self.method {
             EncryptionMethod::RC4_128 => self.build_r3(file_id),
             EncryptionMethod::AES128 => self.build_r4(file_id),
@@ -73,12 +70,8 @@ impl EncryptionConfig {
             str_f: None,
         };
 
-        let (o, u, file_key) = key::generate_o_u_values_r234(
-            &self.user_password,
-            &self.owner_password,
-            &ed,
-            file_id,
-        );
+        let (o, u, file_key) =
+            key::generate_o_u_values_r234(&self.user_password, &self.owner_password, &ed, file_id);
         ed.o = o;
         ed.u = u;
 
@@ -119,12 +112,8 @@ impl EncryptionConfig {
             str_f: Some(b"StdCF".to_vec()),
         };
 
-        let (o, u, file_key) = key::generate_o_u_values_r234(
-            &self.user_password,
-            &self.owner_password,
-            &ed,
-            file_id,
-        );
+        let (o, u, file_key) =
+            key::generate_o_u_values_r234(&self.user_password, &self.owner_password, &ed, file_id);
         ed.o = o;
         ed.u = u;
 
@@ -222,24 +211,12 @@ pub fn encrypt_object(
 
     match obj {
         PdfObject::String(data) => {
-            let encrypted = encrypt_bytes(
-                file_key,
-                data,
-                obj_num,
-                gen_num,
-                state.string_method,
-            )?;
+            let encrypted = encrypt_bytes(file_key, data, obj_num, gen_num, state.string_method)?;
             Ok(PdfObject::String(encrypted))
         }
         PdfObject::Stream { dict, .. } if super::decrypt::is_xref_stream(dict) => Ok(obj.clone()),
         PdfObject::Stream { dict, data } => {
-            let encrypted = encrypt_bytes(
-                file_key,
-                data,
-                obj_num,
-                gen_num,
-                state.stream_method,
-            )?;
+            let encrypted = encrypt_bytes(file_key, data, obj_num, gen_num, state.stream_method)?;
             let dict =
                 match encrypt_object(&PdfObject::Dict(dict.clone()), state, obj_num, gen_num)? {
                     PdfObject::Dict(d) => d,
@@ -427,7 +404,11 @@ mod tests {
         let ed = EncryptionDict {
             filter: b"Standard".to_vec(),
             v: if method == CryptMethod::AESV3 { 5 } else { 2 },
-            length: if method == CryptMethod::AESV3 { 256 } else { 128 },
+            length: if method == CryptMethod::AESV3 {
+                256
+            } else {
+                128
+            },
             r: match method {
                 CryptMethod::V2 => 3,
                 CryptMethod::AESV2 => 4,
@@ -462,8 +443,7 @@ mod tests {
         let encrypted = encrypt_object(&original, &state, 1, 0).unwrap();
         assert_ne!(encrypted, original);
 
-        let decrypted =
-            super::super::decrypt::decrypt_object(encrypted, &state, 1, 0).unwrap();
+        let decrypted = super::super::decrypt::decrypt_object(encrypted, &state, 1, 0).unwrap();
         assert_eq!(decrypted, original);
     }
 
@@ -475,8 +455,7 @@ mod tests {
         let encrypted = encrypt_object(&original, &state, 1, 0).unwrap();
         assert_ne!(encrypted, original);
 
-        let decrypted =
-            super::super::decrypt::decrypt_object(encrypted, &state, 1, 0).unwrap();
+        let decrypted = super::super::decrypt::decrypt_object(encrypted, &state, 1, 0).unwrap();
         assert_eq!(decrypted, original);
     }
 
@@ -488,8 +467,7 @@ mod tests {
         let encrypted = encrypt_object(&original, &state, 1, 0).unwrap();
         assert_ne!(encrypted, original);
 
-        let decrypted =
-            super::super::decrypt::decrypt_object(encrypted, &state, 1, 0).unwrap();
+        let decrypted = super::super::decrypt::decrypt_object(encrypted, &state, 1, 0).unwrap();
         assert_eq!(decrypted, original);
     }
 

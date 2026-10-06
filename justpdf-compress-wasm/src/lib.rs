@@ -1,8 +1,12 @@
-#![doc(html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png")]
-#![doc(html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png")]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/icons/justpdf-icon-light-128.png"
+)]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/kihyun1998/justpdf/master/logo/favicon/favicon-32.png"
+)]
 
-use wasm_bindgen::prelude::*;
 use justpdf_core::writer::compress;
+use wasm_bindgen::prelude::*;
 
 /// Result of PDF compression.
 #[wasm_bindgen]
@@ -165,8 +169,8 @@ pub fn compress(data: &[u8], preset: &str) -> Result<CompressResult, JsValue> {
     let options = compress::CompressOptions::from_preset(preset)
         .ok_or_else(|| JsValue::from_str(&format!("unknown preset: {preset}")))?;
 
-    let (output, stats) = compress::compress_pdf(data, &options)
-        .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+    let (output, stats) =
+        compress::compress_pdf(data, &options).map_err(|e| JsValue::from_str(&format!("{e}")))?;
 
     Ok(stats_to_result(output, stats))
 }
@@ -191,8 +195,8 @@ pub fn compress_custom(
         grayscale: false,
     };
 
-    let (output, stats) = compress::compress_pdf(data, &options)
-        .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+    let (output, stats) =
+        compress::compress_pdf(data, &options).map_err(|e| JsValue::from_str(&format!("{e}")))?;
 
     Ok(stats_to_result(output, stats))
 }
@@ -210,7 +214,11 @@ pub fn compress_advanced(
     grayscale: bool,
 ) -> Result<CompressResult, JsValue> {
     let options = compress::CompressOptions {
-        jpeg_quality: if jpeg_quality > 0 { Some(jpeg_quality as u8) } else { None },
+        jpeg_quality: if jpeg_quality > 0 {
+            Some(jpeg_quality as u8)
+        } else {
+            None
+        },
         max_image_dpi: if max_dpi > 0.0 { Some(max_dpi) } else { None },
         skip_below_bytes: 5_000,
         structural: true,
@@ -222,8 +230,8 @@ pub fn compress_advanced(
         grayscale,
     };
 
-    let (output, stats) = compress::compress_pdf(data, &options)
-        .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+    let (output, stats) =
+        compress::compress_pdf(data, &options).map_err(|e| JsValue::from_str(&format!("{e}")))?;
 
     Ok(stats_to_result(output, stats))
 }
@@ -233,8 +241,7 @@ pub fn compress_advanced(
 /// Returns page count, image count, total image bytes, and encryption status.
 #[wasm_bindgen]
 pub fn analyze(data: &[u8]) -> Result<AnalyzeResult, JsValue> {
-    let result = compress::analyze_pdf(data)
-        .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+    let result = compress::analyze_pdf(data).map_err(|e| JsValue::from_str(&format!("{e}")))?;
 
     Ok(AnalyzeResult {
         pages: result.pages as u32,

@@ -8,7 +8,13 @@ pub enum FormatError {
     #[cfg(any(feature = "xps", feature = "epub", feature = "office", feature = "cbz"))]
     Zip(String),
     /// XML parsing error.
-    #[cfg(any(feature = "xps", feature = "epub", feature = "svg", feature = "office", feature = "fb2"))]
+    #[cfg(any(
+        feature = "xps",
+        feature = "epub",
+        feature = "svg",
+        feature = "office",
+        feature = "fb2"
+    ))]
     Xml(String),
     /// PDF generation error.
     Pdf(justpdf_core::JustPdfError),
@@ -31,14 +37,22 @@ impl fmt::Display for FormatError {
             Self::Io(e) => write!(f, "I/O error: {e}"),
             #[cfg(any(feature = "xps", feature = "epub", feature = "office", feature = "cbz"))]
             Self::Zip(e) => write!(f, "ZIP error: {e}"),
-            #[cfg(any(feature = "xps", feature = "epub", feature = "svg", feature = "office", feature = "fb2"))]
+            #[cfg(any(
+                feature = "xps",
+                feature = "epub",
+                feature = "svg",
+                feature = "office",
+                feature = "fb2"
+            ))]
             Self::Xml(e) => write!(f, "XML error: {e}"),
             Self::Pdf(e) => write!(f, "PDF error: {e}"),
             #[cfg(any(feature = "fb2", feature = "mobi", feature = "plaintext"))]
             Self::Render(e) => write!(f, "render error: {e}"),
             Self::Format { detail } => write!(f, "format error: {detail}"),
             Self::UnsupportedFormat { extension } => write!(f, "unsupported format: .{extension}"),
-            Self::OutOfRange { index, count } => write!(f, "index {index} out of range ({count} pages)"),
+            Self::OutOfRange { index, count } => {
+                write!(f, "index {index} out of range ({count} pages)")
+            }
         }
     }
 }
@@ -46,14 +60,20 @@ impl fmt::Display for FormatError {
 impl std::error::Error for FormatError {}
 
 impl From<std::io::Error> for FormatError {
-    fn from(e: std::io::Error) -> Self { Self::Io(e) }
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 impl From<justpdf_core::JustPdfError> for FormatError {
-    fn from(e: justpdf_core::JustPdfError) -> Self { Self::Pdf(e) }
+    fn from(e: justpdf_core::JustPdfError) -> Self {
+        Self::Pdf(e)
+    }
 }
 
 #[cfg(any(feature = "fb2", feature = "mobi", feature = "plaintext"))]
 impl From<justpdf_render::error::RenderError> for FormatError {
-    fn from(e: justpdf_render::error::RenderError) -> Self { Self::Render(e) }
+    fn from(e: justpdf_render::error::RenderError) -> Self {
+        Self::Render(e)
+    }
 }

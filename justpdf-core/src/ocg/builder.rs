@@ -59,14 +59,15 @@ pub fn add_ocg(
         Some(PdfObject::Dict(d)) => d,
         _ => {
             let mut d = PdfDict::new();
-            d.insert(b"BaseState".to_vec(), PdfObject::Name(OCGState::On.to_name().to_vec()));
+            d.insert(
+                b"BaseState".to_vec(),
+                PdfObject::Name(OCGState::On.to_name().to_vec()),
+            );
             d
         }
     };
 
-    let base_state = OCGState::from_name(
-        d_config.get_name(b"BaseState").unwrap_or(b"ON"),
-    );
+    let base_state = OCGState::from_name(d_config.get_name(b"BaseState").unwrap_or(b"ON"));
 
     if initially_visible {
         if base_state == OCGState::Off {
@@ -151,9 +152,7 @@ pub fn set_ocg_visibility(
         }
     };
 
-    let base_state = OCGState::from_name(
-        d_config.get_name(b"BaseState").unwrap_or(b"ON"),
-    );
+    let base_state = OCGState::from_name(d_config.get_name(b"BaseState").unwrap_or(b"ON"));
     let base_is_on = base_state == OCGState::On;
 
     // Remove OCG from both /ON and /OFF lists first
@@ -278,8 +277,7 @@ fn remove_ref_from_order(arr_opt: Option<PdfObject>, ocg_ref: &IndirectRef) -> V
             .filter_map(|item| match item {
                 PdfObject::Reference(ref r) if r == ocg_ref => None,
                 PdfObject::Array(sub) => {
-                    let filtered =
-                        remove_ref_from_order(Some(PdfObject::Array(sub)), ocg_ref);
+                    let filtered = remove_ref_from_order(Some(PdfObject::Array(sub)), ocg_ref);
                     if filtered.is_empty() {
                         None
                     } else {
@@ -423,7 +421,11 @@ mod tests {
         let oc_props = catalog.get_dict(b"OCProperties").unwrap();
         let d_config = oc_props.get_dict(b"D").unwrap();
         let off_list = d_config.get_array(b"OFF").unwrap();
-        assert!(off_list.iter().any(|item| item.as_reference() == Some(&ocg_ref)));
+        assert!(
+            off_list
+                .iter()
+                .any(|item| item.as_reference() == Some(&ocg_ref))
+        );
     }
 
     #[test]
@@ -449,7 +451,11 @@ mod tests {
         // Should not be in /OFF
         let off = d_config.get_array(b"OFF");
         if let Some(off_list) = off {
-            assert!(!off_list.iter().any(|item| item.as_reference() == Some(&ocg_ref)));
+            assert!(
+                !off_list
+                    .iter()
+                    .any(|item| item.as_reference() == Some(&ocg_ref))
+            );
         }
     }
 
@@ -575,7 +581,11 @@ mod tests {
         ]);
         let result = remove_ref_from_array(Some(arr), &target);
         assert_eq!(result.len(), 2);
-        assert!(result.iter().all(|item| item.as_reference() != Some(&target)));
+        assert!(
+            result
+                .iter()
+                .all(|item| item.as_reference() != Some(&target))
+        );
     }
 
     #[test]

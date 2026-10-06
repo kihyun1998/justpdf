@@ -276,11 +276,7 @@ pub fn label_for_page(ranges: &[PageLabelRange], page_index: usize) -> String {
     }
 
     // Find the applicable range: the last range whose start_page <= page_index.
-    let range = match ranges
-        .iter()
-        .rev()
-        .find(|r| r.start_page <= page_index)
-    {
+    let range = match ranges.iter().rev().find(|r| r.start_page <= page_index) {
         Some(r) => r,
         None => return (page_index + 1).to_string(),
     };
@@ -382,10 +378,7 @@ pub fn to_alpha(value: i64, uppercase: bool) -> String {
 
 /// Write page label ranges into the document catalog as a /PageLabels number
 /// tree.
-pub fn set_page_labels(
-    modifier: &mut DocumentModifier,
-    ranges: &[PageLabelRange],
-) -> Result<()> {
+pub fn set_page_labels(modifier: &mut DocumentModifier, ranges: &[PageLabelRange]) -> Result<()> {
     // Build the label dict entries
     let mut entries: Vec<(i64, PdfObject)> = Vec::with_capacity(ranges.len());
 
@@ -404,10 +397,7 @@ pub fn set_page_labels(
         }
 
         if range.logical_start != 1 {
-            label_dict.insert(
-                b"St".to_vec(),
-                PdfObject::Integer(range.logical_start),
-            );
+            label_dict.insert(b"St".to_vec(), PdfObject::Integer(range.logical_start));
         }
 
         entries.push((range.start_page as i64, PdfObject::Dict(label_dict)));
@@ -435,10 +425,7 @@ pub fn set_page_labels(
 
     match catalog_obj {
         PdfObject::Dict(mut cat) => {
-            cat.insert(
-                b"PageLabels".to_vec(),
-                PdfObject::Reference(tree_ref),
-            );
+            cat.insert(b"PageLabels".to_vec(), PdfObject::Reference(tree_ref));
             modifier.set_object(catalog_ref.obj_num, PdfObject::Dict(cat));
         }
         _ => {
@@ -573,27 +560,21 @@ mod tests {
 
     #[test]
     fn test_label_for_page_with_prefix() {
-        let ranges = vec![
-            PageLabelRange::new(0, PageLabelStyle::Decimal).with_prefix("A-"),
-        ];
+        let ranges = vec![PageLabelRange::new(0, PageLabelStyle::Decimal).with_prefix("A-")];
         assert_eq!(label_for_page(&ranges, 0), "A-1");
         assert_eq!(label_for_page(&ranges, 2), "A-3");
     }
 
     #[test]
     fn test_label_for_page_with_logical_start() {
-        let ranges = vec![
-            PageLabelRange::new(0, PageLabelStyle::Decimal).with_logical_start(5),
-        ];
+        let ranges = vec![PageLabelRange::new(0, PageLabelStyle::Decimal).with_logical_start(5)];
         assert_eq!(label_for_page(&ranges, 0), "5");
         assert_eq!(label_for_page(&ranges, 3), "8");
     }
 
     #[test]
     fn test_label_for_page_none_style() {
-        let ranges = vec![
-            PageLabelRange::new(0, PageLabelStyle::None).with_prefix("Cover"),
-        ];
+        let ranges = vec![PageLabelRange::new(0, PageLabelStyle::None).with_prefix("Cover")];
         assert_eq!(label_for_page(&ranges, 0), "Cover");
     }
 
@@ -607,9 +588,7 @@ mod tests {
 
     #[test]
     fn test_label_for_page_single_page() {
-        let ranges = vec![
-            PageLabelRange::new(0, PageLabelStyle::None).with_prefix("Title"),
-        ];
+        let ranges = vec![PageLabelRange::new(0, PageLabelStyle::None).with_prefix("Title")];
         assert_eq!(label_for_page(&ranges, 0), "Title");
     }
 
@@ -634,10 +613,7 @@ mod tests {
 
         let mut label3 = PdfDict::new();
         label3.insert(b"S".to_vec(), PdfObject::Name(b"D".to_vec()));
-        label3.insert(
-            b"P".to_vec(),
-            PdfObject::String(b"Ch-".to_vec()),
-        );
+        label3.insert(b"P".to_vec(), PdfObject::String(b"Ch-".to_vec()));
 
         let mut tree = PdfDict::new();
         tree.insert(
@@ -719,9 +695,7 @@ mod tests {
         let mut doc = PdfDocument::from_bytes(bytes).unwrap();
         let mut modifier = DocumentModifier::from_document(&doc).unwrap();
 
-        let ranges = vec![
-            PageLabelRange::new(0, PageLabelStyle::Decimal).with_logical_start(10),
-        ];
+        let ranges = vec![PageLabelRange::new(0, PageLabelStyle::Decimal).with_logical_start(10)];
 
         set_page_labels(&mut modifier, &ranges).unwrap();
 

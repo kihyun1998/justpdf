@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use justpdf_core::{IndirectRef, JustPdfError, PdfDocument, PdfObject};
 use justpdf_core::page::collect_pages;
 use justpdf_core::text;
-use justpdf_core::text::search;
 use justpdf_core::text::format::{self, OutputFormat};
+use justpdf_core::text::search;
+use justpdf_core::{IndirectRef, JustPdfError, PdfDocument, PdfObject};
 
 fn fixture(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -352,17 +352,16 @@ fn test_corrupted_xref_bad_offset() {
 // ============================================================
 
 use justpdf_core::annot::{
-    self, AnnotationBuilder, AnnotColor, AnnotationType, AnnotationData,
-    AnnotationFlags,
+    self, AnnotColor, AnnotationBuilder, AnnotationData, AnnotationFlags, AnnotationType,
 };
-use justpdf_core::form;
-use justpdf_core::writer::document::DocumentBuilder;
-use justpdf_core::writer::page::PageBuilder;
-use justpdf_core::writer::modify::DocumentModifier;
-use justpdf_core::writer::{PdfWriter, serialize_pdf};
-use justpdf_core::page::Rect;
-use justpdf_core::object::PdfDict;
 use justpdf_core::content::{Operand, parse_content_stream};
+use justpdf_core::form;
+use justpdf_core::object::PdfDict;
+use justpdf_core::page::Rect;
+use justpdf_core::writer::document::DocumentBuilder;
+use justpdf_core::writer::modify::DocumentModifier;
+use justpdf_core::writer::page::PageBuilder;
+use justpdf_core::writer::{PdfWriter, serialize_pdf};
 
 fn create_simple_pdf() -> Vec<u8> {
     let mut doc = DocumentBuilder::new();
@@ -395,7 +394,12 @@ fn test_add_highlight_annotation_roundtrip() {
     let page_obj_num = pages[0].page_ref.obj_num;
 
     let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
-    let rect = Rect { llx: 100.0, lly: 700.0, urx: 300.0, ury: 720.0 };
+    let rect = Rect {
+        llx: 100.0,
+        lly: 700.0,
+        urx: 300.0,
+        ury: 720.0,
+    };
     let qp = vec![100.0, 720.0, 300.0, 720.0, 100.0, 700.0, 300.0, 700.0];
     let builder = AnnotationBuilder::highlight(rect, qp, AnnotColor::Rgb(1.0, 1.0, 0.0))
         .contents("Test highlight");
@@ -421,10 +425,15 @@ fn test_add_ink_annotation_roundtrip() {
     let page_obj_num = pages[0].page_ref.obj_num;
 
     let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
-    let rect = Rect { llx: 50.0, lly: 50.0, urx: 200.0, ury: 200.0 };
+    let rect = Rect {
+        llx: 50.0,
+        lly: 50.0,
+        urx: 200.0,
+        ury: 200.0,
+    };
     let ink_list = vec![vec![(60.0, 60.0), (100.0, 150.0), (180.0, 80.0)]];
-    let builder = AnnotationBuilder::ink(rect, ink_list.clone())
-        .color(AnnotColor::Rgb(1.0, 0.0, 0.0));
+    let builder =
+        AnnotationBuilder::ink(rect, ink_list.clone()).color(AnnotColor::Rgb(1.0, 0.0, 0.0));
     annot::add_annotation(&mut modifier, page_obj_num, builder).unwrap();
 
     let new_bytes = modifier.build().unwrap();
@@ -451,7 +460,12 @@ fn test_add_link_annotation_roundtrip() {
     let page_obj_num = pages[0].page_ref.obj_num;
 
     let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
-    let rect = Rect { llx: 72.0, lly: 700.0, urx: 200.0, ury: 720.0 };
+    let rect = Rect {
+        llx: 72.0,
+        lly: 700.0,
+        urx: 200.0,
+        ury: 720.0,
+    };
     let builder = AnnotationBuilder::link_uri(rect, "https://example.com");
     annot::add_annotation(&mut modifier, page_obj_num, builder).unwrap();
 
@@ -477,7 +491,12 @@ fn test_delete_annotation() {
     let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
 
     // Add two annotations
-    let rect = Rect { llx: 100.0, lly: 700.0, urx: 300.0, ury: 720.0 };
+    let rect = Rect {
+        llx: 100.0,
+        lly: 700.0,
+        urx: 300.0,
+        ury: 720.0,
+    };
     let builder1 = AnnotationBuilder::text(rect, "Note 1");
     let builder2 = AnnotationBuilder::text(rect, "Note 2");
     annot::add_annotation(&mut modifier, page_obj_num, builder1).unwrap();
@@ -527,7 +546,13 @@ fn test_line_annotation_properties() {
     let pages2 = collect_pages(&mut doc2).unwrap();
     let annots = annot::get_annotations(&mut doc2, &pages2[0]).unwrap();
     assert_eq!(annots.len(), 1);
-    if let AnnotationData::Line { start, end, line_endings, .. } = &annots[0].data {
+    if let AnnotationData::Line {
+        start,
+        end,
+        line_endings,
+        ..
+    } = &annots[0].data
+    {
         assert_eq!(*start, (100.0, 100.0));
         assert_eq!(*end, (300.0, 300.0));
         assert_eq!(line_endings.0, annot::LineEndingStyle::OpenArrow);
@@ -545,9 +570,15 @@ fn test_annotation_flags_roundtrip() {
     let page_obj_num = pages[0].page_ref.obj_num;
 
     let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
-    let rect = Rect { llx: 100.0, lly: 600.0, urx: 250.0, ury: 650.0 };
-    let builder = AnnotationBuilder::stamp(rect, "Approved")
-        .flags(AnnotationFlags(AnnotationFlags::PRINT | AnnotationFlags::NO_ZOOM));
+    let rect = Rect {
+        llx: 100.0,
+        lly: 600.0,
+        urx: 250.0,
+        ury: 650.0,
+    };
+    let builder = AnnotationBuilder::stamp(rect, "Approved").flags(AnnotationFlags(
+        AnnotationFlags::PRINT | AnnotationFlags::NO_ZOOM,
+    ));
     annot::add_annotation(&mut modifier, page_obj_num, builder).unwrap();
 
     let new_bytes = modifier.build().unwrap();
@@ -589,12 +620,17 @@ fn create_acroform_pdf() -> Vec<u8> {
     text_field.insert(b"FT".to_vec(), PdfObject::Name(b"Tx".to_vec()));
     text_field.insert(b"T".to_vec(), PdfObject::String(b"name".to_vec()));
     text_field.insert(b"V".to_vec(), PdfObject::String(b"John".to_vec()));
-    text_field.insert(b"DA".to_vec(), PdfObject::String(b"/Helv 10 Tf 0 g".to_vec()));
+    text_field.insert(
+        b"DA".to_vec(),
+        PdfObject::String(b"/Helv 10 Tf 0 g".to_vec()),
+    );
     text_field.insert(
         b"Rect".to_vec(),
         PdfObject::Array(vec![
-            PdfObject::Integer(100), PdfObject::Integer(700),
-            PdfObject::Integer(300), PdfObject::Integer(720),
+            PdfObject::Integer(100),
+            PdfObject::Integer(700),
+            PdfObject::Integer(300),
+            PdfObject::Integer(720),
         ]),
     );
     let text_ref = w.add_object(PdfObject::Dict(text_field));
@@ -610,8 +646,10 @@ fn create_acroform_pdf() -> Vec<u8> {
     cb_field.insert(
         b"Rect".to_vec(),
         PdfObject::Array(vec![
-            PdfObject::Integer(100), PdfObject::Integer(660),
-            PdfObject::Integer(114), PdfObject::Integer(674),
+            PdfObject::Integer(100),
+            PdfObject::Integer(660),
+            PdfObject::Integer(114),
+            PdfObject::Integer(674),
         ]),
     );
     let cb_ref = w.add_object(PdfObject::Dict(cb_field));
@@ -635,8 +673,10 @@ fn create_acroform_pdf() -> Vec<u8> {
     combo_field.insert(
         b"Rect".to_vec(),
         PdfObject::Array(vec![
-            PdfObject::Integer(100), PdfObject::Integer(620),
-            PdfObject::Integer(300), PdfObject::Integer(640),
+            PdfObject::Integer(100),
+            PdfObject::Integer(620),
+            PdfObject::Integer(300),
+            PdfObject::Integer(640),
         ]),
     );
     let combo_ref = w.add_object(PdfObject::Dict(combo_field));
@@ -652,8 +692,10 @@ fn create_acroform_pdf() -> Vec<u8> {
     ro_field.insert(
         b"Rect".to_vec(),
         PdfObject::Array(vec![
-            PdfObject::Integer(100), PdfObject::Integer(580),
-            PdfObject::Integer(300), PdfObject::Integer(600),
+            PdfObject::Integer(100),
+            PdfObject::Integer(580),
+            PdfObject::Integer(300),
+            PdfObject::Integer(600),
         ]),
     );
     let ro_ref = w.add_object(PdfObject::Dict(ro_field));
@@ -669,10 +711,7 @@ fn create_acroform_pdf() -> Vec<u8> {
             PdfObject::Reference(ro_ref.clone()),
         ]),
     );
-    acroform.insert(
-        b"DR".to_vec(),
-        PdfObject::Reference(resources_ref.clone()),
-    );
+    acroform.insert(b"DR".to_vec(), PdfObject::Reference(resources_ref.clone()));
     acroform.insert(
         b"DA".to_vec(),
         PdfObject::String(b"/Helv 10 Tf 0 g".to_vec()),
@@ -680,7 +719,10 @@ fn create_acroform_pdf() -> Vec<u8> {
 
     // 8. Page (with widget annotations)
     let pages_num = w.alloc_object_num();
-    let pages_ref = IndirectRef { obj_num: pages_num, gen_num: 0 };
+    let pages_ref = IndirectRef {
+        obj_num: pages_num,
+        gen_num: 0,
+    };
 
     let mut page_dict = PdfDict::new();
     page_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Page".to_vec()));
@@ -688,8 +730,10 @@ fn create_acroform_pdf() -> Vec<u8> {
     page_dict.insert(
         b"MediaBox".to_vec(),
         PdfObject::Array(vec![
-            PdfObject::Integer(0), PdfObject::Integer(0),
-            PdfObject::Integer(612), PdfObject::Integer(792),
+            PdfObject::Integer(0),
+            PdfObject::Integer(0),
+            PdfObject::Integer(612),
+            PdfObject::Integer(792),
         ]),
     );
     page_dict.insert(b"Resources".to_vec(), PdfObject::Reference(resources_ref));
@@ -740,7 +784,11 @@ fn test_acroform_parse() {
     assert_eq!(cb_field.field_type, form::FieldType::Checkbox);
     assert!(!cb_field.is_checked());
 
-    let combo = acroform.fields.iter().find(|f| f.name == "country").unwrap();
+    let combo = acroform
+        .fields
+        .iter()
+        .find(|f| f.name == "country")
+        .unwrap();
     assert_eq!(combo.field_type, form::FieldType::ComboBox);
     assert_eq!(combo.value_as_string(), Some("Korea".to_string()));
     assert_eq!(combo.options, vec!["Korea", "Japan", "China"]);
@@ -818,7 +866,11 @@ fn test_combobox_change_roundtrip() {
     let new_bytes = modifier.build().unwrap();
     let mut doc2 = PdfDocument::from_bytes(new_bytes).unwrap();
     let acroform2 = form::parse_acroform(&mut doc2).unwrap().unwrap();
-    let combo = acroform2.fields.iter().find(|f| f.name == "country").unwrap();
+    let combo = acroform2
+        .fields
+        .iter()
+        .find(|f| f.name == "country")
+        .unwrap();
     assert_eq!(combo.value_as_string(), Some("Japan".to_string()));
 }
 
@@ -866,9 +918,13 @@ fn test_redaction_apply() {
 
     // Add a Redact annotation covering the text area
     let mut modifier = DocumentModifier::from_document(&mut doc).unwrap();
-    let rect = Rect { llx: 50.0, lly: 710.0, urx: 200.0, ury: 730.0 };
-    let builder = AnnotationBuilder::redact(rect)
-        .interior_color(AnnotColor::Rgb(0.0, 0.0, 0.0));
+    let rect = Rect {
+        llx: 50.0,
+        lly: 710.0,
+        urx: 200.0,
+        ury: 730.0,
+    };
+    let builder = AnnotationBuilder::redact(rect).interior_color(AnnotColor::Rgb(0.0, 0.0, 0.0));
     annot::add_annotation(&mut modifier, page_obj_num, builder).unwrap();
     let with_redact = modifier.build().unwrap();
 
@@ -886,7 +942,9 @@ fn test_redaction_apply() {
     let annots = annot::get_annotations(&mut doc3, &pages3[0]).unwrap();
     // No redact annotations remaining
     assert!(
-        annots.iter().all(|a| a.annot_type != AnnotationType::Redact),
+        annots
+            .iter()
+            .all(|a| a.annot_type != AnnotationType::Redact),
         "redact annotations should be removed"
     );
 }
@@ -1662,7 +1720,10 @@ fn build_multi_page_pdf(num_pages: usize, write_count: bool) -> Vec<u8> {
 
     // Pre-allocate Pages node
     let pages_num = w.alloc_object_num();
-    let pages_ref = IndirectRef { obj_num: pages_num, gen_num: 0 };
+    let pages_ref = IndirectRef {
+        obj_num: pages_num,
+        gen_num: 0,
+    };
 
     // Create page objects
     let mut page_refs = Vec::with_capacity(num_pages);
@@ -1676,7 +1737,10 @@ fn build_multi_page_pdf(num_pages: usize, write_count: bool) -> Vec<u8> {
             b"Length".to_vec(),
             PdfObject::Integer(content_bytes.len() as i64),
         );
-        let stream_obj = PdfObject::Stream { dict: stream_dict, data: content_bytes };
+        let stream_obj = PdfObject::Stream {
+            dict: stream_dict,
+            data: content_bytes,
+        };
         let content_ref = w.add_object(stream_obj);
 
         let mut page_dict = PdfDict::new();
@@ -1691,7 +1755,10 @@ fn build_multi_page_pdf(num_pages: usize, write_count: bool) -> Vec<u8> {
                 PdfObject::Integer(792),
             ]),
         );
-        page_dict.insert(b"Resources".to_vec(), PdfObject::Reference(resources_ref.clone()));
+        page_dict.insert(
+            b"Resources".to_vec(),
+            PdfObject::Reference(resources_ref.clone()),
+        );
         page_dict.insert(b"Contents".to_vec(), PdfObject::Reference(content_ref));
         let page_ref = w.add_object(PdfObject::Dict(page_dict));
         page_refs.push(PdfObject::Reference(page_ref));
@@ -1893,10 +1960,7 @@ fn test_decode_stream_cow_no_filter_borrowed() {
 #[test]
 fn test_decode_stream_cow_dct_borrowed() {
     let mut dict = PdfDict::new();
-    dict.insert(
-        b"Filter".to_vec(),
-        PdfObject::Name(b"DCTDecode".to_vec()),
-    );
+    dict.insert(b"Filter".to_vec(), PdfObject::Name(b"DCTDecode".to_vec()));
     let data = b"\xFF\xD8\xFF\xE0fake jpeg bytes";
     let result = decode_stream_cow(data, &dict).unwrap();
     assert!(matches!(result, Cow::Borrowed(_)));
@@ -1914,10 +1978,7 @@ fn test_decode_stream_cow_flate_owned() {
     let compressed = encoder.finish().unwrap();
 
     let mut dict = PdfDict::new();
-    dict.insert(
-        b"Filter".to_vec(),
-        PdfObject::Name(b"FlateDecode".to_vec()),
-    );
+    dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
 
     let result = decode_stream_cow(&compressed, &dict).unwrap();
     assert!(matches!(result, Cow::Owned(_)));

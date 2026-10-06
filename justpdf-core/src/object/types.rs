@@ -461,8 +461,14 @@ mod tests {
         assert_eq!(written(2147483648.0), "2147483648.0");
         assert_eq!(written(1e20), "100000000000000000000.0");
         assert_eq!(written(f64::NAN), "0");
-        assert_eq!(written(f64::INFINITY), "340282346638528860000000000000000000000.0");
-        assert_eq!(written(f64::NEG_INFINITY), "-340282346638528860000000000000000000000.0");
+        assert_eq!(
+            written(f64::INFINITY),
+            "340282346638528860000000000000000000000.0"
+        );
+        assert_eq!(
+            written(f64::NEG_INFINITY),
+            "-340282346638528860000000000000000000000.0"
+        );
     }
 
     #[test]
@@ -575,15 +581,22 @@ mod tests {
     fn test_string_display_with_parens() {
         let s = PdfObject::String(b"hello(world)".to_vec());
         let display = s.to_string();
-        assert!(display.contains("\\(") && display.contains("\\)"),
-            "Parentheses must be escaped: {}", display);
+        assert!(
+            display.contains("\\(") && display.contains("\\)"),
+            "Parentheses must be escaped: {}",
+            display
+        );
     }
 
     #[test]
     fn test_string_display_with_backslash() {
         let s = PdfObject::String(b"path\\to".to_vec());
         let display = s.to_string();
-        assert!(display.contains("\\\\"), "Backslash must be escaped: {}", display);
+        assert!(
+            display.contains("\\\\"),
+            "Backslash must be escaped: {}",
+            display
+        );
     }
 
     #[test]
@@ -591,8 +604,11 @@ mod tests {
         // Binary data with null bytes should use hex encoding
         let s = PdfObject::String(vec![0x00, 0xFF, 0x42]);
         let display = s.to_string();
-        assert!(display.starts_with('<') && display.ends_with('>'),
-            "Binary strings should use hex: {}", display);
+        assert!(
+            display.starts_with('<') && display.ends_with('>'),
+            "Binary strings should use hex: {}",
+            display
+        );
         assert_eq!(display, "<00FF42>");
     }
 
@@ -628,9 +644,16 @@ mod tests {
     #[test]
     fn test_dict_display_key_with_space() {
         let mut d = PdfDict::new();
-        d.insert(b"Base Font".to_vec(), PdfObject::Name(b"Helvetica".to_vec()));
+        d.insert(
+            b"Base Font".to_vec(),
+            PdfObject::Name(b"Helvetica".to_vec()),
+        );
         let s = format!("{}", PdfObject::Dict(d));
-        assert!(s.contains("/Base#20Font"), "Dict key with space must be escaped: {}", s);
+        assert!(
+            s.contains("/Base#20Font"),
+            "Dict key with space must be escaped: {}",
+            s
+        );
     }
 
     #[test]

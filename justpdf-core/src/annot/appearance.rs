@@ -29,9 +29,7 @@ pub fn generate_appearance(
         None => return Ok(None),
     };
 
-    let color = annot_dict
-        .get_array(b"C")
-        .and_then(AnnotColor::from_array);
+    let color = annot_dict.get_array(b"C").and_then(AnnotColor::from_array);
     let border_width = annot_dict
         .get_dict(b"BS")
         .and_then(|bs| bs.get(b"W"))
@@ -96,19 +94,49 @@ pub fn generate_appearance(
 
 fn set_stroke_color(buf: &mut String, color: &Option<AnnotColor>) {
     match color {
-        Some(AnnotColor::Gray(g)) => { let _ = writeln!(buf, "{} G", Number(*g)); }
-        Some(AnnotColor::Rgb(r, g, b)) => { let _ = writeln!(buf, "{} {} {} RG", Number(*r), Number(*g), Number(*b)); }
-        Some(AnnotColor::Cmyk(c, m, y, k)) => { let _ = writeln!(buf, "{} {} {} {} K", Number(*c), Number(*m), Number(*y), Number(*k)); }
-        None => { buf.push_str("0 G\n"); }
+        Some(AnnotColor::Gray(g)) => {
+            let _ = writeln!(buf, "{} G", Number(*g));
+        }
+        Some(AnnotColor::Rgb(r, g, b)) => {
+            let _ = writeln!(buf, "{} {} {} RG", Number(*r), Number(*g), Number(*b));
+        }
+        Some(AnnotColor::Cmyk(c, m, y, k)) => {
+            let _ = writeln!(
+                buf,
+                "{} {} {} {} K",
+                Number(*c),
+                Number(*m),
+                Number(*y),
+                Number(*k)
+            );
+        }
+        None => {
+            buf.push_str("0 G\n");
+        }
     }
 }
 
 fn set_fill_color(buf: &mut String, color: &Option<AnnotColor>) {
     match color {
-        Some(AnnotColor::Gray(g)) => { let _ = writeln!(buf, "{} g", Number(*g)); }
-        Some(AnnotColor::Rgb(r, g, b)) => { let _ = writeln!(buf, "{} {} {} rg", Number(*r), Number(*g), Number(*b)); }
-        Some(AnnotColor::Cmyk(c, m, y, k)) => { let _ = writeln!(buf, "{} {} {} {} k", Number(*c), Number(*m), Number(*y), Number(*k)); }
-        None => { buf.push_str("0 g\n"); }
+        Some(AnnotColor::Gray(g)) => {
+            let _ = writeln!(buf, "{} g", Number(*g));
+        }
+        Some(AnnotColor::Rgb(r, g, b)) => {
+            let _ = writeln!(buf, "{} {} {} rg", Number(*r), Number(*g), Number(*b));
+        }
+        Some(AnnotColor::Cmyk(c, m, y, k)) => {
+            let _ = writeln!(
+                buf,
+                "{} {} {} {} k",
+                Number(*c),
+                Number(*m),
+                Number(*y),
+                Number(*k)
+            );
+        }
+        None => {
+            buf.push_str("0 g\n");
+        }
     }
 }
 
@@ -122,7 +150,10 @@ fn highlight_appearance(
     let _ = write!(
         buf,
         "{} {} {} {} re\nf\n",
-        Number(rect.llx), Number(rect.lly), Number(rect.width()), Number(rect.height())
+        Number(rect.llx),
+        Number(rect.lly),
+        Number(rect.width()),
+        Number(rect.height())
     );
     Some(buf)
 }
@@ -209,7 +240,10 @@ fn square_appearance(
     let _ = write!(
         buf,
         "{} {} {} {} re\n",
-        Number(rect.llx), Number(rect.lly), Number(rect.width()), Number(rect.height())
+        Number(rect.llx),
+        Number(rect.lly),
+        Number(rect.width()),
+        Number(rect.height())
     );
     if ic.is_some() {
         set_fill_color(&mut buf, &ic);
@@ -243,30 +277,42 @@ fn circle_appearance(
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        Number(cx + rx), Number(cy + ry * k),
-        Number(cx + rx * k), Number(cy + ry),
-        Number(cx), Number(cy + ry)
+        Number(cx + rx),
+        Number(cy + ry * k),
+        Number(cx + rx * k),
+        Number(cy + ry),
+        Number(cx),
+        Number(cy + ry)
     );
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        Number(cx - rx * k), Number(cy + ry),
-        Number(cx - rx), Number(cy + ry * k),
-        Number(cx - rx), Number(cy)
+        Number(cx - rx * k),
+        Number(cy + ry),
+        Number(cx - rx),
+        Number(cy + ry * k),
+        Number(cx - rx),
+        Number(cy)
     );
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        Number(cx - rx), Number(cy - ry * k),
-        Number(cx - rx * k), Number(cy - ry),
-        Number(cx), Number(cy - ry)
+        Number(cx - rx),
+        Number(cy - ry * k),
+        Number(cx - rx * k),
+        Number(cy - ry),
+        Number(cx),
+        Number(cy - ry)
     );
     let _ = write!(
         buf,
         "{} {} {} {} {} {} c\n",
-        Number(cx + rx * k), Number(cy - ry),
-        Number(cx + rx), Number(cy - ry * k),
-        Number(cx + rx), Number(cy)
+        Number(cx + rx * k),
+        Number(cy - ry),
+        Number(cx + rx),
+        Number(cy - ry * k),
+        Number(cx + rx),
+        Number(cy)
     );
 
     if ic.is_some() {
@@ -391,7 +437,10 @@ fn redact_appearance(rect: &Rect, dict: &PdfDict) -> Option<String> {
     let _ = write!(
         buf,
         "{} {} {} {} re\nf\n",
-        Number(rect.llx), Number(rect.lly), Number(rect.width()), Number(rect.height())
+        Number(rect.llx),
+        Number(rect.lly),
+        Number(rect.width()),
+        Number(rect.height())
     );
     Some(buf)
 }
@@ -406,24 +455,42 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|op| op.operator)
-            .filter(|op| op.starts_with(b"NaN") || op.starts_with(b"inf") || op.starts_with(b"-inf"))
+            .filter(|op| {
+                op.starts_with(b"NaN") || op.starts_with(b"inf") || op.starts_with(b"-inf")
+            })
             .collect()
     }
 
     #[test]
     fn test_non_finite_numbers_are_written_as_numbers() {
-        let rect = Rect { llx: f64::NAN, lly: f64::INFINITY, urx: 10.0, ury: f64::NEG_INFINITY };
+        let rect = Rect {
+            llx: f64::NAN,
+            lly: f64::INFINITY,
+            urx: 10.0,
+            ury: f64::NEG_INFINITY,
+        };
         let color = Some(AnnotColor::Rgb(f64::NAN, f64::INFINITY, 0.5));
         let w = f64::NAN;
         let nan = PdfObject::Real(f64::NAN);
         let inf = PdfObject::Real(f64::INFINITY);
         let mut dict = PdfDict::new();
-        dict.insert(b"L".to_vec(), PdfObject::Array(vec![nan.clone(), inf.clone(), nan.clone(), inf.clone()]));
+        dict.insert(
+            b"L".to_vec(),
+            PdfObject::Array(vec![nan.clone(), inf.clone(), nan.clone(), inf.clone()]),
+        );
         dict.insert(
             b"InkList".to_vec(),
-            PdfObject::Array(vec![PdfObject::Array(vec![nan.clone(), inf.clone(), nan, inf])]),
+            PdfObject::Array(vec![PdfObject::Array(vec![
+                nan.clone(),
+                inf.clone(),
+                nan,
+                inf,
+            ])]),
         );
-        dict.insert(b"IC".to_vec(), PdfObject::Array(vec![PdfObject::Real(f64::NAN)]));
+        dict.insert(
+            b"IC".to_vec(),
+            PdfObject::Array(vec![PdfObject::Real(f64::NAN)]),
+        );
         let contents = [
             highlight_appearance(&rect, &color, &dict),
             underline_appearance(&rect, &color, w, &dict),
@@ -439,7 +506,11 @@ mod tests {
         ];
         for (i, content) in contents.iter().enumerate() {
             let content = content.as_ref().unwrap();
-            assert_eq!(non_finite_operators(content.as_bytes()), Vec::<Vec<u8>>::new(), "generator {i}: {content}");
+            assert_eq!(
+                non_finite_operators(content.as_bytes()),
+                Vec::<Vec<u8>>::new(),
+                "generator {i}: {content}"
+            );
         }
     }
 

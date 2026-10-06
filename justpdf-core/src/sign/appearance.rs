@@ -95,15 +95,23 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|op| op.operator)
-            .filter(|op| op.starts_with(b"NaN") || op.starts_with(b"inf") || op.starts_with(b"-inf"))
+            .filter(|op| {
+                op.starts_with(b"NaN") || op.starts_with(b"inf") || op.starts_with(b"-inf")
+            })
             .collect()
     }
 
     #[test]
     fn test_non_finite_sizes_are_written_as_numbers() {
-        let (dict, data) = generate_signature_appearance("A", Some("R"), Some("D"), f64::NAN, f64::INFINITY);
+        let (dict, data) =
+            generate_signature_appearance("A", Some("R"), Some("D"), f64::NAN, f64::INFINITY);
         let content = crate::stream::decode_stream(&data, &dict).unwrap();
-        assert_eq!(non_finite_operators(&content), Vec::<Vec<u8>>::new(), "{}", String::from_utf8_lossy(&content));
+        assert_eq!(
+            non_finite_operators(&content),
+            Vec::<Vec<u8>>::new(),
+            "{}",
+            String::from_utf8_lossy(&content)
+        );
     }
 
     #[test]
@@ -123,13 +131,7 @@ mod tests {
 
     #[test]
     fn test_generate_appearance_minimal() {
-        let (dict, data) = generate_signature_appearance(
-            "Signer",
-            None,
-            None,
-            100.0,
-            40.0,
-        );
+        let (dict, data) = generate_signature_appearance("Signer", None, None, 100.0, 40.0);
         assert!(!data.is_empty());
         assert!(dict.get(b"Resources").is_some());
     }

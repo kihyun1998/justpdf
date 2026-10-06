@@ -1,6 +1,6 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use justpdf_core::PdfDocument;
-use justpdf_render::render::{render_page, RenderOptions};
+use justpdf_render::render::{RenderOptions, render_page};
 use std::path::Path;
 
 fn bench_render_page(c: &mut Criterion) {

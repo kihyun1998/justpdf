@@ -1,6 +1,6 @@
 use tiny_skia::{
-    BlendMode, Color, FillRule, LineCap as SkiaLineCap, LineJoin as SkiaLineJoin, Mask,
-    Paint, Pixmap, Stroke, Transform,
+    BlendMode, Color, FillRule, LineCap as SkiaLineCap, LineJoin as SkiaLineJoin, Mask, Paint,
+    Pixmap, Stroke, Transform,
 };
 
 use crate::error::{RenderError, Result};
@@ -148,8 +148,7 @@ impl PixmapDevice {
         paint.quality = tiny_skia::FilterQuality::Bilinear;
 
         let clip = self.clip_mask.as_ref();
-        self.pixmap
-            .draw_pixmap(0, 0, *src, &paint, transform, clip);
+        self.pixmap.draw_pixmap(0, 0, *src, &paint, transform, clip);
     }
 
     /// Fill a path with a pattern (tiled pixmap).
@@ -234,11 +233,9 @@ impl PixmapDevice {
 
     /// Encode the pixmap as PNG bytes.
     pub fn encode_png(&self) -> Result<Vec<u8>> {
-        self.pixmap
-            .encode_png()
-            .map_err(|e| RenderError::Encode {
-                detail: e.to_string(),
-            })
+        self.pixmap.encode_png().map_err(|e| RenderError::Encode {
+            detail: e.to_string(),
+        })
     }
 
     /// Get the raw RGBA pixel data.

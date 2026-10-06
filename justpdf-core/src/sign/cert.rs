@@ -2,8 +2,8 @@
 
 use der::{Decode, Encode};
 
-use crate::error::Result;
 use super::types::CertificateInfo;
+use crate::error::Result;
 
 /// Extract certificate information from a CMS/PKCS#7 SignedData blob.
 pub fn extract_certificates(cms_data: &[u8]) -> Result<Vec<CertificateInfo>> {
@@ -41,10 +41,7 @@ fn parse_x509_cert(cert: &x509_cert::Certificate) -> CertificateInfo {
     let subject = format_rdn_sequence(&cert.tbs_certificate.subject);
     let issuer = format_rdn_sequence(&cert.tbs_certificate.issuer);
 
-    let serial_bytes = cert
-        .tbs_certificate
-        .serial_number
-        .as_bytes();
+    let serial_bytes = cert.tbs_certificate.serial_number.as_bytes();
     let serial_number = serial_bytes
         .iter()
         .map(|b| format!("{:02X}", b))

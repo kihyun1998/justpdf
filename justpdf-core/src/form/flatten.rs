@@ -11,10 +11,7 @@ use super::parse::parse_acroform;
 
 /// Flatten all form fields: bake appearance streams into page content,
 /// remove widget annotations and AcroForm.
-pub fn flatten_form(
-    modifier: &mut DocumentModifier,
-    doc: &PdfDocument,
-) -> Result<()> {
+pub fn flatten_form(modifier: &mut DocumentModifier, doc: &PdfDocument) -> Result<()> {
     let acroform = match parse_acroform(doc)? {
         Some(f) => f,
         None => return Ok(()), // No form to flatten
@@ -88,9 +85,7 @@ pub fn flatten_form(
 
             if let Some(ap_ref) = ap_ref {
                 // Get widget rect for positioning
-                let rect = annot_dict
-                    .get_array(b"Rect")
-                    .and_then(Rect::from_pdf_array);
+                let rect = annot_dict.get_array(b"Rect").and_then(Rect::from_pdf_array);
 
                 if let Some(rect) = rect {
                     // Add content to draw the appearance stream at the widget's position
@@ -110,8 +105,7 @@ pub fn flatten_form(
 
         if !flatten_content.is_empty() {
             // Create a new content stream with the flattened widget content
-            let (stream_dict, stream_data) =
-                make_stream(flatten_content.as_bytes(), true);
+            let (stream_dict, stream_data) = make_stream(flatten_content.as_bytes(), true);
             let content_ref = modifier.add_object(PdfObject::Stream {
                 dict: stream_dict,
                 data: stream_data,
@@ -133,16 +127,10 @@ pub fn flatten_form(
             if remaining_annots.is_empty() {
                 updated_page.remove(b"Annots");
             } else {
-                updated_page.insert(
-                    b"Annots".to_vec(),
-                    PdfObject::Array(remaining_annots),
-                );
+                updated_page.insert(b"Annots".to_vec(), PdfObject::Array(remaining_annots));
             }
 
-            modifier.set_object(
-                page_info.page_ref.obj_num,
-                PdfObject::Dict(updated_page),
-            );
+            modifier.set_object(page_info.page_ref.obj_num, PdfObject::Dict(updated_page));
         }
     }
 

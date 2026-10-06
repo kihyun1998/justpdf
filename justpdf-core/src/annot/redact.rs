@@ -3,7 +3,7 @@ use std::fmt::Write;
 use crate::content::{ContentOp, Operand, parse_content_stream, write_content};
 use crate::error::{JustPdfError, Result};
 use crate::object::{Number, PdfDict, PdfObject};
-use crate::page::{collect_pages, Rect};
+use crate::page::{Rect, collect_pages};
 use crate::parser::PdfDocument;
 use crate::stream;
 use crate::writer::encode::make_stream;
@@ -24,9 +24,11 @@ pub fn apply_redactions(
     page_index: usize,
 ) -> Result<()> {
     let pages = collect_pages(doc)?;
-    let page = pages.get(page_index).ok_or_else(|| JustPdfError::AnnotationError {
-        detail: format!("page index {page_index} out of range"),
-    })?;
+    let page = pages
+        .get(page_index)
+        .ok_or_else(|| JustPdfError::AnnotationError {
+            detail: format!("page index {page_index} out of range"),
+        })?;
 
     let page_obj = doc.resolve(&page.page_ref)?;
     let page_dict = match page_obj.as_dict() {
@@ -104,8 +106,8 @@ pub fn apply_redactions(
     // Get and filter the content stream
     let content_data = get_page_content_data(doc, &page_dict)?;
     if !content_data.is_empty() {
-        let ops = parse_content_stream(&content_data)
-            .map_err(|e| JustPdfError::AnnotationError {
+        let ops =
+            parse_content_stream(&content_data).map_err(|e| JustPdfError::AnnotationError {
                 detail: format!("failed to parse content stream: {e}"),
             })?;
 
@@ -154,10 +156,7 @@ pub fn apply_redactions(
         });
 
         let mut updated_page = page_dict.clone();
-        updated_page.insert(
-            b"Contents".to_vec(),
-            PdfObject::Reference(content_ref),
-        );
+        updated_page.insert(b"Contents".to_vec(), PdfObject::Reference(content_ref));
 
         // Update annotations (remove redact annots)
         if remaining_annots.is_empty() {
@@ -247,15 +246,12 @@ fn filter_content_ops(ops: &[ContentOp], redact_rects: &[RedactInfo]) -> Vec<Con
         }
 
         if in_text {
-            let is_text_showing = matches!(
-                op_name,
-                b"Tj" | b"TJ" | b"'" | b"\""
-            );
+            let is_text_showing = matches!(op_name, b"Tj" | b"TJ" | b"'" | b"\"");
 
             if is_text_showing && text_matrix_set {
-                let in_redact = redact_rects.iter().any(|info| {
-                    point_in_rect(text_x, text_y, &info.rect)
-                });
+                let in_redact = redact_rects
+                    .iter()
+                    .any(|info| point_in_rect(text_x, text_y, &info.rect));
                 if in_redact {
                     // Skip this entire text block
                     skip_text_block = true;
@@ -285,9 +281,9 @@ fn filter_content_ops(ops: &[ContentOp], redact_rects: &[RedactInfo]) -> Vec<Con
                 urx: ctm_e + ctm_a,
                 ury: ctm_f + ctm_d,
             };
-            let in_redact = redact_rects.iter().any(|info| {
-                rects_overlap(&img_rect, &info.rect)
-            });
+            let in_redact = redact_rects
+                .iter()
+                .any(|info| rects_overlap(&img_rect, &info.rect));
             if in_redact {
                 continue; // Skip this image
             }
@@ -345,9 +341,7 @@ fn get_page_content_data(doc: &PdfDocument, page_dict: &PdfDict) -> Result<Vec<u
         PdfObject::Reference(r) => {
             let resolved = doc.resolve(&r)?;
             match resolved {
-                PdfObject::Stream { dict, data } => {
-                    stream::decode_stream(&data, &dict)
-                }
+                PdfObject::Stream { dict, data } => stream::decode_stream(&data, &dict),
                 _ => Ok(Vec::new()),
             }
         }
@@ -365,9 +359,7 @@ fn get_page_content_data(doc: &PdfDocument, page_dict: &PdfDict) -> Result<Vec<u
             }
             Ok(all_data)
         }
-        PdfObject::Stream { dict, data } => {
-            stream::decode_stream(&data, &dict)
-        }
+        PdfObject::Stream { dict, data } => stream::decode_stream(&data, &dict),
         _ => Ok(Vec::new()),
     }
 }
@@ -379,7 +371,12 @@ mod tests {
 
     #[test]
     fn test_point_in_rect() {
-        let rect = Rect { llx: 100.0, lly: 200.0, urx: 300.0, ury: 220.0 };
+        let rect = Rect {
+            llx: 100.0,
+            lly: 200.0,
+            urx: 300.0,
+            ury: 220.0,
+        };
         assert!(point_in_rect(150.0, 210.0, &rect));
         assert!(point_in_rect(100.0, 200.0, &rect)); // edge
         assert!(!point_in_rect(50.0, 210.0, &rect));
@@ -388,18 +385,36 @@ mod tests {
 
     #[test]
     fn test_rects_overlap() {
-        let a = Rect { llx: 0.0, lly: 0.0, urx: 100.0, ury: 100.0 };
-        let b = Rect { llx: 50.0, lly: 50.0, urx: 150.0, ury: 150.0 };
+        let a = Rect {
+            llx: 0.0,
+            lly: 0.0,
+            urx: 100.0,
+            ury: 100.0,
+        };
+        let b = Rect {
+            llx: 50.0,
+            lly: 50.0,
+            urx: 150.0,
+            ury: 150.0,
+        };
         assert!(rects_overlap(&a, &b));
 
-        let c = Rect { llx: 200.0, lly: 200.0, urx: 300.0, ury: 300.0 };
+        let c = Rect {
+            llx: 200.0,
+            lly: 200.0,
+            urx: 300.0,
+            ury: 300.0,
+        };
         assert!(!rects_overlap(&a, &c));
     }
 
     #[test]
     fn test_filter_removes_text_in_redact_rect() {
         let ops = vec![
-            ContentOp { operator: b"BT".to_vec(), operands: vec![] },
+            ContentOp {
+                operator: b"BT".to_vec(),
+                operands: vec![],
+            },
             ContentOp {
                 operator: b"Td".to_vec(),
                 operands: vec![Operand::Real(150.0), Operand::Real(710.0)],
@@ -408,11 +423,19 @@ mod tests {
                 operator: b"Tj".to_vec(),
                 operands: vec![Operand::String(b"Secret".to_vec())],
             },
-            ContentOp { operator: b"ET".to_vec(), operands: vec![] },
+            ContentOp {
+                operator: b"ET".to_vec(),
+                operands: vec![],
+            },
         ];
 
         let redact = vec![RedactInfo {
-            rect: Rect { llx: 100.0, lly: 700.0, urx: 300.0, ury: 720.0 },
+            rect: Rect {
+                llx: 100.0,
+                lly: 700.0,
+                urx: 300.0,
+                ury: 720.0,
+            },
             color: AnnotColor::Rgb(0.0, 0.0, 0.0),
             overlay_text: None,
         }];
@@ -432,7 +455,10 @@ mod tests {
     #[test]
     fn test_filter_keeps_text_outside_redact_rect() {
         let ops = vec![
-            ContentOp { operator: b"BT".to_vec(), operands: vec![] },
+            ContentOp {
+                operator: b"BT".to_vec(),
+                operands: vec![],
+            },
             ContentOp {
                 operator: b"Td".to_vec(),
                 operands: vec![Operand::Real(150.0), Operand::Real(500.0)],
@@ -441,11 +467,19 @@ mod tests {
                 operator: b"Tj".to_vec(),
                 operands: vec![Operand::String(b"Public".to_vec())],
             },
-            ContentOp { operator: b"ET".to_vec(), operands: vec![] },
+            ContentOp {
+                operator: b"ET".to_vec(),
+                operands: vec![],
+            },
         ];
 
         let redact = vec![RedactInfo {
-            rect: Rect { llx: 100.0, lly: 700.0, urx: 300.0, ury: 720.0 },
+            rect: Rect {
+                llx: 100.0,
+                lly: 700.0,
+                urx: 300.0,
+                ury: 720.0,
+            },
             color: AnnotColor::Rgb(0.0, 0.0, 0.0),
             overlay_text: None,
         }];
@@ -502,24 +536,38 @@ mod tests {
     #[test]
     fn test_filter_removes_image_in_redact_rect() {
         let ops = vec![
-            ContentOp { operator: b"q".to_vec(), operands: vec![] },
+            ContentOp {
+                operator: b"q".to_vec(),
+                operands: vec![],
+            },
             ContentOp {
                 operator: b"cm".to_vec(),
                 operands: vec![
-                    Operand::Real(200.0), Operand::Real(0.0),
-                    Operand::Real(0.0), Operand::Real(100.0),
-                    Operand::Real(150.0), Operand::Real(705.0),
+                    Operand::Real(200.0),
+                    Operand::Real(0.0),
+                    Operand::Real(0.0),
+                    Operand::Real(100.0),
+                    Operand::Real(150.0),
+                    Operand::Real(705.0),
                 ],
             },
             ContentOp {
                 operator: b"Do".to_vec(),
                 operands: vec![Operand::Name(b"Im1".to_vec())],
             },
-            ContentOp { operator: b"Q".to_vec(), operands: vec![] },
+            ContentOp {
+                operator: b"Q".to_vec(),
+                operands: vec![],
+            },
         ];
 
         let redact = vec![RedactInfo {
-            rect: Rect { llx: 100.0, lly: 700.0, urx: 400.0, ury: 820.0 },
+            rect: Rect {
+                llx: 100.0,
+                lly: 700.0,
+                urx: 400.0,
+                ury: 820.0,
+            },
             color: AnnotColor::Rgb(0.0, 0.0, 0.0),
             overlay_text: None,
         }];

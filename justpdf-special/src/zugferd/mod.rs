@@ -69,11 +69,7 @@ fn detect_zugferd_xml(doc: &PdfDocument) -> Option<(String, String)> {
     // - "factur-x.xml" (Factur-X)
     // - "ZUGFeRD-invoice.xml" (ZUGFeRD 1.0)
     // - "xrechnung.xml" (XRechnung)
-    let zugferd_names = [
-        "factur-x.xml",
-        "zugferd-invoice.xml",
-        "xrechnung.xml",
-    ];
+    let zugferd_names = ["factur-x.xml", "zugferd-invoice.xml", "xrechnung.xml"];
 
     let embedded = justpdf_core::embedded_file::read_embedded_files(doc).ok()?;
 
@@ -219,7 +215,8 @@ mod tests {
 
     #[test]
     fn test_detect_profile_basic() {
-        let xml = r#"<rsm:CrossIndustryInvoice>urn:factur-x.eu:1p0:basic</rsm:CrossIndustryInvoice>"#;
+        let xml =
+            r#"<rsm:CrossIndustryInvoice>urn:factur-x.eu:1p0:basic</rsm:CrossIndustryInvoice>"#;
         assert_eq!(detect_profile(xml), ZugferdProfile::Basic);
     }
 

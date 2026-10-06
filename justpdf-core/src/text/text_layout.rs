@@ -138,7 +138,11 @@ pub fn layout_text(text: &str, font: &FontInfo, options: &LayoutOptions) -> Layo
 
         let (x_offset, word_spacing) = match options.alignment {
             TextAlignment::Left => {
-                let indent = if i == 0 { options.first_line_indent } else { 0.0 };
+                let indent = if i == 0 {
+                    options.first_line_indent
+                } else {
+                    0.0
+                };
                 (indent, 0.0)
             }
             TextAlignment::Center => {
@@ -150,7 +154,11 @@ pub fn layout_text(text: &str, font: &FontInfo, options: &LayoutOptions) -> Layo
                 (offset.max(0.0), 0.0)
             }
             TextAlignment::Justify => {
-                let indent = if i == 0 { options.first_line_indent } else { 0.0 };
+                let indent = if i == 0 {
+                    options.first_line_indent
+                } else {
+                    0.0
+                };
                 if is_last_of_para || max_width.is_none() {
                     // Last line of paragraph: left-align.
                     (indent, 0.0)
@@ -183,11 +191,7 @@ pub fn layout_text(text: &str, font: &FontInfo, options: &LayoutOptions) -> Layo
         y_offset += line_height;
     }
 
-    let total_height = if lines.is_empty() {
-        0.0
-    } else {
-        y_offset
-    };
+    let total_height = if lines.is_empty() { 0.0 } else { y_offset };
 
     LayoutResult {
         lines,
@@ -223,7 +227,11 @@ fn wrap_paragraph(
 
     for word in &words {
         let word_width = measure_text_width(word, font, font_size);
-        let indent = if is_first_line { first_line_indent } else { 0.0 };
+        let indent = if is_first_line {
+            first_line_indent
+        } else {
+            0.0
+        };
         let available = max_w - indent;
 
         if current_line.is_empty() {
@@ -291,12 +299,7 @@ fn wrap_paragraph(
 }
 
 /// Force-break a single word into chunks that each fit within `max_width`.
-fn force_break_word(
-    word: &str,
-    font: &FontInfo,
-    font_size: f64,
-    max_width: f64,
-) -> Vec<String> {
+fn force_break_word(word: &str, font: &FontInfo, font_size: f64, max_width: f64) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut current_width = 0.0;
@@ -336,7 +339,9 @@ mod tests {
             base_font: b"TestFont".to_vec(),
             subtype: b"Type1".to_vec(),
             encoding: Encoding::StandardEncoding,
-            widths: FontWidths::None { default_width: 600.0 },
+            widths: FontWidths::None {
+                default_width: 600.0,
+            },
             to_unicode: None,
             is_standard14: false,
             descriptor: None,
@@ -451,8 +456,11 @@ mod tests {
         };
         let result = layout_text("Hi", &font, &options);
         assert_eq!(result.lines.len(), 1);
-        assert!((result.lines[0].x_offset - 44.0).abs() < 0.01,
-            "expected x_offset ~44.0, got {}", result.lines[0].x_offset);
+        assert!(
+            (result.lines[0].x_offset - 44.0).abs() < 0.01,
+            "expected x_offset ~44.0, got {}",
+            result.lines[0].x_offset
+        );
     }
 
     #[test]
@@ -467,8 +475,11 @@ mod tests {
         };
         let result = layout_text("Hi", &font, &options);
         assert_eq!(result.lines.len(), 1);
-        assert!((result.lines[0].x_offset - 88.0).abs() < 0.01,
-            "expected x_offset ~88.0, got {}", result.lines[0].x_offset);
+        assert!(
+            (result.lines[0].x_offset - 88.0).abs() < 0.01,
+            "expected x_offset ~88.0, got {}",
+            result.lines[0].x_offset
+        );
     }
 
     #[test]
@@ -492,17 +503,24 @@ mod tests {
         // Each word is 2 chars = 12pt. Space = 6pt.
         // "AA BB" = 12 + 6 + 12 = 30pt. max_width = 35 should keep "AA BB" on line 1.
         // "CC DD" on line 2 (last line, no justify).
-        let result2 = layout_text("AA BB CC DD", &font, &LayoutOptions {
-            font_size: 10.0,
-            alignment: TextAlignment::Justify,
-            max_width: Some(35.0),
-            ..Default::default()
-        });
+        let result2 = layout_text(
+            "AA BB CC DD",
+            &font,
+            &LayoutOptions {
+                font_size: 10.0,
+                alignment: TextAlignment::Justify,
+                max_width: Some(35.0),
+                ..Default::default()
+            },
+        );
         assert!(result2.lines.len() >= 2);
         // First line "AA BB" = 30pt. Extra = 35 - 30 = 5. 1 gap. word_spacing = 5.
         if result2.lines[0].text == "AA BB" {
-            assert!((result2.lines[0].word_spacing - 5.0).abs() < 0.5,
-                "expected word_spacing ~5.0, got {}", result2.lines[0].word_spacing);
+            assert!(
+                (result2.lines[0].word_spacing - 5.0).abs() < 0.5,
+                "expected word_spacing ~5.0, got {}",
+                result2.lines[0].word_spacing
+            );
         }
     }
 
@@ -578,7 +596,11 @@ mod tests {
             ..Default::default()
         };
         let result = layout_text("ABCDEFGHIJ", &font, &options);
-        assert!(result.lines.len() >= 3, "expected >=3 lines, got {}", result.lines.len());
+        assert!(
+            result.lines.len() >= 3,
+            "expected >=3 lines, got {}",
+            result.lines.len()
+        );
         // Verify all text is present.
         let all_text: String = result.lines.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(all_text, "ABCDEFGHIJ");

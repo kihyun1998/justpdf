@@ -20,11 +20,7 @@ pub struct SkewResult {
 /// and finds the angle that maximizes the variance of the row sums.
 ///
 /// `image_data` should be grayscale pixel data (1 byte per pixel).
-pub fn detect_skew(
-    image_data: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<SkewResult> {
+pub fn detect_skew(image_data: &[u8], width: u32, height: u32) -> Result<SkewResult> {
     if image_data.len() != (width * height) as usize {
         return Err(SpecialError::Feature {
             detail: format!(
@@ -104,11 +100,7 @@ pub fn detect_skew(
 /// Deskew a grayscale image by rotating it to correct the detected skew.
 ///
 /// Returns the corrected image data (same dimensions, grayscale).
-pub fn deskew_image(
-    image_data: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<Vec<u8>> {
+pub fn deskew_image(image_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
     let skew = detect_skew(image_data, width, height)?;
 
     if skew.angle_degrees.abs() < 0.05 {
@@ -122,12 +114,7 @@ pub fn deskew_image(
 /// Rotate a grayscale image by the given angle in degrees.
 ///
 /// Uses bilinear interpolation. Background pixels are set to white (255).
-fn rotate_image(
-    image_data: &[u8],
-    width: u32,
-    height: u32,
-    angle_degrees: f64,
-) -> Result<Vec<u8>> {
+fn rotate_image(image_data: &[u8], width: u32, height: u32, angle_degrees: f64) -> Result<Vec<u8>> {
     let w = width as usize;
     let h = height as usize;
     let cx = w as f64 / 2.0;

@@ -3,10 +3,10 @@ use std::path::Path;
 
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
+use crate::writer::PdfWriter;
 use crate::writer::encode::make_stream;
 use crate::writer::page::PageBuilder;
 use crate::writer::serialize::serialize_pdf;
-use crate::writer::PdfWriter;
 
 /// High-level builder for creating complete PDF documents.
 pub struct DocumentBuilder {
@@ -128,10 +128,11 @@ impl DocumentBuilder {
     /// Returns the resource name (e.g. "F1", "F2") for use in page content.
     /// The font is embedded with WinAnsiEncoding and a ToUnicode CMap.
     pub fn embed_truetype_font(&mut self, font_data: &[u8]) -> Result<String> {
-        let face = ttf_parser::Face::parse(font_data, 0).map_err(|e| JustPdfError::StreamDecode {
-            filter: "TrueType".into(),
-            detail: format!("failed to parse TTF: {}", e),
-        })?;
+        let face =
+            ttf_parser::Face::parse(font_data, 0).map_err(|e| JustPdfError::StreamDecode {
+                filter: "TrueType".into(),
+                detail: format!("failed to parse TTF: {}", e),
+            })?;
 
         // Extract font metrics
         let units_per_em = face.units_per_em() as f64;
@@ -153,7 +154,10 @@ impl DocumentBuilder {
             PdfObject::Integer((bbox.x_max as f64 * scale) as i64),
             PdfObject::Integer((bbox.y_max as f64 * scale) as i64),
         ];
-        let cap_height = face.capital_height().map(|h| (h as f64 * scale) as i64).unwrap_or(ascent);
+        let cap_height = face
+            .capital_height()
+            .map(|h| (h as f64 * scale) as i64)
+            .unwrap_or(ascent);
 
         // Embed font file as FontFile2 stream (FlateDecode compressed)
         let (ff2_dict, ff2_data) = make_stream(font_data, true);
@@ -169,7 +173,10 @@ impl DocumentBuilder {
 
         // Create FontDescriptor
         let mut fd = PdfDict::new();
-        fd.insert(b"Type".to_vec(), PdfObject::Name(b"FontDescriptor".to_vec()));
+        fd.insert(
+            b"Type".to_vec(),
+            PdfObject::Name(b"FontDescriptor".to_vec()),
+        );
         fd.insert(
             b"FontName".to_vec(),
             PdfObject::Name(font_name.as_bytes().to_vec()),
@@ -279,10 +286,7 @@ impl DocumentBuilder {
         let mut meta_dict = PdfDict::new();
         meta_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Metadata".to_vec()));
         meta_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"XML".to_vec()));
-        meta_dict.insert(
-            b"Length".to_vec(),
-            PdfObject::Integer(xmp.len() as i64),
-        );
+        meta_dict.insert(b"Length".to_vec(), PdfObject::Integer(xmp.len() as i64));
 
         // Store as uncompressed stream so XMP can be found by text search
         let meta_ref = self.writer.add_object(PdfObject::Stream {
@@ -321,10 +325,7 @@ impl DocumentBuilder {
             }),
         );
         if let Some(ref xmp_ref) = self.xmp_ref {
-            catalog_dict.insert(
-                b"Metadata".to_vec(),
-                PdfObject::Reference(xmp_ref.clone()),
-            );
+            catalog_dict.insert(b"Metadata".to_vec(), PdfObject::Reference(xmp_ref.clone()));
         }
         let catalog_ref = self.writer.add_object(PdfObject::Dict(catalog_dict));
 
@@ -391,15 +392,9 @@ pub fn embed_jpeg(doc: &mut DocumentBuilder, jpeg_data: &[u8]) -> Result<(String
     dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Image".to_vec()));
     dict.insert(b"Width".to_vec(), PdfObject::Integer(width as i64));
     dict.insert(b"Height".to_vec(), PdfObject::Integer(height as i64));
-    dict.insert(
-        b"ColorSpace".to_vec(),
-        PdfObject::Name(color_space),
-    );
+    dict.insert(b"ColorSpace".to_vec(), PdfObject::Name(color_space));
     dict.insert(b"BitsPerComponent".to_vec(), PdfObject::Integer(8));
-    dict.insert(
-        b"Filter".to_vec(),
-        PdfObject::Name(b"DCTDecode".to_vec()),
-    );
+    dict.insert(b"Filter".to_vec(), PdfObject::Name(b"DCTDecode".to_vec()));
     dict.insert(
         b"Length".to_vec(),
         PdfObject::Integer(jpeg_data.len() as i64),
@@ -514,10 +509,12 @@ pub fn embed_png(doc: &mut DocumentBuilder, png_data: &[u8]) -> Result<(String, 
     use crate::writer::encode::encode_flate;
 
     let decoder = png::Decoder::new(png_data);
-    let mut reader = decoder.read_info().map_err(|e| JustPdfError::StreamDecode {
-        filter: "PNG".into(),
-        detail: format!("failed to decode PNG: {}", e),
-    })?;
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| JustPdfError::StreamDecode {
+            filter: "PNG".into(),
+            detail: format!("failed to decode PNG: {}", e),
+        })?;
 
     let info = reader.info().clone();
     let width = info.width;
@@ -526,10 +523,12 @@ pub fn embed_png(doc: &mut DocumentBuilder, png_data: &[u8]) -> Result<(String, 
 
     // Read all pixel data
     let mut img_data = vec![0u8; reader.output_buffer_size()];
-    let output_info = reader.next_frame(&mut img_data).map_err(|e| JustPdfError::StreamDecode {
-        filter: "PNG".into(),
-        detail: format!("failed to read PNG frame: {}", e),
-    })?;
+    let output_info = reader
+        .next_frame(&mut img_data)
+        .map_err(|e| JustPdfError::StreamDecode {
+            filter: "PNG".into(),
+            detail: format!("failed to read PNG frame: {}", e),
+        })?;
     img_data.truncate(output_info.buffer_size());
 
     let (rgb_data, alpha_data) = match color_type {
@@ -592,10 +591,7 @@ pub fn embed_png(doc: &mut DocumentBuilder, png_data: &[u8]) -> Result<(String, 
             PdfObject::Name(b"DeviceGray".to_vec()),
         );
         smask_dict.insert(b"BitsPerComponent".to_vec(), PdfObject::Integer(8));
-        smask_dict.insert(
-            b"Filter".to_vec(),
-            PdfObject::Name(b"FlateDecode".to_vec()),
-        );
+        smask_dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
 
         let r = doc.writer.add_object(PdfObject::Stream {
             dict: smask_dict,
@@ -621,7 +617,10 @@ pub fn embed_rgb(
     if rgb.len() != expected {
         return Err(JustPdfError::StreamDecode {
             filter: "image".into(),
-            detail: format!("RGB pixels: expected {expected} bytes for {width}x{height}, got {}", rgb.len()),
+            detail: format!(
+                "RGB pixels: expected {expected} bytes for {width}x{height}, got {}",
+                rgb.len()
+            ),
         });
     }
     add_rgb_image(doc, width, height, rgb, None)
@@ -648,10 +647,7 @@ fn add_rgb_image(
         PdfObject::Name(b"DeviceRGB".to_vec()),
     );
     img_dict.insert(b"BitsPerComponent".to_vec(), PdfObject::Integer(8));
-    img_dict.insert(
-        b"Filter".to_vec(),
-        PdfObject::Name(b"FlateDecode".to_vec()),
-    );
+    img_dict.insert(b"Filter".to_vec(), PdfObject::Name(b"FlateDecode".to_vec()));
     if let Some(ref smask) = smask_ref {
         img_dict.insert(b"SMask".to_vec(), PdfObject::Reference(smask.clone()));
     }
@@ -824,7 +820,7 @@ mod tests {
             let data: [u8; 16] = [
                 255, 0, 0, 128, // red, semi-transparent
                 0, 255, 0, 255, // green, opaque
-                0, 0, 255, 0,   // blue, fully transparent
+                0, 0, 255, 0, // blue, fully transparent
                 255, 255, 0, 64, // yellow, mostly transparent
             ];
             writer.write_image_data(&data).unwrap();
@@ -891,7 +887,7 @@ mod tests {
             0x00, 0x64, // height = 100
             0x00, 0xC8, // width = 200
             0x03, // components = 3
-            // component specs would follow but we don't need them
+                  // component specs would follow but we don't need them
         ];
 
         // After SOI: pos=2

@@ -13,7 +13,9 @@ use crate::svg_device::SvgRenderer;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     Png,
-    Jpeg { quality: u8 },
+    Jpeg {
+        quality: u8,
+    },
     /// Raw RGBA pixel data (4 bytes per pixel, row-major, top-left origin).
     RawRgba,
 }
@@ -190,10 +192,7 @@ pub fn render_page_to_pixmap(
 /// Render a single page of a PDF document to SVG string.
 ///
 /// `page_index` is 0-based. Returns a complete SVG XML document.
-pub fn render_page_to_svg(
-    doc: &PdfDocument,
-    page_index: usize,
-) -> Result<String> {
+pub fn render_page_to_svg(doc: &PdfDocument, page_index: usize) -> Result<String> {
     let pages = collect_pages(doc)?;
     let page = pages
         .get(page_index)
@@ -403,7 +402,11 @@ mod tests {
         // Parallel rendering with a single page should work fine.
         let results = render_pages_parallel(&doc, &[0], &opts);
         assert_eq!(results.len(), 1);
-        assert!(results[0].is_ok(), "single-page parallel render failed: {:?}", results[0].as_ref().err());
+        assert!(
+            results[0].is_ok(),
+            "single-page parallel render failed: {:?}",
+            results[0].as_ref().err()
+        );
     }
 
     #[test]

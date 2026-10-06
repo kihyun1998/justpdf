@@ -36,10 +36,11 @@ pub fn sign_pdf(
     options: &SigningOptions,
 ) -> Result<Vec<u8>> {
     // Parse the private key
-    let private_key = rsa::RsaPrivateKey::from_pkcs8_der(private_key_der)
-        .map_err(|e| JustPdfError::SignatureError {
+    let private_key = rsa::RsaPrivateKey::from_pkcs8_der(private_key_der).map_err(|e| {
+        JustPdfError::SignatureError {
             detail: format!("failed to parse private key: {}", e),
-        })?;
+        }
+    })?;
 
     // Parse the signer certificate
     if cert_chain_der.is_empty() {
@@ -47,10 +48,11 @@ pub fn sign_pdf(
             detail: "no certificates provided".into(),
         });
     }
-    let signer_cert = x509_cert::Certificate::from_der(cert_chain_der[0])
-        .map_err(|e| JustPdfError::SignatureError {
+    let signer_cert = x509_cert::Certificate::from_der(cert_chain_der[0]).map_err(|e| {
+        JustPdfError::SignatureError {
             detail: format!("failed to parse certificate: {}", e),
-        })?;
+        }
+    })?;
 
     // Build the PDF with signature placeholder
     let (pdf_bytes, contents_offset, contents_length) =
@@ -132,10 +134,7 @@ fn build_pdf_with_placeholder(
     let ap_stream_num = max_existing + 3; // for visible signature appearance
 
     // Create the signature value dictionary content
-    let signer_name = options
-        .signer_name
-        .as_deref()
-        .unwrap_or("justpdf");
+    let signer_name = options.signer_name.as_deref().unwrap_or("justpdf");
     let reason = options.reason.as_deref().unwrap_or("");
     let location = options.location.as_deref().unwrap_or("");
 
@@ -146,7 +145,10 @@ fn build_pdf_with_placeholder(
     // Write sig value object
     let sig_val_offset = buf.len();
     write!(buf, "{} 0 obj\n", sig_value_num)?;
-    write!(buf, "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached ")?;
+    write!(
+        buf,
+        "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached "
+    )?;
 
     // ByteRange placeholder (will be fixed up later)
     write!(buf, "/ByteRange [0 0000000000 0000000000 0000000000] ")?;
@@ -196,7 +198,11 @@ fn build_pdf_with_placeholder(
         let ap_height = rect[3] - rect[1];
         let (ap_dict, ap_data) = super::appearance::generate_signature_appearance(
             signer_name,
-            if reason.is_empty() { None } else { Some(reason) },
+            if reason.is_empty() {
+                None
+            } else {
+                Some(reason)
+            },
             None, // date is embedded in the CMS signing time
             ap_width,
             ap_height,
@@ -265,9 +271,15 @@ fn create_cms_signed_data(
     use signature::Signer;
 
     let digest_oid = match algorithm {
-        DigestAlgorithm::Sha256 => const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1"),
-        DigestAlgorithm::Sha384 => const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2"),
-        DigestAlgorithm::Sha512 => const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3"),
+        DigestAlgorithm::Sha256 => {
+            const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1")
+        }
+        DigestAlgorithm::Sha384 => {
+            const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2")
+        }
+        DigestAlgorithm::Sha512 => {
+            const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3")
+        }
     };
 
     let rsa_oid = const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
@@ -278,28 +290,46 @@ fn create_cms_signed_data(
     let signing_time_oid = const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.5");
 
     // Build signed attributes
-    let digest_octet = der::asn1::OctetString::new(digest)
-        .map_err(|e| JustPdfError::SignatureError {
+    let digest_octet =
+        der::asn1::OctetString::new(digest).map_err(|e| JustPdfError::SignatureError {
             detail: format!("OctetString error: {}", e),
         })?;
 
     // Create the signed attributes DER manually for signing
     // (contentType, signingTime, messageDigest)
-    let content_type_attr_value = data_oid.to_der()
-        .map_err(|e| JustPdfError::SignatureError { detail: format!("DER error: {}", e) })?;
-    let digest_attr_value = digest_octet.to_der()
-        .map_err(|e| JustPdfError::SignatureError { detail: format!("DER error: {}", e) })?;
+    let content_type_attr_value = data_oid
+        .to_der()
+        .map_err(|e| JustPdfError::SignatureError {
+            detail: format!("DER error: {}", e),
+        })?;
+    let digest_attr_value = digest_octet
+        .to_der()
+        .map_err(|e| JustPdfError::SignatureError {
+            detail: format!("DER error: {}", e),
+        })?;
 
     // Build signed attributes as a SET
     let mut signed_attrs_content = Vec::new();
 
     // contentType attribute
-    append_attribute(&mut signed_attrs_content, &content_type_oid, &content_type_attr_value)?;
+    append_attribute(
+        &mut signed_attrs_content,
+        &content_type_oid,
+        &content_type_attr_value,
+    )?;
     // signingTime attribute (UTCTime)
     let signing_time_der = build_utctime_now();
-    append_attribute(&mut signed_attrs_content, &signing_time_oid, &signing_time_der)?;
+    append_attribute(
+        &mut signed_attrs_content,
+        &signing_time_oid,
+        &signing_time_der,
+    )?;
     // messageDigest attribute
-    append_attribute(&mut signed_attrs_content, &message_digest_oid, &digest_attr_value)?;
+    append_attribute(
+        &mut signed_attrs_content,
+        &message_digest_oid,
+        &digest_attr_value,
+    )?;
 
     // Wrap in SET tag (0x31) for the actual signature input
     let mut signed_attrs_for_sign = vec![0x31u8]; // SET tag
@@ -338,8 +368,11 @@ fn create_cms_signed_data(
     signed_data_content.extend_from_slice(&digest_alg_set_tlv);
 
     // encapContentInfo SEQUENCE { contentType OID }
-    let eci_oid = data_oid.to_der()
-        .map_err(|e| JustPdfError::SignatureError { detail: format!("DER error: {}", e) })?;
+    let eci_oid = data_oid
+        .to_der()
+        .map_err(|e| JustPdfError::SignatureError {
+            detail: format!("DER error: {}", e),
+        })?;
     let eci_seq = wrap_der_sequence(&eci_oid);
     signed_data_content.extend_from_slice(&eci_seq);
 
@@ -370,8 +403,11 @@ fn create_cms_signed_data(
     let signed_data_seq = wrap_der_sequence(&signed_data_content);
 
     // Wrap in ContentInfo
-    let sd_oid = signed_data_oid.to_der()
-        .map_err(|e| JustPdfError::SignatureError { detail: format!("DER error: {}", e) })?;
+    let sd_oid = signed_data_oid
+        .to_der()
+        .map_err(|e| JustPdfError::SignatureError {
+            detail: format!("DER error: {}", e),
+        })?;
 
     // Content [0] EXPLICIT
     let mut explicit_content = vec![0xA0];
@@ -402,10 +438,21 @@ fn build_signer_info(
     si_content.extend_from_slice(&[0x02, 0x01, 0x01]);
 
     // sid IssuerAndSerialNumber
-    let issuer_der = signer_cert.tbs_certificate.issuer.to_der()
-        .map_err(|e| JustPdfError::SignatureError { detail: format!("DER error: {}", e) })?;
-    let serial_der = signer_cert.tbs_certificate.serial_number.to_der()
-        .map_err(|e| JustPdfError::SignatureError { detail: format!("DER error: {}", e) })?;
+    let issuer_der =
+        signer_cert
+            .tbs_certificate
+            .issuer
+            .to_der()
+            .map_err(|e| JustPdfError::SignatureError {
+                detail: format!("DER error: {}", e),
+            })?;
+    let serial_der = signer_cert
+        .tbs_certificate
+        .serial_number
+        .to_der()
+        .map_err(|e| JustPdfError::SignatureError {
+            detail: format!("DER error: {}", e),
+        })?;
     let mut iasn = Vec::new();
     iasn.extend_from_slice(&issuer_der);
     iasn.extend_from_slice(&serial_der);
@@ -470,7 +517,11 @@ fn build_utctime_now() -> Vec<u8> {
     let mut y = 1970u64;
     let mut remaining_days = days;
     loop {
-        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            366
+        } else {
+            365
+        };
         if remaining_days < days_in_year {
             break;
         }
@@ -478,7 +529,20 @@ fn build_utctime_now() -> Vec<u8> {
         y += 1;
     }
     let is_leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days = [31, if is_leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31,
+        if is_leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut m = 0u64;
     for md in &month_days {
         if remaining_days < *md as u64 {
@@ -492,15 +556,19 @@ fn build_utctime_now() -> Vec<u8> {
 
     // UTCTime uses 2-digit year (YY)
     let yy = y % 100;
-    let utc_str = format!("{:02}{:02}{:02}{:02}{:02}{:02}Z", yy, month, day, hours, minutes, seconds);
+    let utc_str = format!(
+        "{:02}{:02}{:02}{:02}{:02}{:02}Z",
+        yy, month, day, hours, minutes, seconds
+    );
     let mut result = vec![0x17, utc_str.len() as u8];
     result.extend_from_slice(utc_str.as_bytes());
     result
 }
 
 fn build_algorithm_identifier(oid: &const_oid::ObjectIdentifier) -> Result<Vec<u8>> {
-    let oid_der = oid.to_der()
-        .map_err(|e| JustPdfError::SignatureError { detail: format!("DER error: {}", e) })?;
+    let oid_der = oid.to_der().map_err(|e| JustPdfError::SignatureError {
+        detail: format!("DER error: {}", e),
+    })?;
     // SEQUENCE { OID, NULL }
     let mut content = Vec::new();
     content.extend_from_slice(&oid_der);
@@ -508,9 +576,14 @@ fn build_algorithm_identifier(oid: &const_oid::ObjectIdentifier) -> Result<Vec<u
     Ok(wrap_der_sequence(&content))
 }
 
-fn append_attribute(buf: &mut Vec<u8>, oid: &const_oid::ObjectIdentifier, value: &[u8]) -> Result<()> {
-    let oid_der = oid.to_der()
-        .map_err(|e| JustPdfError::SignatureError { detail: format!("DER error: {}", e) })?;
+fn append_attribute(
+    buf: &mut Vec<u8>,
+    oid: &const_oid::ObjectIdentifier,
+    value: &[u8],
+) -> Result<()> {
+    let oid_der = oid.to_der().map_err(|e| JustPdfError::SignatureError {
+        detail: format!("DER error: {}", e),
+    })?;
     let value_set = wrap_der_set(value);
     let mut attr_content = Vec::new();
     attr_content.extend_from_slice(&oid_der);

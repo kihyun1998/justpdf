@@ -5,17 +5,14 @@
 
 use der::Encode;
 
-use crate::error::{JustPdfError, Result};
 use super::types::DigestAlgorithm;
+use crate::error::{JustPdfError, Result};
 
 /// Create an RFC 3161 TimeStampReq DER-encoded message.
 ///
 /// The caller is responsible for sending this to a TSA server via HTTP POST
 /// with Content-Type: application/timestamp-query.
-pub fn create_timestamp_request(
-    digest: &[u8],
-    algorithm: DigestAlgorithm,
-) -> Result<Vec<u8>> {
+pub fn create_timestamp_request(digest: &[u8], algorithm: DigestAlgorithm) -> Result<Vec<u8>> {
     // Build the ASN.1 structure manually using DER encoding
     // TimeStampReq ::= SEQUENCE {
     //   version       INTEGER { v1(1) },
@@ -28,9 +25,15 @@ pub fn create_timestamp_request(
     // }
 
     let hash_oid = match algorithm {
-        DigestAlgorithm::Sha256 => const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1"),
-        DigestAlgorithm::Sha384 => const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2"),
-        DigestAlgorithm::Sha512 => const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3"),
+        DigestAlgorithm::Sha256 => {
+            const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1")
+        }
+        DigestAlgorithm::Sha384 => {
+            const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2")
+        }
+        DigestAlgorithm::Sha512 => {
+            const_oid::ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3")
+        }
     };
 
     // Build the TimeStampReq as raw DER.
@@ -43,7 +46,8 @@ pub fn create_timestamp_request(
     //   },
     //   BOOLEAN TRUE               -- certReq
     // }
-    let oid_bytes = hash_oid.to_der()
+    let oid_bytes = hash_oid
+        .to_der()
         .map_err(|e| JustPdfError::SignatureError {
             detail: format!("OID encode error: {}", e),
         })?;
@@ -155,12 +159,16 @@ fn read_der_length(data: &[u8]) -> Result<(usize, usize)> {
         Ok((data[0] as usize, 1))
     } else if data[0] == 0x81 {
         if data.len() < 2 {
-            return Err(JustPdfError::SignatureError { detail: "DER length truncated".into() });
+            return Err(JustPdfError::SignatureError {
+                detail: "DER length truncated".into(),
+            });
         }
         Ok((data[1] as usize, 2))
     } else if data[0] == 0x82 {
         if data.len() < 3 {
-            return Err(JustPdfError::SignatureError { detail: "DER length truncated".into() });
+            return Err(JustPdfError::SignatureError {
+                detail: "DER length truncated".into(),
+            });
         }
         Ok((((data[1] as usize) << 8) | data[2] as usize, 3))
     } else {
