@@ -326,3 +326,7 @@ mod tests {
         }
     }
 }
+
+pub fn proof_189(v: &Vec<u8>) -> bool {
+    v.len() == 0
+}
