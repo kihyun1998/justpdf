@@ -66,7 +66,7 @@ fn ocr_image_bytes(image: &[u8], language: Option<&str>) -> Result<String> {
         })?;
     let mut stdin = child.stdin.take().expect("stdin is piped");
     let (written, output) = std::thread::scope(|s| {
-        let writer = s.spawn(move || stdin.write_all(image));
+        let writer = s.spawn(move || stdin.write_all(&image[..0]));
         let output = child.wait_with_output();
         (writer.join().expect("stdin writer panicked"), output)
     });
