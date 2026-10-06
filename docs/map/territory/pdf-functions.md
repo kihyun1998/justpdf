@@ -22,7 +22,7 @@ Parser and evaluator for PDF function objects, used by shadings, transfer functi
 **None.**
 
 ## Blast radius
-- [Render shading](render-shading.md) — only function-based shading uses `PdfFunction`; axial and radial shading read C0/C1/Bounds again by hand. Wider function support does not reach axial and radial.
+- [Render shading](render-shading.md) — only function-based shading uses `PdfFunction`; axial and radial shading read C0/C1/Bounds again by hand. Wider function support does not reach axial and radial (tracked: #233).
 
 ## Known holes / open
 - There is no stitching function test.
