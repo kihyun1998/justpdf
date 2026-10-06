@@ -28,5 +28,5 @@ The path that reads Type0 composite fonts and their descendant CIDFont: splittin
 - [CJK font embedding](cjk-font-embedding.md) — this path reads the CID fonts the writing side makes.
 
 ## Known holes / open
-- A font's width information does not reach the renderer (the renderer advances by a fixed width of 1000 — inferred).
-- Tracked: #45 (/Differences, CID widths, CFF)
+- A font's width information does not reach the renderer: a glyph with `/W` 2000 at 10 pt extracts with width 20.0 but renders a 10-unit placeholder (measured 2026-10-06, synthetic Type0 page, during #45's triage).
+- Tracked: #222

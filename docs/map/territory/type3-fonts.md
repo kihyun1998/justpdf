@@ -25,4 +25,4 @@ Parses a Type3 font dictionary (`/CharProcs`, `/FontMatrix`, `/Encoding /Differe
 
 ## Known holes / open
 - There is no consumer in product code.
-- Tracked: #45 (/Differences, CID widths, CFF)
+- Tracked: #226 (rendering CharProcs), #221 (promoting the `/Differences` parser)
