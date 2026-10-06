@@ -36,4 +36,5 @@ There is no decision record (ADR). Maintainer decision (2026-09-29, #98): when a
 
 ## Known holes / open
 - When the number in an object header differs from the xref (the offset points at a different object), that object is returned anyway. The same goes for an object stream's index numbers. Tracked: #109
+- The `open_mmap` unit tests in `parser.rs` run only with `--features mmap`, and no CI job turns on `justpdf-core/mmap` (inferred from `.github/workflows/ci.yml`). They make their file in a `tempfile::tempdir()` declared before the document, so on Windows the mapping is dropped before the directory is removed.
 - A cache hit also takes the write lock, so `resolve` calls from several threads are serialized (inferred: a candidate bottleneck for parallel rendering).

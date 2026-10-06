@@ -21,8 +21,8 @@ fn is_valid_pdf(bytes: &[u8]) -> bool {
 
 #[test]
 fn compresses_with_default_medium_preset() {
-    let out = std::env::temp_dir().join("justpdf_cli_compress_default.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.pdf");
 
     let status = bin()
         .arg("compress")
@@ -47,9 +47,9 @@ fn compresses_with_default_medium_preset() {
 #[test]
 fn every_preset_produces_a_valid_smaller_pdf() {
     let orig = std::fs::metadata(fixture()).unwrap().len();
+    let dir = tempfile::tempdir().unwrap();
     for preset in ["low", "medium", "high", "extreme"] {
-        let out = std::env::temp_dir().join(format!("justpdf_cli_compress_{preset}.pdf"));
-        let _ = std::fs::remove_file(&out);
+        let out = dir.path().join(format!("{preset}.pdf"));
 
         let status = bin()
             .arg("compress")
@@ -78,8 +78,8 @@ fn every_preset_produces_a_valid_smaller_pdf() {
 
 #[test]
 fn unknown_preset_is_rejected() {
-    let out = std::env::temp_dir().join("justpdf_cli_compress_bogus.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.pdf");
 
     let output = bin()
         .arg("compress")
@@ -102,8 +102,8 @@ fn unknown_preset_is_rejected() {
 
 #[test]
 fn reports_reduction_on_stderr_not_stdout() {
-    let out = std::env::temp_dir().join("justpdf_cli_compress_report.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.pdf");
 
     let output = bin()
         .arg("compress")
@@ -131,8 +131,8 @@ fn missing_output_flag_is_an_error() {
 
 #[test]
 fn conflicting_on_off_pair_is_rejected() {
-    let out = std::env::temp_dir().join("justpdf_cli_compress_conflict.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.pdf");
     let output = bin()
         .arg("compress")
         .arg(fixture())
@@ -148,8 +148,8 @@ fn conflicting_on_off_pair_is_rejected() {
 
 #[test]
 fn jpeg_quality_conflicts_with_no_image_recompress() {
-    let out = std::env::temp_dir().join("justpdf_cli_compress_jpeg_conflict.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.pdf");
     let output = bin()
         .arg("compress")
         .arg(fixture())
@@ -168,8 +168,8 @@ fn jpeg_quality_conflicts_with_no_image_recompress() {
 
 #[test]
 fn jpeg_quality_out_of_range_is_rejected() {
-    let out = std::env::temp_dir().join("justpdf_cli_compress_range.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.pdf");
     for bad in ["0", "101"] {
         let output = bin()
             .arg("compress")
@@ -189,8 +189,8 @@ fn jpeg_quality_out_of_range_is_rejected() {
 
 #[test]
 fn overrides_layer_onto_preset_and_still_compress() {
-    let out = std::env::temp_dir().join("justpdf_cli_compress_override.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.pdf");
     let status = bin()
         .arg("compress")
         .arg(fixture())
@@ -263,8 +263,8 @@ fn analyze_needs_no_output_flag_and_writes_nothing() {
 
 #[test]
 fn verbose_prints_breakdown_on_stderr() {
-    let out = std::env::temp_dir().join("justpdf_cli_verbose_out.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.pdf");
 
     let output = bin()
         .arg("compress")
@@ -290,8 +290,8 @@ fn verbose_prints_breakdown_on_stderr() {
 
 #[test]
 fn non_verbose_omits_breakdown() {
-    let out = std::env::temp_dir().join("justpdf_cli_nonverbose_out.pdf");
-    let _ = std::fs::remove_file(&out);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.pdf");
 
     let output = bin()
         .arg("compress")

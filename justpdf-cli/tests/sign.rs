@@ -6,8 +6,8 @@ use std::process::Command;
 #[test]
 fn sign_fails_without_writing_output() {
     let input = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/compressible.pdf");
-    let output = std::env::temp_dir().join("justpdf_cli_sign_out.pdf");
-    let _ = std::fs::remove_file(&output);
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("out.pdf");
 
     let result = Command::new(env!("CARGO_BIN_EXE_justpdf"))
         .arg("sign")
