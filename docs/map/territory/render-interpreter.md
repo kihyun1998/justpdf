@@ -43,4 +43,5 @@
 
 ## Known holes / open
 - `interpreter.rs` and `graphics_state.rs` have no unit tests. Render tests that read pixels are `tests/render_recursion.rs` (recursion paths) and `tests/render_resources.rs` (resource name scope); the other integration tests check only the PNG magic bytes and length.
+- `gs` reads only `LW`, `LC`, `LJ`, `ML`, `ca`, `CA`, `BM` and `SMask`; the ExtGState `/Font` entry is ignored (inferred). Tracked: #238
 - Nested stream boundaries have no floor on the graphics state stack, so an unbalanced `q`/`Q` crosses the boundary, and a path left after filling goes into the tile. Tracked: #128
