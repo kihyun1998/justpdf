@@ -31,4 +31,4 @@ The user-facing API wrapping `justpdf-core` and `justpdf-render`: `Document` (op
 - [Published docs](published-docs.md) — Rust examples in the README and mdBook call this API. When changing a signature, recompile the examples (no gate).
 
 ## Known holes / open
-- There are no tests for the mmap, parallel and async features. The CI all-features run leaves out `mmap`.
+- There are no tests for the mmap, parallel and async features. The CI all-features run builds the facade with all three (`mmap` since #187).
