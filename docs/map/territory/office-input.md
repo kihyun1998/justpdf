@@ -7,7 +7,7 @@ Reads text from OOXML documents and turns it into a PDF.
 - [ADR-0001](../../adr/0001-crates-split-by-dependency-layer.md)
 
 ## Design model
-- **The `office` feature does not compile on its own**: for the same reason as [EPUB input](epub-input.md) (`render_page` calls `crate::plaintext`).
+- As in [EPUB input](epub-input.md), the preview borrows `crate::plaintext` only under `cfg(feature = "plaintext")` and otherwise returns `FormatError::Format` after the index check; `office` compiles on its own (measured 2026-10-07). Maintainer's call in #35.
 - Drops text that overflows ("Would need pagination here for real use").
 
 ## Code
@@ -20,9 +20,8 @@ Reads text from OOXML documents and turns it into a PDF.
 - [Content text encoding](../invariant/content-text-encoding.md)
 
 ## Blast radius
-- [Plaintext input](plaintext-input.md) — a hidden dependency.
+- [Plaintext input](plaintext-input.md) — whose preview it borrows when the `plaintext` feature is on.
 - [Crate layering](crate-layering.md), [Format document](format-document.md).
 
 ## Known holes / open
-- No page breaks; fails to build on its own.
-- Tracked: #35 (epub and office standalone builds)
+- No page breaks.

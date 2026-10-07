@@ -7,7 +7,7 @@ Reads text from an EPUB's OPF and XHTML and turns it into a PDF. Rejects DRM fil
 - [ADR-0001](../../adr/0001-crates-split-by-dependency-layer.md) — `epub` is a feature assumed to build without render.
 
 ## Design model
-- **The `epub` feature does not compile on its own**: `render_page` and `render_page_png` call `crate::plaintext`, but the `plaintext` module sits behind the `plaintext` feature. `cargo check -p justpdf-formats --no-default-features --features epub` fails with `E0433: cannot find plaintext in crate` (reproduced 2026-09-23). In a workspace build, the `all` feature the CLI turns on hides this through feature unification.
+- The the preview (`render_page`, `render_page_png`) borrows `crate::plaintext` only under `cfg(feature = "plaintext")`. With `plaintext` off it checks the index (`OutOfRange`) and then returns `FormatError::Format` ("page preview needs the `plaintext` feature") — no blank page. The feature definition does not pull `plaintext`: it stays render-free, as #2 and ADR-0001 set (maintainer's call in #35, 2026-10-02, chosen over making the feature pull `plaintext`). It compiles on its own, without warnings (measured 2026-10-07; until #35 it failed with `E0433: cannot find plaintext in crate`). Tests: `test_preview_needs_plaintext_feature`, `test_preview_renders_with_plaintext`, `test_preview_out_of_range`.
 - Carries text only.
 
 ## Code
@@ -20,10 +20,9 @@ Reads text from an EPUB's OPF and XHTML and turns it into a PDF. Rejects DRM fil
 - [Content text encoding](../invariant/content-text-encoding.md)
 
 ## Blast radius
-- [Plaintext input](plaintext-input.md) — whose preview it borrows. A hidden dependency.
-- [Crate layering](crate-layering.md) — the isolation script checks epub only with `cargo tree` and does not build it on its own.
+- [Plaintext input](plaintext-input.md) — whose preview it borrows when the `plaintext` feature is on.
+- [Crate layering](crate-layering.md) — the isolation script checks that `epub` pulls no render and compiles on its own.
 - [Format document](format-document.md).
 
 ## Known holes / open
-- Fails to build on its own (above). The acceptance criteria of #2 required each feature to build on its own, but the script does not check that.
-- Tracked: #35 (epub and office standalone builds)
+**None.**

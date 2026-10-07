@@ -61,6 +61,29 @@ assert_build_ok() {
   fi
 }
 
+# Prints the features declared in a manifest's [features] table, except the
+# `default` and `all` aggregates.
+manifest_features() {
+  awk '
+    { sub(/\r$/, "") }
+    /^\[/ { in_features = ($0 == "[features]"); next }
+    in_features && /^[A-Za-z0-9_-]+[[:space:]]*=/ {
+      name = $1; sub(/=.*/, "", name)
+      if (name != "default" && name != "all") print name
+    }
+  ' "$1"
+}
+
+assert_check_ok() {
+  local pkg=$1 features=$2 label=$3
+  if cargo check -p "$pkg" --quiet --no-default-features --features "$features" 2>/dev/null; then
+    echo "PASS [$label]: $pkg compiles with --no-default-features --features '$features'"
+  else
+    echo "FAIL [$label]: $pkg does not compile with --no-default-features --features '$features'" >&2
+    fail=1
+  fi
+}
+
 # --- justpdf-special (issue #1) ---
 # Default features must NOT pull justpdf-render
 assert_dep_absent justpdf-special justpdf-render "" "special/default"
@@ -86,5 +109,15 @@ assert_dep_present justpdf-formats justpdf-render "mobi" "formats/mobi"
 assert_dep_present justpdf-formats justpdf-render "plaintext" "formats/plaintext"
 # All features must still build
 assert_build_ok justpdf-formats "all" "formats/all"
+# Every feature must compile on its own, and with none
+assert_check_ok justpdf-formats "" "formats/no-features"
+formats_features=$(manifest_features justpdf-formats/Cargo.toml)
+if [ -z "$formats_features" ]; then
+  echo "FAIL [formats/features]: no features read from justpdf-formats/Cargo.toml" >&2
+  fail=1
+fi
+for feature in $formats_features; do
+  assert_check_ok justpdf-formats "$feature" "formats/$feature-alone"
+done
 
 exit "$fail"

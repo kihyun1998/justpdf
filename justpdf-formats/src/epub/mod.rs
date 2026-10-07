@@ -381,10 +381,17 @@ impl FormatDocument for EpubDocument {
                 count: self.chapters.len(),
             });
         }
-        // Render text via PlainTextDocument
-        let text = &self.chapters[index].text;
-        let plain = crate::plaintext::PlainTextDocument::from_string(text);
-        plain.render_page(0, dpi)
+        #[cfg(feature = "plaintext")]
+        {
+            let text = &self.chapters[index].text;
+            let plain = crate::plaintext::PlainTextDocument::from_string(text);
+            plain.render_page(0, dpi)
+        }
+        #[cfg(not(feature = "plaintext"))]
+        {
+            let _ = dpi;
+            Err(FormatError::preview_needs_plaintext())
+        }
     }
 
     fn render_page_png(&self, index: usize, dpi: f64) -> Result<Vec<u8>> {
@@ -394,9 +401,17 @@ impl FormatDocument for EpubDocument {
                 count: self.chapters.len(),
             });
         }
-        let text = &self.chapters[index].text;
-        let plain = crate::plaintext::PlainTextDocument::from_string(text);
-        plain.render_page_png(0, dpi)
+        #[cfg(feature = "plaintext")]
+        {
+            let text = &self.chapters[index].text;
+            let plain = crate::plaintext::PlainTextDocument::from_string(text);
+            plain.render_page_png(0, dpi)
+        }
+        #[cfg(not(feature = "plaintext"))]
+        {
+            let _ = dpi;
+            Err(FormatError::preview_needs_plaintext())
+        }
     }
 
     fn to_pdf(&self) -> Result<Vec<u8>> {
@@ -583,6 +598,53 @@ mod tests {
         let doc = EpubDocument::from_bytes(&data).unwrap();
         assert!(doc.page(99).is_err());
         assert!(doc.page_text(99).is_err());
+    }
+
+    #[test]
+    fn test_preview_out_of_range() {
+        let doc = EpubDocument::from_bytes(&create_test_epub()).unwrap();
+        assert!(matches!(
+            doc.render_page(99, 72.0),
+            Err(FormatError::OutOfRange { index: 99, .. })
+        ));
+        assert!(matches!(
+            doc.render_page_png(99, 72.0),
+            Err(FormatError::OutOfRange { index: 99, .. })
+        ));
+    }
+
+    #[cfg(feature = "plaintext")]
+    #[test]
+    fn test_preview_renders_with_plaintext() {
+        let doc = EpubDocument::from_bytes(&create_test_epub()).unwrap();
+        let page = doc.render_page(0, 72.0).unwrap();
+        assert!(page.width > 0 && page.height > 0);
+        assert!(
+            page.data.chunks_exact(4).any(|p| p[0] < 128),
+            "blank preview"
+        );
+        assert!(
+            doc.render_page_png(0, 72.0)
+                .unwrap()
+                .starts_with(b"\x89PNG")
+        );
+    }
+
+    #[cfg(not(feature = "plaintext"))]
+    #[test]
+    fn test_preview_needs_plaintext_feature() {
+        let doc = EpubDocument::from_bytes(&create_test_epub()).unwrap();
+        for result in [
+            doc.render_page(0, 72.0).map(|_| ()),
+            doc.render_page_png(0, 72.0).map(|_| ()),
+        ] {
+            match result {
+                Err(FormatError::Format { detail }) => {
+                    assert!(detail.contains("plaintext"), "detail: {detail}")
+                }
+                other => panic!("expected FormatError::Format, got {other:?}"),
+            }
+        }
     }
 
     #[test]
