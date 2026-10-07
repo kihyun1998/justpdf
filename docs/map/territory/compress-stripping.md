@@ -26,4 +26,5 @@ Two knobs. `strip_metadata` removes the document catalog's XMP, structure tree, 
 
 ## Known holes / open
 - The promise to "remove" JavaScript does not cover JS in `/OpenAction`, the catalog `/AA` or annotation actions.
-- Tracked: #58 (extreme removes embedded files)
+- Measured 2026-10-07 on a Factur-X-shaped file (EmbeddedFiles + `/AF` + XMP with `pdfaid:part=3` and the `fx:` schema + `/OutputIntents`): `high` already removes the XMP and `/OutputIntents` through `strip_metadata`, so the PDF/A and Factur-X declarations vanish; `extreme` also drops the EmbeddedFiles name tree, but `/AF` keeps the XML bytes in the file, hidden from attachment lists. Decided in #58: detect PDF/A (`pdfaid:part`), PDF/UA (`pdfuaid:part`) and catalog `/AF`, keep what that conformance needs (plus `/StructTreeRoot`/`/MarkInfo` for level A or PDF/UA), report it in `CompressStats`; without conformance, drop `/AF` references with the name tree; and widen JavaScript removal to `/OpenAction`, `/AA` and annotation actions.
+- Tracked: #58 (presets and conformance, JavaScript scope)

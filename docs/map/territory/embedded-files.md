@@ -33,4 +33,4 @@ Reads (including an MD5 check) and adds attachments in the `/Names /EmbeddedFile
 ## Known holes / open
 - There is no extraction round-trip test (only reading the MIME back after adding: `test_mime_type_is_written_once_escaped`).
 - There is no depth limit — extreme depth without a cycle can overflow the stack (inferred).
-- Tracked: #33 (text string encoding), #58 (extreme removes attachments), #122 (depth limit)
+- Tracked: #33 (text string encoding), #58 (extreme removes attachments, and high removes the PDF/A + Factur-X XMP; decided: detect and preserve), #122 (depth limit)
