@@ -47,5 +47,6 @@ There is no decision record (ADR). The maintainer's decision (2026-09-24, #75 tr
 
 ## Known holes / open
 - Objects that fail to resolve are dropped without a warning.
+- `delete_page`, `insert_page` and `reorder_pages` treat the root `/Kids` as the page list and set the root `/Count` to its length. Measured 2026-10-07 on `testpdf.pdf` (392 pages under 20 intermediate nodes): `delete_page(391)` is a silent no-op, `delete_page(0)` removes 20 pages (a whole node), and a full reverse `reorder_pages` only reverses the 20 nodes. Decided in #80: locate pages through the tree and adjust ancestor counts as MuPDF `pdf_delete_page`/`pdf_insert_page` do; out-of-range indices are `PageOutOfRange`; `reorder_pages` takes only a permutation, pushes inherited attributes into each page and rebuilds a flat root `/Kids`.
 - `graft_page` follows the source page's `/Parent` through `deep_copy_object`, copies the whole source page tree, then overwrites `/Parent` and leaves the copy orphaned — about N copies for an N-page merge (inferred).
-- Tracked: #33 (text string encoding), #121 (graft_page copies the tree)
+- Tracked: #33 (text string encoding), #80 (page operations on nested trees), #97 (unreadable objects dropped silently), #121 (graft_page copies the tree)
