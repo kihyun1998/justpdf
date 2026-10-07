@@ -36,3 +36,5 @@ Outputs a page as an SVG document. It is not a device but a **second interpreter
 ## Known holes / open
 - The test checks only that the output contains `<svg`.
 - `gs` ignores the ExtGState `/Font` entry, like the raster interpreter. Measured 2026-10-07: with no prior `Tf` the text emits no `<text>`; after `/F1 12 Tf` (Helvetica, width 500) it stays Helvetica with advance 6 instead of Courier's 7.2; a `gs` font absent from `/Font` (Times-Roman 20) is drawn as the previous Helvetica 12. Tracked: #238
+- `BMC`/`BDC`/`EMC`/`MP`/`DP` are no-ops and `Do` ignores `/OC`, so OFF optional content is emitted. Measured 2026-10-07: fills inside `/OC /Off BDC`, inside an `/On` section nested in it, and in a Form XObject with `/OC <Off>` all appear in the output. To reuse the visibility helper #44 adds in core. Tracked: #218
+- Annotations are not drawn at all: neither `render_page_to_svg` nor `svg_device.rs` reads `/Annots` (inferred).
