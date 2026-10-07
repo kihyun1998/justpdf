@@ -19,9 +19,8 @@ Turns the section text of FictionBook 2 XML into a PDF.
 - [Content text encoding](../invariant/content-text-encoding.md)
 
 ## Blast radius
-- [CLI](cli.md) — `convert` has no FB2 branch.
+- [CLI](cli.md) — `convert` reads `.fb2` (measured, `fb2_converts_to_pdf`).
 - [Render API](render-api.md).
 
 ## Known holes / open
-- Unreachable from the CLI.
-- Tracked: #49 (convert MOBI and FB2)
+**None.**
