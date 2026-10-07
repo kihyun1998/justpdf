@@ -8,7 +8,7 @@ A PyO3 module (built with maturin). `Document` (open, authenticate, text, render
 
 ## Design model
 - `Page` has no text method (text is `Document.page_text`).
-- Only core `PageOutOfRange` (from rendering, `RenderError::Core(PageOutOfRange)`) becomes `IndexError`; every other error becomes `RuntimeError(str(e))` (`page_error`, `render_error`, #134; measured by building the module with cargo and calling it from Python — no test in the repo runs it). `__getitem__` resolves a negative index against `page_count` first, so a document whose `page_count` fails reads as length 0 there and raises `IndexError` (measured on an unauthenticated encrypted document, 2026-09-30; Tracked: #147).
+- Only core `PageOutOfRange` (from rendering, `RenderError::Core(PageOutOfRange)`) becomes `IndexError`; every other error becomes `RuntimeError(str(e))` (`page_error`, `render_error`, #134; measured by building the module with cargo and calling it from Python — no test in the repo runs it). `__getitem__` resolves a negative index against `page_count` first, so a document whose `page_count` fails reads as length 0 there and raises `IndexError` (measured on an unauthenticated encrypted document, 2026-09-30; Tracked: #147). Decided in #147: `len()` and indexing raise the `page_count` error through `page_error`; `__repr__` never raises and shows the error in place of the count, since a raising `repr()` breaks printing and debuggers.
 
 ## Code
 - `justpdf-python/src/lib.rs` — `page_error`, `render_error`, `Document`, `open`, `from_bytes`, `authenticate`, `page`, `text`, `page_text`, `render_page`, `render_page_to_file`, `Page`
