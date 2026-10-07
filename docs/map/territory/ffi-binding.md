@@ -30,4 +30,4 @@ C ABI functions (`justpdf_open` … `justpdf_page_size`) and a hand-written head
 
 ## Known holes / open
 - Nothing checks that the header matches the Rust signatures.
-- Tracked: #36 (justpdf-wasm manifest, ADR-0002), #148 (`justpdf_page_count` and `justpdf_extract_all_text` map every error to `JUSTPDF_ERR_PARSE`)
+- Tracked: #36 (justpdf-wasm manifest, ADR-0002), #148 (`justpdf_page_count` and `justpdf_extract_all_text` map every error to `JUSTPDF_ERR_PARSE`; to go through `page_error_code`, with `LimitExceeded` and `CircularReference` staying `JUSTPDF_ERR_PARSE` as file damage)
