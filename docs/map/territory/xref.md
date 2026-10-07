@@ -33,4 +33,5 @@ Rules read from the code.
 
 ## Known holes / open
 - Hybrid files (`/XRefStm`) are not handled: `rg XRefStm justpdf-core/src` finds nothing.
-- Tracked: #53 (/XRefStm)
+- Xref-stream fields are narrowed with `as`: a type-2 index to `u16` (index 65,536 resolves to index 0's object, measured 2026-10-07), `gen_num` to `u16`, `obj_stream_num` and `next_free` to `u32`. Decided in #158: widen the index to `u32` and skip, not wrap, any field that does not fit. pdf.js keeps the index unbounded and rewrites it from the object stream's header numbers; that check here is #109.
+- Tracked: #53 (/XRefStm), #158 (field narrowing)
