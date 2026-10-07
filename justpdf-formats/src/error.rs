@@ -31,6 +31,16 @@ pub enum FormatError {
 
 pub type Result<T> = std::result::Result<T, FormatError>;
 
+#[cfg(all(not(feature = "plaintext"), any(feature = "epub", feature = "office")))]
+impl FormatError {
+    /// The error an EPUB or Office preview returns when the `plaintext` feature is off.
+    pub(crate) fn preview_needs_plaintext() -> Self {
+        Self::Format {
+            detail: "page preview needs the `plaintext` feature".into(),
+        }
+    }
+}
+
 impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
