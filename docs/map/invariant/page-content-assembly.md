@@ -12,6 +12,7 @@ Each consumer has its own assembly function: the render interpreter, the SVG ren
 - [BBox device](../territory/bbox-device.md) — `get_page_content` ("simplified version"), `concat_streams`.
 - [Text extraction](../territory/text-extraction.md) — `get_page_content_data` (private).
 - [Redaction](../territory/redaction.md) — `get_page_content_data`.
+- Compression (`writer/compress.rs`) — four sites (`collect_image_display_sizes`, `rewrite_color_operators_to_gray`, `subset_embedded_fonts`, `remove_unused_resources`) each match `/Contents` as a stream reference or a direct array, missing an indirect array. Decided in #138: one compress-local helper with a fail-safe for unreadable content; a core-wide assembler is left to #207.
 - [Content stream parsing](../territory/content-stream-parsing.md) — the side that receives the assembled bytes.
 
 Command to find them again: `rg -n 'fn get_page_content|fn concat_(content_)?streams' --glob '*.rs' --glob '!target' .`
