@@ -31,7 +31,7 @@ No incident recorded. Reported on 2026-09-23 by the font/text and render researc
 
 - 2026-09-23, while working on #9, the subset case was **reproduced by running it** (simple TrueType): the subset font's `cmap` pointed at old GIDs so all five characters to be drawn lost their outlines, while text extraction on the same output was unchanged — [Font subsetting](../territory/font-subsetting.md#design-model).
 
-- Tracked: #221 (/Differences and base tables in text), #222 (CID widths in render), #223 (render glyph selection; shares the rule with #118)
+- Tracked: #221 (/Differences and base tables in text), #222 (CID widths in render), #223 (one core §9.6.6.4 code → GID function for render and subsetting; absorbed #118)
 
 ## Where it will recur
 **Adding, on either the text or the render side, a function that gets a code, glyph, width or Unicode value from a font dictionary is subject to this invariant.** Check: does the other side need the same information? Until core has a shared font interpretation type, a fix on one side has to explicitly decide whether the other side needs the same fix.
