@@ -19,10 +19,10 @@ Parses the header, INDEXes, Top DICT and charset of a Compact Font Format (FontF
 **None.**
 
 ## Blast radius
-- [Glyph rendering](glyph-rendering.md) — rendering a CFF font would need this, but it currently hands the raw bytes to `ttf_parser`.
+- [Glyph rendering](glyph-rendering.md) — renders bare CFF through `ttf_parser::cff::Table`, not through this parser.
 - [Font subsetting](font-subsetting.md) — if CFF subsetting is added, this is its material.
 
 ## Known holes / open
-- There is no consumer in product code. The renderer hands a pure CFF (FontFile3) to `ttf_parser::Face::parse` and draws a placeholder box when that fails (measured 2026-10-07: URW `NimbusSans-Regular.cff` as `/Type1C`, `H` at 100 pt fills its counter).
-- `ttf-parser` 0.25.1 exports `ttf_parser::cff::Table`, which parses a bare CFF and gives `outline`, `glyph_index`, `glyph_index_by_name`, `glyph_cid` and `matrix` (measured 2026-10-07 on the URW Sans and Dingbats files). #224 renders through it, so this parser stays without a renderer consumer; #176 is still its candidate consumer.
-- Tracked: #224 (rendering FontFile3), #176 (CFF on the writing side)
+- There is no consumer in product code. The renderer draws bare CFF through `ttf_parser::cff::Table` (#224), so this parser still has no renderer consumer; #176 is its candidate consumer.
+- Test fixtures for bare CFF live in `justpdf-render/tests/fixtures/`: URW `NimbusSans-Regular.cff` (from MuPDF `resources/fonts/urw`, SIL OFL 1.1, `OFL-URW.txt`), and `cid-test.cff` / `cid-test-half.cff`, CID-keyed fonts built from it by `scripts/make-cid-cff-fixture.py` (fontTools; H = CID 300, E = CID 301, Top DICT FontMatrix 0.001 and 0.0005, no FDArray FontMatrix).
+- Tracked: #176 (CFF on the writing side)

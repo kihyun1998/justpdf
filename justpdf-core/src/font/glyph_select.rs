@@ -42,23 +42,15 @@ pub fn truetype_glyph_candidates(
         .map(|cmap| cmap.subtables.into_iter().collect())
         .unwrap_or_default();
     let chosen = preferred_subtable(&subtables, symbolic, encoding.is_some());
-    let difference = differences
-        .iter()
-        .rev()
-        .find(|(c, _)| *c == code)
-        .and_then(|(_, name)| std::str::from_utf8(name).ok());
-    let base_names = match encoding {
-        Some(Encoding::MacRomanEncoding) => Some(&MAC_ROMAN_GLYPH_NAMES),
-        Some(Encoding::WinAnsiEncoding) => Some(&WIN_ANSI_GLYPH_NAMES),
-        _ => None,
-    };
-    let base_name = base_names
-        .map(|names| names[code as usize])
-        .filter(|n| !n.is_empty());
+    let difference = encoding_glyph_name(code, None, differences);
+    // pdf.js reads a base encoding's names only for MacRoman and WinAnsi.
+    let mac_or_win =
+        encoding.filter(|e| matches!(e, Encoding::MacRomanEncoding | Encoding::WinAnsiEncoding));
+    let base_name = encoding_glyph_name(code, mac_or_win, &[]);
     // The name the §9.6.6.4 path reads: /Differences, else the base encoding, else Standard.
     let rule_name = difference
         .or(base_name)
-        .or_else(|| Some(STANDARD_GLYPH_NAMES[code as usize]).filter(|n| !n.is_empty()));
+        .or_else(|| encoding_glyph_name(code, Some(Encoding::StandardEncoding), &[]));
     // The name looked up in `post`: /Differences, else a MacRoman or WinAnsi base.
     let post_name = difference.or(base_name);
     let by_post = |name: Option<&str>| {
@@ -111,6 +103,27 @@ pub fn truetype_glyph_candidates(
         push(Some(GlyphId(u16::from(code))));
     }
     out
+}
+
+/// The glyph name a simple font's one-byte `code` has in its encoding: the
+/// `/Differences` name, else the name in `base` when that is StandardEncoding,
+/// MacRomanEncoding or WinAnsiEncoding. `None` when neither names the code —
+/// for an embedded font program, the code then goes through its built-in encoding.
+pub fn encoding_glyph_name(
+    code: u8,
+    base: Option<Encoding>,
+    differences: &[(u8, Vec<u8>)],
+) -> Option<&str> {
+    if let Some((_, name)) = differences.iter().rev().find(|(c, _)| *c == code) {
+        return std::str::from_utf8(name).ok();
+    }
+    let names = match base? {
+        Encoding::StandardEncoding => &STANDARD_GLYPH_NAMES,
+        Encoding::MacRomanEncoding => &MAC_ROMAN_GLYPH_NAMES,
+        Encoding::WinAnsiEncoding => &WIN_ANSI_GLYPH_NAMES,
+        _ => return None,
+    };
+    Some(names[code as usize]).filter(|n| !n.is_empty())
 }
 
 /// The single character a glyph name stands for, by the Adobe Glyph List rules.
