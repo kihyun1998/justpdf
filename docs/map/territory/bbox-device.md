@@ -24,4 +24,4 @@ Computes the bounding box of what is actually drawn on a page. It is the third o
 ## Known holes / open
 - `BBoxDevice::new` takes a `page_transform` and stores it, but nothing reads the field: `add_point` applies the CTM only, so the result is PDF user space (measured 2026-10-07, #262). The argument and field are dead; removing them would not change any result.
 - Public as `compute_page_bbox`, but nothing in the workspace or the bindings calls it.
-- Tracked: #150 (a page index out of range is `RenderError::InvalidDimensions`)
+- Tracked: #150 (a page index out of range is `RenderError::InvalidDimensions`; decided in #150: look the page up with `get_page`, inheriting #134's `PageOutOfRange`/`InvalidObject` rule, wrapped in `RenderError::Core`)
