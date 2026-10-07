@@ -19,9 +19,8 @@ Reads text from Mobipocket files (PalmDOC-compressed or uncompressed).
 - [Content text encoding](../invariant/content-text-encoding.md)
 
 ## Blast radius
-- [CLI](cli.md) — `convert` has no MOBI branch.
+- [CLI](cli.md) — `convert` reads `.mobi` and `.prc` (measured, `mobi_converts_to_pdf`).
 - [Render API](render-api.md) — preview.
 
 ## Known holes / open
-- Unreachable from the CLI (above).
-- Tracked: #49 (convert MOBI and FB2)
+**None.**

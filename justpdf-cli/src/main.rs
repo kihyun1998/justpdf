@@ -804,12 +804,26 @@ fn cmd_compress_analyze(file: &Path) -> Result<(), Box<dyn std::error::Error>> {
 // convert
 // ---------------------------------------------------------------------------
 
+/// Write `doc` as `output_ext`: `pdf` is the whole document, `png` the first page at 150 dpi.
+fn write_format_document(
+    doc: &impl justpdf_formats::common::FormatDocument,
+    output: &Path,
+    output_ext: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = match output_ext {
+        "pdf" => doc.to_pdf()?,
+        "png" => doc.render_page_png(0, 150.0)?,
+        _ => return Err(format!("unsupported output format: {output_ext}").into()),
+    };
+    std::fs::write(output, bytes)?;
+    Ok(())
+}
+
 fn cmd_convert(
     file: &Path,
     output: &Path,
     format: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use justpdf_formats::common::FormatDocument;
     use justpdf_formats::detect::{DocumentFormat, detect_format};
 
     let input_format = detect_format(file);
@@ -817,78 +831,48 @@ fn cmd_convert(
         format.unwrap_or_else(|| output.extension().and_then(|e| e.to_str()).unwrap_or("pdf"));
 
     match input_format {
-        DocumentFormat::PlainText => {
-            let doc = justpdf_formats::plaintext::PlainTextDocument::open(file)?;
-            match output_ext {
-                "pdf" => {
-                    std::fs::write(output, doc.to_pdf()?)?;
-                }
-                "png" => {
-                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
-                }
-                _ => return Err(format!("unsupported output format: {output_ext}").into()),
-            }
-        }
-        DocumentFormat::Svg => {
-            let doc = justpdf_formats::svg::SvgDocument::open(file)?;
-            match output_ext {
-                "pdf" => {
-                    std::fs::write(output, doc.to_pdf()?)?;
-                }
-                "png" => {
-                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
-                }
-                _ => return Err(format!("unsupported output format: {output_ext}").into()),
-            }
-        }
-        DocumentFormat::Epub => {
-            let doc = justpdf_formats::epub::EpubDocument::open(file)?;
-            match output_ext {
-                "pdf" => {
-                    std::fs::write(output, doc.to_pdf()?)?;
-                }
-                "png" => {
-                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
-                }
-                _ => return Err(format!("unsupported output format: {output_ext}").into()),
-            }
-        }
-        DocumentFormat::Cbz => {
-            let doc = justpdf_formats::cbz::CbzDocument::open(file)?;
-            match output_ext {
-                "pdf" => {
-                    std::fs::write(output, doc.to_pdf()?)?;
-                }
-                "png" => {
-                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
-                }
-                _ => return Err(format!("unsupported output format: {output_ext}").into()),
-            }
-        }
-        DocumentFormat::Xps => {
-            let doc = justpdf_formats::xps::XpsDocument::open(file)?;
-            match output_ext {
-                "pdf" => {
-                    std::fs::write(output, doc.to_pdf()?)?;
-                }
-                "png" => {
-                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
-                }
-                _ => return Err(format!("unsupported output format: {output_ext}").into()),
-            }
-        }
+        DocumentFormat::PlainText => write_format_document(
+            &justpdf_formats::plaintext::PlainTextDocument::open(file)?,
+            output,
+            output_ext,
+        )?,
+        DocumentFormat::Svg => write_format_document(
+            &justpdf_formats::svg::SvgDocument::open(file)?,
+            output,
+            output_ext,
+        )?,
+        DocumentFormat::Epub => write_format_document(
+            &justpdf_formats::epub::EpubDocument::open(file)?,
+            output,
+            output_ext,
+        )?,
+        DocumentFormat::Cbz => write_format_document(
+            &justpdf_formats::cbz::CbzDocument::open(file)?,
+            output,
+            output_ext,
+        )?,
+        DocumentFormat::Xps => write_format_document(
+            &justpdf_formats::xps::XpsDocument::open(file)?,
+            output,
+            output_ext,
+        )?,
         DocumentFormat::Docx | DocumentFormat::Xlsx | DocumentFormat::Pptx => {
-            let doc = justpdf_formats::office::OfficeDocument::open(file)?;
-            match output_ext {
-                "pdf" => {
-                    std::fs::write(output, doc.to_pdf()?)?;
-                }
-                "png" => {
-                    std::fs::write(output, doc.render_page_png(0, 150.0)?)?;
-                }
-                _ => return Err(format!("unsupported output format: {output_ext}").into()),
-            }
+            write_format_document(
+                &justpdf_formats::office::OfficeDocument::open(file)?,
+                output,
+                output_ext,
+            )?
         }
+        DocumentFormat::Mobi => write_format_document(
+            &justpdf_formats::mobi::MobiDocument::open(file)?,
+            output,
+            output_ext,
+        )?,
+        DocumentFormat::Fb2 => write_format_document(
+            &justpdf_formats::fb2::Fb2Document::open(file)?,
+            output,
+            output_ext,
+        )?,
         DocumentFormat::Pdf => match output_ext {
             "svg" => {
                 let doc = justpdf_core::PdfDocument::open(file)?;

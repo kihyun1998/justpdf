@@ -81,7 +81,7 @@ justpdf convert report.docx -o preview.png
 justpdf convert input.pdf -o page1.svg      # PDF → svg / png (first page) / txt
 ```
 
-Supported inputs: PDF, plain text, SVG, EPUB, CBZ, XPS, DOCX/XLSX/PPTX. The output format comes from the output extension, or `-F`.
+Supported inputs: PDF, plain text, SVG, EPUB, CBZ, XPS, DOCX/XLSX/PPTX, MOBI/PRC, FB2. The output format comes from the output extension, or `-F`.
 
 ### Sign
 `justpdf sign` is not implemented yet: it writes nothing and exits with code 1.
