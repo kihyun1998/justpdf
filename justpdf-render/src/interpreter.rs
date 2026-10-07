@@ -1188,7 +1188,7 @@ impl<'a> RenderInterpreter<'a> {
         let cid_to_gid_map = font.cid_to_gid_map.clone();
 
         // The glyph each code draws, when the font program can be read.
-        let glyphs: Option<Vec<Option<ttf_parser::GlyphId>>> = font_program
+        let glyphs: Option<Vec<Option<crate::glyph::GlyphRef>>> = font_program
             .as_ref()
             .and_then(|p| crate::glyph::GlyphSource::parse(&p.data))
             .map(|source| {
@@ -1206,13 +1206,15 @@ impl<'a> RenderInterpreter<'a> {
                         }
                         let cid = code as u16;
                         if let Some(map) = &font.cff_cid_to_gid {
-                            return map.get(&cid).map(|&gid| ttf_parser::GlyphId(gid));
+                            return map
+                                .get(&cid)
+                                .map(|&gid| crate::glyph::GlyphRef::Id(ttf_parser::GlyphId(gid)));
                         }
                         let gid = cid_to_gid_map
                             .as_deref()
                             .and_then(|map| map.get(cid as usize).copied())
                             .unwrap_or(cid);
-                        Some(ttf_parser::GlyphId(gid))
+                        Some(crate::glyph::GlyphRef::Id(ttf_parser::GlyphId(gid)))
                     })
                     .collect()
             });
@@ -1228,7 +1230,7 @@ impl<'a> RenderInterpreter<'a> {
                     font_size,
                     text_rise,
                     font_program.as_ref(),
-                    glyphs.as_ref().map(|g| g[i]),
+                    glyphs.as_ref().map(|g| g[i].clone()),
                 )?;
             }
 
@@ -1254,7 +1256,7 @@ impl<'a> RenderInterpreter<'a> {
         font_size: f64,
         text_rise: f64,
         font_program: Option<&FontProgram>,
-        glyph: Option<Option<ttf_parser::GlyphId>>,
+        glyph: Option<Option<crate::glyph::GlyphRef>>,
     ) -> Result<()> {
         if glyph_width.abs() < 0.001 {
             return Ok(());
@@ -1266,13 +1268,14 @@ impl<'a> RenderInterpreter<'a> {
             && let Some(source) = crate::glyph::GlyphSource::parse(&program.data)
         {
             // No glyph for this code: draw nothing.
-            let Some(glyph_id) = glyph else {
+            let Some(glyph) = glyph else {
                 return Ok(());
             };
 
+            let (key_hash, key_glyph) = glyph.cache_key(program.hash);
             let cached_path = self
                 .glyph_cache
-                .get_or_insert(program.hash, glyph_id.0, || source.outline(glyph_id))
+                .get_or_insert(key_hash, key_glyph, || source.outline(&glyph))
                 .cloned();
 
             if let Some(path) = cached_path {
