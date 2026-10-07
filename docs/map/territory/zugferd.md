@@ -24,4 +24,4 @@ Finds ZUGFeRD/Factur-X XML among a PDF's attachments, detects the profile and pa
 
 ## Known holes / open
 - No test runs the lookup against a real ZUGFeRD file.
-- Tracked: #58 (extreme removes attachments)
+- Tracked: #58 (extreme removes attachments, and high removes the PDF/A + Factur-X XMP; decided: detect and preserve)
