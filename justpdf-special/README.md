@@ -27,7 +27,7 @@ let png = barcode::generate_qr_png("https://example.com", 256)?;
 | Feature    | Description                          |
 |------------|--------------------------------------|
 | `ocr`      | OCR via Tesseract 3.04+ (pulls in `justpdf-render`) |
-| `barcode`  | QR, Code128, EAN-13, Code39; DataMatrix, PDF417, Aztec are experimental (no error correction yet, may not scan — #55) |
+| `barcode`  | QR (`qrcode`); Code128, EAN-13, Code39, DataMatrix, PDF417, Aztec (`rxing`, Apache-2.0 only) |
 | `zugferd`  | ZUGFeRD/Factur-X invoice extraction  |
 | `bidi`     | Bidirectional text run analysis      |
 | `deskew`   | Scanned image deskew correction      |
