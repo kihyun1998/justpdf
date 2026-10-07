@@ -3,9 +3,7 @@ use std::collections::HashMap;
 use justpdf_core::PdfDocument;
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
-use justpdf_core::font::{
-    Encoding, FontInfo, ToUnicodeCMap, parse_font_info, truetype_glyph_candidates,
-};
+use justpdf_core::font::{Encoding, FontInfo, ToUnicodeCMap, parse_font_info};
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::ocg::{self, OCConfig};
@@ -34,6 +32,10 @@ struct ResolvedFont {
     cid_to_gid_map: Option<Vec<u16>>,
     /// The base encoding of the font's `/Encoding`, `None` when it has none.
     encoding: Option<Encoding>,
+    /// That base only when the PDF names it: an encoding name or `/BaseEncoding`.
+    explicit_base: Option<Encoding>,
+    /// CID to glyph ID for a CID-keyed bare CFF program.
+    cff_cid_to_gid: Option<std::collections::HashMap<u16, u16>>,
     /// Bit 3 of the font descriptor's `/Flags`.
     symbolic: bool,
 }
@@ -311,6 +313,11 @@ impl<'a> RenderInterpreter<'a> {
         let fd = &fd;
         let mut info = parse_font_info(fd);
         let encoding = fd.get(b"Encoding").map(|_| info.encoding);
+        let explicit_base = match fd.get(b"Encoding") {
+            Some(PdfObject::Name(name)) => Some(Encoding::from_name(name)),
+            Some(PdfObject::Dict(d)) => d.get_name(b"BaseEncoding").map(Encoding::from_name),
+            _ => None,
+        };
         let symbolic = self
             .get_font_descriptor(fd)
             .and_then(|d| d.get_i64(b"Flags"))
@@ -373,12 +380,20 @@ impl<'a> RenderInterpreter<'a> {
                 data,
             });
 
+        let cff_cid_to_gid = font_program
+            .as_ref()
+            .filter(|_| info.subtype == b"Type0")
+            .and_then(|p| crate::glyph::GlyphSource::parse(&p.data))
+            .and_then(|source| source.cff_cid_to_gid());
+
         Ok(ResolvedFont {
             info,
             cmap,
             font_program,
             cid_to_gid_map,
             encoding,
+            explicit_base,
+            cff_cid_to_gid,
             symbolic,
         })
     }
@@ -1172,30 +1187,35 @@ impl<'a> RenderInterpreter<'a> {
         let font_program = font.font_program.clone();
         let cid_to_gid_map = font.cid_to_gid_map.clone();
 
-        // A simple font's glyph for each code: the first §9.6.6.4 candidate.
-        let simple_glyphs: Option<Vec<Option<ttf_parser::GlyphId>>> = if is_cid {
-            None
-        } else {
-            font_program
-                .as_ref()
-                .and_then(|p| ttf_parser::Face::parse(&p.data, 0).ok())
-                .map(|face| {
-                    char_codes
-                        .iter()
-                        .map(|&code| {
-                            truetype_glyph_candidates(
-                                &face,
+        // The glyph each code draws, when the font program can be read.
+        let glyphs: Option<Vec<Option<ttf_parser::GlyphId>>> = font_program
+            .as_ref()
+            .and_then(|p| crate::glyph::GlyphSource::parse(&p.data))
+            .map(|source| {
+                char_codes
+                    .iter()
+                    .map(|&code| {
+                        if !is_cid {
+                            return source.simple_glyph(
                                 code as u8,
                                 font.encoding,
+                                font.explicit_base,
                                 &font.info.differences,
                                 font.symbolic,
-                            )
-                            .first()
-                            .copied()
-                        })
-                        .collect()
-                })
-        };
+                            );
+                        }
+                        let cid = code as u16;
+                        if let Some(map) = &font.cff_cid_to_gid {
+                            return map.get(&cid).map(|&gid| ttf_parser::GlyphId(gid));
+                        }
+                        let gid = cid_to_gid_map
+                            .as_deref()
+                            .and_then(|map| map.get(cid as usize).copied())
+                            .unwrap_or(cid);
+                        Some(ttf_parser::GlyphId(gid))
+                    })
+                    .collect()
+            });
 
         // Now we're done borrowing self.fonts, can mutably borrow self
         for (i, code) in char_codes.iter().enumerate() {
@@ -1204,14 +1224,11 @@ impl<'a> RenderInterpreter<'a> {
 
             if render_mode != 3 {
                 self.render_glyph(
-                    *code,
                     w0 * font_size,
                     font_size,
                     text_rise,
-                    is_cid,
                     font_program.as_ref(),
-                    cid_to_gid_map.as_deref(),
-                    simple_glyphs.as_ref().map(|g| g[i]),
+                    glyphs.as_ref().map(|g| g[i]),
                 )?;
             }
 
@@ -1233,14 +1250,11 @@ impl<'a> RenderInterpreter<'a> {
     #[allow(clippy::too_many_arguments)]
     fn render_glyph(
         &mut self,
-        code: u32,
         glyph_width: f64,
         font_size: f64,
         text_rise: f64,
-        is_cid: bool,
         font_program: Option<&FontProgram>,
-        cid_to_gid_map: Option<&[u16]>,
-        simple_glyph: Option<Option<ttf_parser::GlyphId>>,
+        glyph: Option<Option<ttf_parser::GlyphId>>,
     ) -> Result<()> {
         if glyph_width.abs() < 0.001 {
             return Ok(());
@@ -1248,47 +1262,30 @@ impl<'a> RenderInterpreter<'a> {
 
         // Try to render with real glyph outlines (using glyph cache)
         if let Some(program) = font_program
-            && let Ok(face) = ttf_parser::Face::parse(&program.data, 0)
+            && let Some(glyph) = glyph
+            && let Some(source) = crate::glyph::GlyphSource::parse(&program.data)
         {
-            let glyph_id = if is_cid {
-                // For CID fonts: apply CIDToGIDMap if available
-                if let Some(map) = cid_to_gid_map {
-                    let gid = map.get(code as usize).copied().unwrap_or(code as u16);
-                    ttf_parser::GlyphId(gid)
-                } else {
-                    // Identity mapping: CID == GID
-                    ttf_parser::GlyphId(code as u16)
-                }
-            } else {
-                match simple_glyph.flatten() {
-                    Some(gid) => gid,
-                    // No glyph for this code: draw nothing.
-                    None => return Ok(()),
-                }
+            // No glyph for this code: draw nothing.
+            let Some(glyph_id) = glyph else {
+                return Ok(());
             };
 
-            let gid_raw = glyph_id.0;
             let cached_path = self
                 .glyph_cache
-                .get_or_insert(program.hash, gid_raw, || {
-                    crate::glyph::glyph_outline(&face, glyph_id)
-                })
+                .get_or_insert(program.hash, glyph_id.0, || source.outline(glyph_id))
                 .cloned();
 
             if let Some(path) = cached_path {
-                let upem = crate::glyph::units_per_em(&face);
-                if upem > 0.0 {
-                    // Glyph coordinates are in font units.
-                    // Scale: font_size / upem, and flip Y (font Y is up, PDF text Y is up too
-                    // but we apply the text matrix which handles the rest)
-                    let scale = font_size / upem;
+                {
+                    // Glyph space (y up, like PDF text space) to text space at this size.
+                    let [a, b, c, d, e, f] = source.font_matrix();
                     let glyph_matrix = Matrix {
-                        a: scale,
-                        b: 0.0,
-                        c: 0.0,
-                        d: scale, // no Y flip here — glyph coords have Y-up, matching PDF
-                        e: 0.0,
-                        f: text_rise,
+                        a: a * font_size,
+                        b: b * font_size,
+                        c: c * font_size,
+                        d: d * font_size,
+                        e: e * font_size,
+                        f: f * font_size + text_rise,
                     };
 
                     let text_rendering_matrix = glyph_matrix

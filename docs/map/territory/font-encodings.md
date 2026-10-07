@@ -34,7 +34,7 @@ The encoding tables (Standard, WinAnsi, MacRoman, PDFDoc, Identity) that turn a 
 
 ## Blast radius
 - [Text extraction](text-extraction.md) — `show_string` calls `decode_simple_code` for one-byte codes, `decode_text` for two-byte codes.
-- [Glyph rendering](glyph-rendering.md) — draws the first candidate.
+- [Glyph rendering](glyph-rendering.md) — draws the first candidate for TrueType; for a bare CFF, the glyph named by `encoding_glyph_name`.
 - [Type3 fonts](type3-fonts.md) — uses `parse_differences`.
 - [Font subsetting](font-subsetting.md) — keeps every candidate.
 - [ToUnicode](tounicode.md) — the higher-priority mapping.

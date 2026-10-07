@@ -18,7 +18,7 @@ pub(crate) use encoding::winansi_char;
 pub use encoding::{
     Encoding, decode_text, encode_winansi, glyph_name_to_unicode, parse_differences,
 };
-pub use glyph_select::truetype_glyph_candidates;
+pub use glyph_select::{encoding_glyph_name, truetype_glyph_candidates};
 pub use standard14::{is_standard14, standard14_widths};
 
 use crate::object::{IndirectRef, PdfDict, PdfObject};
