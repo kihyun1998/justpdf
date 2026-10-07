@@ -45,7 +45,8 @@ impl DocumentBuilder {
         }
     }
 
-    /// Add a standard Type1 font (e.g. "Helvetica", "Times-Roman", "Courier").
+    /// Add a standard Type1 font (e.g. "Helvetica", "Times-Roman", "Courier"),
+    /// declared `/WinAnsiEncoding` (except `Symbol` and `ZapfDingbats`).
     ///
     /// Returns the resource name (e.g. "F1") to use when drawing text.
     pub fn add_standard_font(&mut self, base_font: &str) -> String {
@@ -57,16 +58,9 @@ impl DocumentBuilder {
         self.font_counter += 1;
         let resource_name = format!("F{}", self.font_counter);
 
-        // Create font dictionary object
-        let mut font_dict = PdfDict::new();
-        font_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
-        font_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Type1".to_vec()));
-        font_dict.insert(
-            b"BaseFont".to_vec(),
-            PdfObject::Name(base_font.as_bytes().to_vec()),
-        );
-
-        let font_ref = self.writer.add_object(PdfObject::Dict(font_dict));
+        let font_ref = self
+            .writer
+            .add_object(PdfObject::Dict(standard_font_dict(base_font)));
         self.fonts
             .insert(base_font.to_string(), (resource_name.clone(), font_ref));
 
@@ -194,16 +188,17 @@ impl DocumentBuilder {
         // Build Widths array for chars 32-255
         let mut widths = Vec::with_capacity(224);
         let mut bfchar_entries: Vec<(u8, u16)> = Vec::new();
-        for code in 32u16..=255u16 {
-            let ch = code as u8 as char;
-            let unicode_val = ch as u16;
-            if let Some(glyph_id) = face.glyph_index(ch) {
+        for code in 32u8..=255u8 {
+            let glyph = crate::font::winansi_char(code)
+                .and_then(|ch| face.glyph_index(ch).map(|g| (ch, g)));
+            if let Some((ch, glyph_id)) = glyph {
+                let unicode_val = ch as u16;
                 let w = face
                     .glyph_hor_advance(glyph_id)
                     .map(|a| (a as f64 * scale) as i64)
                     .unwrap_or(0);
                 widths.push(PdfObject::Integer(w));
-                bfchar_entries.push((code as u8, unicode_val));
+                bfchar_entries.push((code, unicode_val));
             } else {
                 widths.push(PdfObject::Integer(0));
             }
@@ -661,10 +656,135 @@ fn add_rgb_image(
     Ok((res_name, image_ref))
 }
 
+/// The dictionary of a standard Type1 font, declared `/WinAnsiEncoding` except
+/// `Symbol` and `ZapfDingbats`, which keep their built-in encoding.
+pub(crate) fn standard_font_dict(base_font: &str) -> PdfDict {
+    let mut font_dict = PdfDict::new();
+    font_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
+    font_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Type1".to_vec()));
+    font_dict.insert(
+        b"BaseFont".to_vec(),
+        PdfObject::Name(base_font.as_bytes().to_vec()),
+    );
+    if !matches!(base_font, "Symbol" | "ZapfDingbats") {
+        font_dict.insert(
+            b"Encoding".to_vec(),
+            PdfObject::Name(b"WinAnsiEncoding".to_vec()),
+        );
+    }
+    font_dict
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::parser::PdfDocument;
+
+    /// Text drawn with `show_text` in `font` (a standard font), extracted back.
+    fn standard_font_round_trip(font: &str, text: &str) -> String {
+        let mut doc = DocumentBuilder::new();
+        let res = doc.add_standard_font(font);
+        let mut page = crate::writer::page::PageBuilder::new(612.0, 792.0);
+        page.add_font(&res, font);
+        page.begin_text();
+        page.set_font(&res, 12.0);
+        page.move_to(72.0, 720.0);
+        page.show_text(text);
+        page.end_text();
+        doc.add_page(page);
+        let reopened = PdfDocument::from_bytes(doc.build().unwrap()).unwrap();
+        crate::text::extract_all_text_string(&reopened)
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    #[test]
+    fn show_text_round_trips_win_ansi_text() {
+        assert_eq!(
+            standard_font_round_trip("Helvetica", "café — €"),
+            "café — €"
+        );
+        assert_eq!(
+            standard_font_round_trip("Helvetica", "it's `x`"),
+            "it's `x`"
+        );
+    }
+
+    #[test]
+    fn show_text_substitutes_characters_outside_win_ansi() {
+        assert_eq!(
+            standard_font_round_trip("Helvetica", "café 한글"),
+            "café ??"
+        );
+    }
+
+    /// The `/Encoding` of the font object `add_standard_font(base_font)` creates.
+    fn standard_font_encoding(base_font: &str) -> Option<Vec<u8>> {
+        let mut doc = DocumentBuilder::new();
+        doc.add_standard_font(base_font);
+        let (_, font_ref) = doc.fonts.get(base_font).unwrap().clone();
+        let reopened = PdfDocument::from_bytes(doc.build().unwrap()).unwrap();
+        let PdfObject::Dict(font) = reopened.resolve(&font_ref).unwrap() else {
+            panic!("expected a font dictionary")
+        };
+        font.get_name(b"Encoding").map(<[u8]>::to_vec)
+    }
+
+    #[test]
+    fn standard_fonts_are_declared_win_ansi_except_symbolic_ones() {
+        assert_eq!(
+            standard_font_encoding("Helvetica").as_deref(),
+            Some(b"WinAnsiEncoding".as_slice())
+        );
+        assert_eq!(
+            standard_font_encoding("Courier").as_deref(),
+            Some(b"WinAnsiEncoding".as_slice())
+        );
+        assert_eq!(standard_font_encoding("Symbol"), None);
+        assert_eq!(standard_font_encoding("ZapfDingbats"), None);
+    }
+
+    #[test]
+    fn embedded_truetype_maps_codes_through_win_ansi() {
+        let font_data = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/NotoSans-Regular.ttf"
+        ))
+        .unwrap();
+        let mut doc = DocumentBuilder::new();
+        let res = doc.embed_truetype_font(&font_data).unwrap();
+        let (_, font_ref) = doc
+            .fonts
+            .values()
+            .find(|(name, _)| *name == res)
+            .unwrap()
+            .clone();
+        let mut page = crate::writer::page::PageBuilder::new(612.0, 792.0);
+        page.add_font_ref(&res, font_ref.clone());
+        page.begin_text();
+        page.set_font(&res, 12.0);
+        page.move_to(72.0, 720.0);
+        page.show_text("€ — “ok”");
+        page.end_text();
+        doc.add_page(page);
+        let reopened = PdfDocument::from_bytes(doc.build().unwrap()).unwrap();
+
+        let PdfObject::Dict(font) = reopened.resolve(&font_ref).unwrap() else {
+            panic!("expected a font dictionary")
+        };
+        let widths = font.get_array(b"Widths").unwrap();
+        for code in [0x80usize, 0x97, 0x93] {
+            let w = widths[code - 32].as_f64().unwrap();
+            assert!(w > 0.0, "width of 0x{code:02X} is {w}");
+        }
+        assert_eq!(
+            crate::text::extract_all_text_string(&reopened)
+                .unwrap()
+                .trim(),
+            "€ — “ok”"
+        );
+    }
 
     #[test]
     fn test_embed_rgb_reads_back_as_the_same_pixels() {

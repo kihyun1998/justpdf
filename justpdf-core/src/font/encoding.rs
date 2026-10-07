@@ -77,6 +77,30 @@ fn decode_utf16be(bytes: &[u8]) -> String {
     chars.into_iter().collect()
 }
 
+/// The character a WinAnsi code draws, or `None` for a code with no glyph
+/// (0x81, 0x8D, 0x8F, 0x90, 0x9D).
+pub(crate) fn winansi_char(code: u8) -> Option<char> {
+    match code {
+        0x81 | 0x8D | 0x8F | 0x90 | 0x9D => None,
+        _ => Some(WINANSI_TO_UNICODE[code as usize]),
+    }
+}
+
+/// `text` as WinAnsi (Windows-1252) codes, one byte per character: ASCII as
+/// it is, any other character its WinAnsi code, or `?` when it has none.
+pub fn encode_winansi(text: &str) -> Vec<u8> {
+    text.chars()
+        .map(|c| {
+            if c.is_ascii() {
+                return c as u8;
+            }
+            (0x80..=0xFF)
+                .find(|&code| winansi_char(code) == Some(c))
+                .unwrap_or(b'?')
+        })
+        .collect()
+}
+
 /// WinAnsi (Windows-1252) decoding.
 fn decode_winansi(bytes: &[u8]) -> String {
     bytes
@@ -231,6 +255,43 @@ static PDFDOC_TO_UNICODE: [char; 256] = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encode_winansi_keeps_ascii() {
+        let ascii: String = (0u8..0x80).map(char::from).collect();
+        assert_eq!(encode_winansi(&ascii), (0u8..0x80).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn encode_winansi_maps_latin_and_cp1252_characters() {
+        assert_eq!(encode_winansi("café"), [0x63, 0x61, 0x66, 0xE9]);
+        assert_eq!(encode_winansi("€"), [0x80]);
+        assert_eq!(encode_winansi("—"), [0x97]);
+        assert_eq!(encode_winansi("\u{201C}"), [0x93]);
+        assert_eq!(encode_winansi("\u{A0}ÿ"), [0xA0, 0xFF]);
+    }
+
+    #[test]
+    fn encode_winansi_substitutes_question_mark() {
+        assert_eq!(encode_winansi("한"), [b'?']);
+        // U+0081 has no glyph in WinAnsi although the decode table maps 0x81 to it.
+        assert_eq!(encode_winansi("\u{81}"), [b'?']);
+        assert_eq!(
+            encode_winansi("a é € — \u{201C} 한글 😀"),
+            [
+                b'a', b' ', 0xE9, b' ', 0x80, b' ', 0x97, b' ', 0x93, b' ', b'?', b'?', b' ', b'?'
+            ]
+        );
+    }
+
+    #[test]
+    fn encode_winansi_round_trips_through_decode() {
+        let text = "café — €“ok” ÿ";
+        assert_eq!(
+            decode_text(&encode_winansi(text), Encoding::WinAnsiEncoding),
+            text
+        );
+    }
 
     #[test]
     fn agl_is_sorted_for_binary_search() {

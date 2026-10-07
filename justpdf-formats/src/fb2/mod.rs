@@ -240,19 +240,7 @@ fn collect_text(node: &roxmltree::Node) -> String {
 
 /// Simple word-wrapping for monospace text.
 fn wrap_text(text: &str, max_chars: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut remaining = text;
-
-    while !remaining.is_empty() {
-        if remaining.len() <= max_chars {
-            lines.push(remaining.to_string());
-            break;
-        }
-        let break_at = remaining[..max_chars].rfind(' ').unwrap_or(max_chars);
-        lines.push(remaining[..break_at].to_string());
-        remaining = remaining[break_at..].trim_start();
-    }
-
+    let mut lines = crate::common::wrap_fixed_pitch(text, max_chars);
     if lines.is_empty() {
         lines.push(String::new());
     }
@@ -404,6 +392,21 @@ impl FormatDocument for Fb2Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn long_korean_line() -> String {
+        "a".to_owned() + &"가나다라마바사아자차카타파하".repeat(20)
+    }
+
+    #[test]
+    fn wrapping_a_non_ascii_paragraph_does_not_panic() {
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"><body><section><p>{}</p></section></body></FictionBook>"#,
+            long_korean_line()
+        );
+        let doc = Fb2Document::from_bytes(xml.as_bytes()).unwrap();
+        assert!(doc.to_pdf().unwrap().starts_with(b"%PDF"));
+    }
 
     fn sample_fb2() -> &'static str {
         r#"<?xml version="1.0" encoding="UTF-8"?>

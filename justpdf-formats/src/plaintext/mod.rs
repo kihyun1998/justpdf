@@ -55,20 +55,7 @@ impl PlainTextDocument {
             if line.is_empty() {
                 all_lines.push(String::new());
             } else {
-                // Word wrap
-                let mut remaining = line;
-                while !remaining.is_empty() {
-                    if remaining.len() <= chars_per_line {
-                        all_lines.push(remaining.to_string());
-                        break;
-                    }
-                    // Find break point
-                    let break_at = remaining[..chars_per_line]
-                        .rfind(' ')
-                        .unwrap_or(chars_per_line);
-                    all_lines.push(remaining[..break_at].to_string());
-                    remaining = remaining[break_at..].trim_start();
-                }
+                all_lines.extend(crate::common::wrap_fixed_pitch(line, chars_per_line));
             }
         }
 
@@ -237,6 +224,24 @@ impl FormatDocument for PlainTextDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn long_korean_line() -> String {
+        "a".to_owned() + &"가나다라마바사아자차카타파하".repeat(20)
+    }
+
+    #[test]
+    fn wrapping_a_non_ascii_line_does_not_panic() {
+        let doc = PlainTextDocument::from_string(&long_korean_line());
+        assert!(doc.to_pdf().unwrap().starts_with(b"%PDF"));
+    }
+
+    #[test]
+    fn win_ansi_text_round_trips_through_pdf() {
+        let pdf = PlainTextDocument::from_string("café — €").to_pdf().unwrap();
+        let doc = justpdf_core::PdfDocument::from_bytes(pdf).unwrap();
+        let text = justpdf_core::text::extract_all_text_string(&doc).unwrap();
+        assert_eq!(text.trim(), "café — €");
+    }
 
     #[test]
     fn test_empty_text() {

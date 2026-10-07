@@ -7,8 +7,8 @@ Generates appearance streams for text, choice and button fields (the `/DA` font 
 **None.**
 
 ## Design model
-- `Tj` strings are written with `string_syntax` (#29): parentheses, backslash and CR are escaped, and non-ASCII is written as its UTF-8 bytes in hex — what goes into a WinAnsi font is the same either way — [Content text encoding](../invariant/content-text-encoding.md), [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md). Coordinate reals are written as `Number` (#90).
-- It declares no `/Resources` and does not link `/DR`. `{da}` is inserted verbatim.
+- Where justpdf picks the font — a text field without `/DA`, and every combo box, list box and push button (`uses_default_font`) — the text is `encode_winansi`d and the stream declares `/Resources /Font /Helvetica` as a WinAnsi Helvetica (measured, #34). A text field with `/DA` keeps the UTF-8 bytes and declares nothing: its font comes from `/DR`, whose encoding is not justpdf's to choose (#173). `Tj` strings are written with `string_syntax` (#29) — [Content text encoding](../invariant/content-text-encoding.md), [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md). Coordinate reals are written as `Number` (#90).
+- It does not link `/DR`. `{da}` is inserted verbatim.
 - Values go through `value_as_string` (`from_utf8_lossy`), so a UTF-16BE value becomes U+FFFD.
 - Signature fields return `None`.
 
@@ -30,4 +30,4 @@ Generates appearance streams for text, choice and button fields (the `/DA` font 
 
 ## Known holes / open
 - There is no caller in product code (only its own tests).
-- Tracked: #33 (text string encoding), #34 (non-ASCII content text)
+- Tracked: #33 (text string encoding), #173 (fonts for `/DA` fields and text beyond WinAnsi)

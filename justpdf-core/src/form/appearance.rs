@@ -1,6 +1,8 @@
 use std::fmt::Write;
 
-use crate::object::{IndirectRef, Number, PdfObject, string_syntax};
+use crate::font::encode_winansi;
+use crate::object::{IndirectRef, Number, PdfDict, PdfObject, string_syntax};
+use crate::writer::document::standard_font_dict;
 use crate::writer::encode::make_stream;
 use crate::writer::modify::DocumentModifier;
 
@@ -33,6 +35,12 @@ pub fn generate_field_appearance(
     let mut form_dict = stream_dict;
     form_dict.insert(b"Type".to_vec(), PdfObject::Name(b"XObject".to_vec()));
     form_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Form".to_vec()));
+    if uses_default_font(field) {
+        form_dict.insert(
+            b"Resources".to_vec(),
+            PdfObject::Dict(default_font_resources()),
+        );
+    }
     form_dict.insert(
         b"BBox".to_vec(),
         PdfObject::Array(vec![
@@ -48,6 +56,28 @@ pub fn generate_field_appearance(
         data: stream_data,
     };
     Some(modifier.add_object(form_xobj))
+}
+
+/// Whether the appearance of `field` selects justpdf's default font, `/Helvetica`:
+/// a text field without `/DA`, and every combo box, list box and push button.
+fn uses_default_font(field: &FormField) -> bool {
+    match field.field_type {
+        FieldType::Text => field.default_appearance.is_none(),
+        FieldType::ComboBox | FieldType::ListBox | FieldType::PushButton => true,
+        _ => false,
+    }
+}
+
+/// `/Resources` declaring the default font as `/Helvetica`, WinAnsi-encoded.
+fn default_font_resources() -> PdfDict {
+    let mut fonts = PdfDict::new();
+    fonts.insert(
+        b"Helvetica".to_vec(),
+        PdfObject::Dict(standard_font_dict("Helvetica")),
+    );
+    let mut resources = PdfDict::new();
+    resources.insert(b"Font".to_vec(), PdfObject::Dict(fonts));
+    resources
 }
 
 fn text_field_appearance(field: &FormField, w: f64, h: f64) -> String {
@@ -76,7 +106,12 @@ fn text_field_appearance(field: &FormField, w: f64, h: f64) -> String {
         }
         buf.push_str("0 g\n");
         let _ = writeln!(buf, "2 {} Td", Number((h - 10.0) / 2.0));
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
+        let bytes = if field.default_appearance.is_some() {
+            text.as_bytes().to_vec()
+        } else {
+            encode_winansi(&text)
+        };
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&bytes));
     }
     buf
 }
@@ -181,7 +216,7 @@ fn combo_appearance(field: &FormField, w: f64, h: f64) -> String {
     {
         buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
         let _ = writeln!(buf, "2 {} Td", Number((h - 10.0) / 2.0));
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&encode_winansi(&text)));
     }
     buf
 }
@@ -221,7 +256,7 @@ fn list_appearance(field: &FormField, w: f64, h: f64) -> String {
         }
         buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
         let _ = writeln!(buf, "3 {} Td", Number(y + 2.0));
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(opt.as_bytes()));
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&encode_winansi(opt)));
         y -= line_height;
     }
     buf
@@ -256,7 +291,7 @@ fn button_appearance(field: &FormField, w: f64, h: f64) -> String {
     {
         buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
         let _ = writeln!(buf, "4 {} Td", Number((h - 10.0) / 2.0));
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(text.as_bytes()));
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&encode_winansi(&text)));
     }
     buf
 }
@@ -480,5 +515,96 @@ mod tests {
             tj.operands,
             vec![crate::content::Operand::String(text.as_bytes().to_vec())]
         );
+    }
+
+    fn field(field_type: FieldType, value: &str, da: Option<&str>) -> FormField {
+        FormField {
+            name: "name".to_string(),
+            partial_name: "name".to_string(),
+            field_type,
+            value: Some(PdfObject::String(value.as_bytes().to_vec())),
+            default_value: None,
+            flags: FieldFlags::default(),
+            options: vec![value.to_string()],
+            rect: Some(Rect {
+                llx: 0.0,
+                lly: 0.0,
+                urx: 200.0,
+                ury: 20.0,
+            }),
+            default_appearance: da.map(str::to_string),
+            field_ref: IndirectRef {
+                obj_num: 1,
+                gen_num: 0,
+            },
+            page_obj_num: None,
+        }
+    }
+
+    /// The decoded content and dictionary of the appearance stream for `field`.
+    fn appearance(field: &FormField) -> (Vec<u8>, crate::object::PdfDict) {
+        let mut builder = crate::writer::document::DocumentBuilder::new();
+        builder.add_page(crate::writer::page::PageBuilder::new(100.0, 100.0));
+        let doc = crate::parser::PdfDocument::from_bytes(builder.build().unwrap()).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let ap = generate_field_appearance(field, &mut modifier).unwrap();
+        let Some(PdfObject::Stream { dict, data }) = modifier.find_object_pub(ap.obj_num) else {
+            panic!("expected an appearance stream")
+        };
+        (
+            crate::stream::decode_stream(data, dict).unwrap(),
+            dict.clone(),
+        )
+    }
+
+    fn shown_strings(content: &[u8]) -> Vec<Vec<u8>> {
+        crate::content::parse_content_stream(content)
+            .unwrap()
+            .into_iter()
+            .filter(|op| op.operator == b"Tj")
+            .flat_map(|op| op.operands)
+            .filter_map(|o| match o {
+                crate::content::Operand::String(s) => Some(s),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn helvetica_encoding(dict: &crate::object::PdfDict) -> Option<Vec<u8>> {
+        dict.get_dict(b"Resources")
+            .and_then(|r| r.get_dict(b"Font"))
+            .and_then(|f| f.get_dict(b"Helvetica"))
+            .and_then(|h| h.get_name(b"Encoding"))
+            .map(<[u8]>::to_vec)
+    }
+
+    #[test]
+    fn default_font_fields_write_win_ansi_and_declare_the_font() {
+        for field_type in [
+            FieldType::Text,
+            FieldType::ComboBox,
+            FieldType::ListBox,
+            FieldType::PushButton,
+        ] {
+            let (content, dict) = appearance(&field(field_type, "Müller", None));
+            assert_eq!(
+                shown_strings(&content),
+                vec![b"M\xFCller".to_vec()],
+                "{field_type:?}"
+            );
+            assert_eq!(
+                helvetica_encoding(&dict).as_deref(),
+                Some(b"WinAnsiEncoding".as_slice()),
+                "{field_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_field_with_da_is_left_alone() {
+        let (content, dict) =
+            appearance(&field(FieldType::Text, "Müller", Some("/Helv 12 Tf 0 g")));
+        assert_eq!(shown_strings(&content), vec!["Müller".as_bytes().to_vec()]);
+        assert_eq!(helvetica_encoding(&dict), None);
     }
 }

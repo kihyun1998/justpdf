@@ -58,10 +58,15 @@ impl PageBuilder {
         writeln!(self.content, "{} {} Td", Number(x), Number(y)).unwrap();
     }
 
-    /// Show a text string: `(text) Tj`, or `<hex> Tj` when it holds bytes
-    /// outside printable ASCII.
+    /// Show a text string, encoded as WinAnsi (Windows-1252): a character with
+    /// no WinAnsi code becomes `?`. Written as `(text) Tj`, or `<hex> Tj` when
+    /// the bytes are not all printable ASCII. The font should be WinAnsi-encoded,
+    /// as `add_font` and `DocumentBuilder::add_standard_font` declare it.
     pub fn show_text(&mut self, text: &str) {
-        let _ = write_string(&mut ByteSink(&mut self.content), text.as_bytes());
+        let _ = write_string(
+            &mut ByteSink(&mut self.content),
+            &crate::font::encode_winansi(text),
+        );
         self.content.extend_from_slice(b" Tj\n");
     }
 
@@ -162,7 +167,8 @@ impl PageBuilder {
         self.content.extend_from_slice(b" EI\n");
     }
 
-    /// Register a font resource for this page.
+    /// Register a standard Type1 font resource for this page, declared
+    /// `/WinAnsiEncoding` (except `Symbol` and `ZapfDingbats`).
     pub fn add_font(&mut self, resource_name: &str, font_name: &str) {
         self.font_names
             .push((resource_name.to_string(), font_name.to_string()));
@@ -198,21 +204,9 @@ impl PageBuilder {
         // Font resources
         if !self.font_names.is_empty() || !self.font_refs.is_empty() {
             let mut font_dict = PdfDict::new();
-            for (res_name, _font_name) in &self.font_names {
+            for (res_name, base_font) in &self.font_names {
                 // For standard fonts, we create inline font dicts.
-                let mut f = PdfDict::new();
-                f.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
-                f.insert(b"Subtype".to_vec(), PdfObject::Name(b"Type1".to_vec()));
-                let base_font = self
-                    .font_names
-                    .iter()
-                    .find(|(n, _)| n == res_name)
-                    .map(|(_, bf)| bf.clone())
-                    .unwrap_or_default();
-                f.insert(
-                    b"BaseFont".to_vec(),
-                    PdfObject::Name(base_font.into_bytes()),
-                );
+                let f = crate::writer::document::standard_font_dict(base_font);
                 font_dict.insert(res_name.as_bytes().to_vec(), PdfObject::Dict(f));
             }
             // Add embedded font references
@@ -267,6 +261,59 @@ impl Default for PageBuilder {
 mod tests {
     use super::*;
     use crate::content::{Operand, parse_content_stream};
+
+    /// The `/Encoding` of the inline font dictionary `add_font(_, base_font)` emits.
+    fn inline_font_encoding(base_font: &str) -> Option<Vec<u8>> {
+        let mut writer = PdfWriter::new();
+        let pages_ref = writer.alloc_object_num();
+        let mut page = PageBuilder::new(100.0, 100.0);
+        page.add_font("F1", base_font);
+        let page_ref = page.build(
+            &mut writer,
+            &IndirectRef {
+                obj_num: pages_ref,
+                gen_num: 0,
+            },
+        );
+        let page_obj = writer
+            .objects
+            .iter()
+            .find(|(n, _)| *n == page_ref.obj_num)
+            .map(|(_, o)| o);
+        let Some(PdfObject::Dict(page_dict)) = page_obj else {
+            panic!("expected a page dictionary")
+        };
+        let font = page_dict
+            .get_dict(b"Resources")
+            .and_then(|r| r.get_dict(b"Font"))
+            .and_then(|f| f.get_dict(b"F1"))
+            .unwrap();
+        font.get_name(b"Encoding").map(<[u8]>::to_vec)
+    }
+
+    #[test]
+    fn inline_standard_fonts_are_declared_win_ansi_except_symbolic_ones() {
+        assert_eq!(
+            inline_font_encoding("Helvetica").as_deref(),
+            Some(b"WinAnsiEncoding".as_slice())
+        );
+        assert_eq!(inline_font_encoding("Symbol"), None);
+        assert_eq!(inline_font_encoding("ZapfDingbats"), None);
+    }
+
+    #[test]
+    fn show_text_writes_win_ansi_bytes() {
+        let mut page = PageBuilder::new(100.0, 100.0);
+        page.begin_text();
+        page.show_text("café 한");
+        page.end_text();
+        let ops = parse_content_stream(&page.content).unwrap();
+        let tj = ops.iter().find(|op| op.operator == b"Tj").unwrap();
+        assert_eq!(
+            tj.operands,
+            vec![Operand::String(vec![0x63, 0x61, 0x66, 0xE9, b' ', b'?'])]
+        );
+    }
 
     #[test]
     fn test_numbers_read_back_as_integers_or_finite_reals() {

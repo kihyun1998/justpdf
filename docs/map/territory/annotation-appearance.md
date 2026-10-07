@@ -7,7 +7,7 @@ Generates the `/AP /N` Form XObject for highlight, underline, strikeout, squiggl
 **None.**
 
 ## Design model
-- The XObject has `BBox [0 0 w h]` and `Matrix [1 0 0 1 -llx -lly]`, and no `/Resources`.
+- The XObject has `BBox [0 0 w h]` and `Matrix [1 0 0 1 -llx -lly]`. Only a Stamp's declares `/Resources`: `/Font /Helvetica` as a WinAnsi Helvetica, with its `/Name` text `encode_winansi`d (measured, #34).
 - **The coordinate systems are mixed**: highlight, underline, strikeout, squiggly, square and Redact draw in absolute page coordinates (`rect.llx`…), while text note and stamp draw in local coordinates (`0 0 w h`). Together with the BBox and Matrix above, the shapes in absolute coordinates fall outside the BBox (measured: MuPDF 1.28.2 draws 0 of 4000 pixels of a highlight at Rect `[100 500 300 520]`, and draws the text note in its Rect). Line, Ink and Circle draw in absolute coordinates too.
 - The stamp uses `/Helvetica 14 Tf` but declares no font resource. Its string is written with `string_syntax` (#29) — [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md).
 - The circle Bézier constant duplicates the radio button in [Form appearance](form-appearance.md).
@@ -29,4 +29,4 @@ Generates the `/AP /N` Form XObject for highlight, underline, strikeout, squiggl
 
 ## Known holes / open
 - Mixed coordinate systems (above). No test verifies an appearance stream by rendering it.
-- Tracked: #34 (non-ASCII content text, stamp font resource), #41 (annotation appearance coordinates)
+- Tracked: #41 (annotation appearance coordinates)
