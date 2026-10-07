@@ -17,7 +17,7 @@ Several features write text onto PDF pages, and each makes the same assumption â
 ## What a violation looks like
 - Running `justpdf convert` on Korean text in an EPUB, DOCX or text file prints fragments of Latin extended characters into the PDF (inferred â€” the repository has no non-ASCII conversion test).
 - A visible signature with a Korean signer name and the appearance of a Korean form value come out broken.
-- Text extraction has no ToUnicode, so it decodes as WinAnsi and returns a broken string as well.
+- Text extraction has no ToUnicode, and the standard font declares no `/Encoding`, so it decodes through StandardEncoding and returns a broken string as well.
 
 ## Discovery history
 No incident recorded. On 2026-09-23, while the map was being written, four research agents (writing, interactive, signing, formats/special) reported it independently in their own areas. Every conclusion is inferred from reading code, and no test renders non-ASCII output to confirm it.

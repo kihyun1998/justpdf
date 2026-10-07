@@ -121,30 +121,10 @@ pub(crate) fn parse_encoding_differences(dict: &PdfDict) -> Vec<(u8, Vec<u8>)> {
         _ => return Vec::new(),
     };
 
-    let differences = match enc_dict.get_array(b"Differences") {
-        Some(arr) => arr,
-        None => return Vec::new(),
-    };
-
-    let mut result = Vec::new();
-    let mut current_code: Option<u8> = None;
-
-    for obj in differences {
-        match obj {
-            PdfObject::Integer(n) => {
-                current_code = Some(*n as u8);
-            }
-            PdfObject::Name(name) => {
-                if let Some(code) = current_code {
-                    result.push((code, name.clone()));
-                    current_code = Some(code.wrapping_add(1));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    result
+    enc_dict
+        .get_array(b"Differences")
+        .map(super::parse_differences)
+        .unwrap_or_default()
 }
 
 impl Type3Font {

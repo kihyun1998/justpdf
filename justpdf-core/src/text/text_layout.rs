@@ -339,6 +339,7 @@ mod tests {
             base_font: b"TestFont".to_vec(),
             subtype: b"Type1".to_vec(),
             encoding: Encoding::StandardEncoding,
+            differences: Vec::new(),
             widths: FontWidths::None {
                 default_width: 600.0,
             },
@@ -367,6 +368,7 @@ mod tests {
             base_font: b"VarFont".to_vec(),
             subtype: b"Type1".to_vec(),
             encoding: Encoding::StandardEncoding,
+            differences: Vec::new(),
             widths: FontWidths::Simple {
                 first_char: 0,
                 widths,

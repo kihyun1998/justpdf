@@ -1,3 +1,4 @@
+mod agl;
 pub mod cff;
 pub mod cjk;
 pub mod cmap;
@@ -9,7 +10,8 @@ pub mod subset;
 pub mod type3;
 
 pub use cmap::ToUnicodeCMap;
-pub use encoding::{Encoding, decode_text};
+mod encoding_tables;
+pub use encoding::{Encoding, decode_text, glyph_name_to_unicode, parse_differences};
 pub use standard14::{is_standard14, standard14_widths};
 
 use crate::object::{IndirectRef, PdfDict, PdfObject};
@@ -21,8 +23,11 @@ pub struct FontInfo {
     pub base_font: Vec<u8>,
     /// Font subtype: Type1, TrueType, Type0, Type3, etc.
     pub subtype: Vec<u8>,
-    /// Encoding used by this font.
+    /// Encoding used by this font; for an encoding dictionary, its `/BaseEncoding`.
     pub encoding: Encoding,
+    /// The encoding dictionary's `/Differences`: code and glyph name pairs that
+    /// override `encoding`.
+    pub differences: Vec<(u8, Vec<u8>)>,
     /// Glyph widths (indexed by char code).
     pub widths: FontWidths,
     /// ToUnicode CMap data (raw, not parsed yet).
@@ -202,7 +207,7 @@ pub fn parse_font_info(dict: &PdfDict) -> FontInfo {
 
     let is_std14 = is_standard14(&base_font);
 
-    let encoding = parse_encoding(dict);
+    let (encoding, differences) = parse_encoding(dict);
     let widths = parse_widths(dict, &base_font, is_std14);
 
     let descriptor = dict
@@ -213,6 +218,7 @@ pub fn parse_font_info(dict: &PdfDict) -> FontInfo {
         base_font,
         subtype,
         encoding,
+        differences,
         widths,
         to_unicode: None, // Resolved later by the document
         is_standard14: is_std14,
@@ -287,11 +293,34 @@ pub fn parse_font_descriptor(dict: &PdfDict) -> Option<FontDescriptor> {
     })
 }
 
-fn parse_encoding(dict: &PdfDict) -> Encoding {
+/// The base encoding and `/Differences` of a font's `/Encoding`, a name or an
+/// encoding dictionary. An indirect `/Encoding` must be resolved by the caller.
+fn parse_encoding(dict: &PdfDict) -> (Encoding, Vec<(u8, Vec<u8>)>) {
     match dict.get(b"Encoding") {
-        Some(PdfObject::Name(name)) => Encoding::from_name(name),
-        // TODO: handle encoding dict with /Differences
-        _ => Encoding::StandardEncoding,
+        Some(PdfObject::Name(name)) => (Encoding::from_name(name), Vec::new()),
+        Some(PdfObject::Dict(enc)) => {
+            let base = enc
+                .get_name(b"BaseEncoding")
+                .map(Encoding::from_name)
+                .unwrap_or(Encoding::StandardEncoding);
+            let differences = enc
+                .get_array(b"Differences")
+                .map(parse_differences)
+                .unwrap_or_default();
+            (base, differences)
+        }
+        _ => (Encoding::StandardEncoding, Vec::new()),
+    }
+}
+
+impl FontInfo {
+    /// The text of a one-byte code of a simple font, without ToUnicode:
+    /// a `/Differences` glyph name through the Adobe Glyph List, else the base encoding.
+    pub fn decode_simple_code(&self, code: u8) -> String {
+        match self.differences.iter().rev().find(|(c, _)| *c == code) {
+            Some((_, name)) => glyph_name_to_unicode(name).unwrap_or_default(),
+            None => decode_text(&[code], self.encoding),
+        }
     }
 }
 

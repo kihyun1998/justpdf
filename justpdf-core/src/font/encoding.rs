@@ -1,3 +1,7 @@
+use super::agl::AGL;
+use super::encoding_tables::{MAC_ROMAN_TO_UNICODE, STANDARD_TO_UNICODE};
+use crate::object::PdfObject;
+
 /// PDF text encoding type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
@@ -36,9 +40,9 @@ pub fn decode_text(bytes: &[u8], encoding: Encoding) -> String {
 
     match encoding {
         Encoding::WinAnsiEncoding => decode_winansi(bytes),
-        Encoding::MacRomanEncoding => decode_mac_roman(bytes),
+        Encoding::MacRomanEncoding => decode_table(bytes, &MAC_ROMAN_TO_UNICODE),
         Encoding::PDFDocEncoding => decode_pdfdoc(bytes),
-        Encoding::StandardEncoding => decode_winansi(bytes), // close enough for display
+        Encoding::StandardEncoding => decode_table(bytes, &STANDARD_TO_UNICODE),
         Encoding::Identity => {
             // Try UTF-8 first
             String::from_utf8_lossy(bytes).into_owned()
@@ -81,19 +85,85 @@ fn decode_winansi(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Mac Roman decoding (simplified — uses same table for now).
-fn decode_mac_roman(bytes: &[u8]) -> String {
-    // Simplified: just use the byte value as a char for ASCII range
+/// Decoding through a code-to-Unicode table; a code mapped to '\0' has no glyph and yields nothing.
+fn decode_table(bytes: &[u8], table: &[char; 256]) -> String {
     bytes
         .iter()
-        .map(|&b| {
-            if b < 128 {
-                b as char
-            } else {
-                WINANSI_TO_UNICODE[b as usize] // approximate
-            }
-        })
+        .map(|&b| table[b as usize])
+        .filter(|&c| c != '\0')
         .collect()
+}
+
+/// The code-to-glyph-name pairs of an encoding dictionary's `/Differences` array
+/// (`[code name name ... code name ...]`: each name takes the next code).
+pub fn parse_differences(differences: &[PdfObject]) -> Vec<(u8, Vec<u8>)> {
+    let mut result = Vec::new();
+    let mut current_code: Option<u8> = None;
+    for obj in differences {
+        match obj {
+            PdfObject::Integer(n) => {
+                current_code = u8::try_from(*n).ok();
+            }
+            PdfObject::Name(name) => {
+                if let Some(code) = current_code {
+                    result.push((code, name.clone()));
+                    current_code = code.checked_add(1);
+                }
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
+/// The Unicode text of a glyph name, by the Adobe Glyph List rules: the part
+/// before the first `.`, split at `_`, each component looked up in the AGL or
+/// read as `uniXXXX...` / `uXXXX`-`uXXXXXX`. `None` when nothing maps.
+pub fn glyph_name_to_unicode(name: &[u8]) -> Option<String> {
+    let name = std::str::from_utf8(name).ok()?;
+    let base = name.split('.').next().unwrap_or("");
+    let text: String = base
+        .split('_')
+        .filter_map(glyph_component_to_unicode)
+        .collect();
+    (!text.is_empty()).then_some(text)
+}
+
+fn glyph_component_to_unicode(component: &str) -> Option<String> {
+    if let Ok(i) = AGL.binary_search_by(|(name, _)| name.as_bytes().cmp(component.as_bytes())) {
+        return Some(AGL[i].1.to_string());
+    }
+    let upper_hex = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b))
+    };
+    if let Some(hex) = component.strip_prefix("uni")
+        && hex.len() % 4 == 0
+        && upper_hex(hex)
+    {
+        let chars: Option<String> = (0..hex.len())
+            .step_by(4)
+            .map(|i| {
+                u32::from_str_radix(&hex[i..i + 4], 16)
+                    .ok()
+                    .and_then(char::from_u32)
+            })
+            .collect();
+        if chars.is_some() {
+            return chars;
+        }
+    }
+    if let Some(hex) = component.strip_prefix('u')
+        && (4..=6).contains(&hex.len())
+        && upper_hex(hex)
+    {
+        return u32::from_str_radix(hex, 16)
+            .ok()
+            .and_then(char::from_u32)
+            .map(String::from);
+    }
+    None
 }
 
 /// PDFDocEncoding decoding.
@@ -161,6 +231,31 @@ static PDFDOC_TO_UNICODE: [char; 256] = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agl_is_sorted_for_binary_search() {
+        assert!(
+            AGL.windows(2)
+                .all(|w| w[0].0.as_bytes() < w[1].0.as_bytes())
+        );
+    }
+
+    #[test]
+    fn glyph_names_follow_the_agl_rules() {
+        assert_eq!(glyph_name_to_unicode(b"eacute").as_deref(), Some("\u{e9}"));
+        assert_eq!(glyph_name_to_unicode(b"a.sc").as_deref(), Some("a"));
+        assert_eq!(glyph_name_to_unicode(b"f_f_i").as_deref(), Some("ffi"));
+        assert_eq!(glyph_name_to_unicode(b"uni00410042").as_deref(), Some("AB"));
+        assert_eq!(
+            glyph_name_to_unicode(b"u1F600").as_deref(),
+            Some("\u{1F600}")
+        );
+        // lower-case hex is not a uni name
+        assert_eq!(glyph_name_to_unicode(b"uni00e9"), None);
+        assert_eq!(glyph_name_to_unicode(b"g123"), None);
+        // a surrogate is not a character
+        assert_eq!(glyph_name_to_unicode(b"uniD800"), None);
+    }
 
     #[test]
     fn test_decode_ascii() {
