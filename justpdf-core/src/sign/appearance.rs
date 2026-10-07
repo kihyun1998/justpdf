@@ -1,6 +1,8 @@
 //! Signature appearance stream generation.
 
+use crate::font::encode_winansi;
 use crate::object::{Number, PdfDict, PdfObject, string_syntax};
+use crate::writer::document::standard_font_dict;
 use crate::writer::encode::make_stream;
 
 /// Generate a signature appearance Form XObject.
@@ -36,13 +38,16 @@ pub fn generate_signature_appearance(
     content.push_str(&format!("{} {} Td\n", Number(margin), Number(y)));
     content.push_str(&format!(
         "{} Tj\n",
-        string_syntax(format!("Digitally signed by: {}", signer_name).as_bytes())
+        string_syntax(&encode_winansi(&format!(
+            "Digitally signed by: {}",
+            signer_name
+        )))
     ));
     if let Some(reason) = reason {
         content.push_str(&format!("0 {} Td\n", Number(-(font_size + 2.0))));
         content.push_str(&format!(
             "{} Tj\n",
-            string_syntax(format!("Reason: {}", reason).as_bytes())
+            string_syntax(&encode_winansi(&format!("Reason: {}", reason)))
         ));
     }
 
@@ -50,7 +55,7 @@ pub fn generate_signature_appearance(
         content.push_str(&format!("0 {} Td\n", Number(-(font_size + 2.0))));
         content.push_str(&format!(
             "{} Tj\n",
-            string_syntax(format!("Date: {}", date).as_bytes())
+            string_syntax(&encode_winansi(&format!("Date: {}", date)))
         ));
     }
 
@@ -72,11 +77,10 @@ pub fn generate_signature_appearance(
 
     // Resources with Helvetica font
     let mut font_dict = PdfDict::new();
-    let mut f1 = PdfDict::new();
-    f1.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
-    f1.insert(b"Subtype".to_vec(), PdfObject::Name(b"Type1".to_vec()));
-    f1.insert(b"BaseFont".to_vec(), PdfObject::Name(b"Helvetica".to_vec()));
-    font_dict.insert(b"F1".to_vec(), PdfObject::Dict(f1));
+    font_dict.insert(
+        b"F1".to_vec(),
+        PdfObject::Dict(standard_font_dict("Helvetica")),
+    );
 
     let mut resources = PdfDict::new();
     resources.insert(b"Font".to_vec(), PdfObject::Dict(font_dict));
@@ -148,14 +152,37 @@ mod tests {
             .filter(|op| op.operator == b"Tj")
             .map(|op| op.operands.clone())
             .collect();
-        let string = |s: &str| vec![crate::content::Operand::String(s.as_bytes().to_vec())];
+        let string = |s: &[u8]| vec![crate::content::Operand::String(s.to_vec())];
         assert_eq!(
             shown,
             vec![
-                string("Digitally signed by: A) B\r"),
-                string("Reason: R(\u{e9}"),
-                string("Date: D\\")
+                string(b"Digitally signed by: A) B\r"),
+                string(b"Reason: R(\xE9"),
+                string(b"Date: D\\")
             ]
+        );
+    }
+
+    #[test]
+    fn test_text_is_win_ansi_in_a_declared_win_ansi_font() {
+        let (dict, data) = generate_signature_appearance("Müller", None, None, 200.0, 80.0);
+        let content = crate::stream::decode_stream(&data, &dict).unwrap();
+        let ops = crate::content::parse_content_stream(&content).unwrap();
+        let tj = ops.iter().find(|op| op.operator == b"Tj").unwrap();
+        assert_eq!(
+            tj.operands,
+            vec![crate::content::Operand::String(
+                b"Digitally signed by: M\xFCller".to_vec()
+            )]
+        );
+        let f1 = dict
+            .get_dict(b"Resources")
+            .and_then(|r| r.get_dict(b"Font"))
+            .and_then(|f| f.get_dict(b"F1"))
+            .unwrap();
+        assert_eq!(
+            f1.get_name(b"Encoding"),
+            Some(b"WinAnsiEncoding".as_slice())
         );
     }
 }

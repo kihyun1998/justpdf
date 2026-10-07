@@ -63,6 +63,17 @@ pub fn generate_appearance(
     let mut form_dict = stream_dict;
     form_dict.insert(b"Type".to_vec(), PdfObject::Name(b"XObject".to_vec()));
     form_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Form".to_vec()));
+    if subtype == b"Stamp" {
+        // The stamp text is drawn in /Helvetica.
+        let mut fonts = PdfDict::new();
+        fonts.insert(
+            b"Helvetica".to_vec(),
+            PdfObject::Dict(crate::writer::document::standard_font_dict("Helvetica")),
+        );
+        let mut resources = PdfDict::new();
+        resources.insert(b"Font".to_vec(), PdfObject::Dict(fonts));
+        form_dict.insert(b"Resources".to_vec(), PdfObject::Dict(resources));
+    }
     form_dict.insert(
         b"BBox".to_vec(),
         PdfObject::Array(vec![
@@ -422,7 +433,11 @@ fn stamp_appearance(rect: &Rect, dict: &PdfDict) -> Option<String> {
     buf.push_str("1 0 0 rg\n");
     buf.push_str("BT\n/Helvetica 14 Tf\n");
     let _ = write!(buf, "8 {} Td\n", Number(h / 2.0 - 5.0));
-    let _ = write!(buf, "{} Tj\nET\n", string_syntax(icon_name.as_bytes()));
+    let _ = write!(
+        buf,
+        "{} Tj\nET\n",
+        string_syntax(&crate::font::encode_winansi(&icon_name))
+    );
     Some(buf)
 }
 
@@ -448,6 +463,80 @@ fn redact_appearance(rect: &Rect, dict: &PdfDict) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stamp_writes_win_ansi_and_declares_its_font() {
+        let mut builder = crate::writer::document::DocumentBuilder::new();
+        builder.add_page(crate::writer::page::PageBuilder::new(100.0, 100.0));
+        let doc = crate::parser::PdfDocument::from_bytes(builder.build().unwrap()).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+
+        let mut dict = PdfDict::new();
+        dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Stamp".to_vec()));
+        dict.insert(
+            b"Rect".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Integer(0),
+                PdfObject::Integer(0),
+                PdfObject::Integer(100),
+                PdfObject::Integer(40),
+            ]),
+        );
+        dict.insert(
+            b"Name".to_vec(),
+            PdfObject::Name("Geprüft".as_bytes().to_vec()),
+        );
+        let ap = generate_appearance(&dict, &mut modifier).unwrap().unwrap();
+        let Some(PdfObject::Stream {
+            dict: ap_dict,
+            data,
+        }) = modifier.find_object_pub(ap.obj_num)
+        else {
+            panic!("expected an appearance stream")
+        };
+        let content = crate::stream::decode_stream(data, ap_dict).unwrap();
+
+        let ops = crate::content::parse_content_stream(&content).unwrap();
+        let tj = ops.iter().find(|op| op.operator == b"Tj").unwrap();
+        assert_eq!(
+            tj.operands,
+            vec![crate::content::Operand::String(b"Gepr\xFCft".to_vec())]
+        );
+        let helvetica = ap_dict
+            .get_dict(b"Resources")
+            .and_then(|r| r.get_dict(b"Font"))
+            .and_then(|f| f.get_dict(b"Helvetica"))
+            .unwrap();
+        assert_eq!(
+            helvetica.get_name(b"Encoding"),
+            Some(b"WinAnsiEncoding".as_slice())
+        );
+    }
+
+    #[test]
+    fn non_text_annotations_declare_no_font() {
+        let mut builder = crate::writer::document::DocumentBuilder::new();
+        builder.add_page(crate::writer::page::PageBuilder::new(100.0, 100.0));
+        let doc = crate::parser::PdfDocument::from_bytes(builder.build().unwrap()).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let mut dict = PdfDict::new();
+        dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Square".to_vec()));
+        dict.insert(
+            b"Rect".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Integer(0),
+                PdfObject::Integer(0),
+                PdfObject::Integer(100),
+                PdfObject::Integer(40),
+            ]),
+        );
+        let ap = generate_appearance(&dict, &mut modifier).unwrap().unwrap();
+        let Some(PdfObject::Stream { dict: ap_dict, .. }) = modifier.find_object_pub(ap.obj_num)
+        else {
+            panic!("expected an appearance stream")
+        };
+        assert!(ap_dict.get(b"Resources").is_none());
+    }
 
     /// Operators in `content` that come from a number written as `NaN` or `inf`.
     fn non_finite_operators(content: &[u8]) -> Vec<Vec<u8>> {

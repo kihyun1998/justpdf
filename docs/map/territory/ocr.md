@@ -30,4 +30,5 @@ OCRs images and PDF pages with the external `tesseract` program and builds a sea
 ## Known holes / open
 - The tests assert only one side each, with tesseract present or absent (`test_tesseract_not_found_error` only when absent, `test_concurrent_page_ocr_reads_its_own_page` only when present). The CI all-features job installs tesseract, so there the tesseract-backed side runs (#187); the plain test job has no `ocr` feature.
 - The concurrency test draws its words as filled-rectangle block capitals because the renderer draws non-embedded standard-14 text as boxes and the public `DocumentBuilder` API cannot attach an embedded TrueType font to a page ([Document builder](document-builder.md), #65).
-- Tracked: #34 (non-ASCII content text)
+- The text layer goes through `show_text`, so recognised text is WinAnsi with `?` beyond it (inferred; covered by the `show_text` tests, #34).
+- Tracked: #173 (text beyond WinAnsi)

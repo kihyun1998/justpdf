@@ -8,13 +8,13 @@ The common trait that non-PDF inputs (XPS, EPUB, Office, SVG, CBZ, MOBI, FB2, te
 
 ## Design model
 - **All PDF generation goes through core [Document builder](document-builder.md).** Format code does not write PDF syntax by hand.
-- Text formats (xps, epub, office, plaintext, mobi, fb2) use `add_standard_font("Courier")` at 10pt with a `show_text` per line — non-ASCII and CJK break (inferred) — [Content text encoding](../invariant/content-text-encoding.md).
+- Text formats (xps, epub, office, plaintext, mobi, fb2) use `add_standard_font("Courier")` at 10pt with a `show_text` per line, so text is WinAnsi with `?` beyond it (measured for plaintext and DOCX, #34) — [Content text encoding](../invariant/content-text-encoding.md). Plaintext, MOBI and FB2 wrap with one fixed-pitch rule, `common::wrap_fixed_pitch`, which counts and cuts by `char`; until #34 each had a byte-slicing copy that panicked inside a multi-byte character (measured).
 - Image formats (cbz, svg) rasterize, embed the raster as a Flate image XObject with `embed_rgb` and draw it over the whole page with `draw_image` (#88 — before it they used `draw_inline_image` with no `cm`, so the image landed at 1pt×1pt). justpdf's own renderer draws those pages blank: see [Render images](render-images.md), #42.
 - The preview render (`render_page`) splits into formats that build a one-page PDF and draw it with the render crate (plaintext, mobi, fb2, and epub and office, which borrow plaintext — only when the `plaintext` feature is on; without it their preview returns `FormatError::Format`), formats with their own raster (svg, cbz), and a blank page (xps).
 - Modules are compiled only behind feature flags (`lib.rs`).
 
 ## Code
-- `justpdf-formats/src/common.rs` — `FormatDocument`, `FormatPage`, `FormatMetadata`, `RenderedPage`
+- `justpdf-formats/src/common.rs` — `FormatDocument`, `FormatPage`, `FormatMetadata`, `RenderedPage`, `wrap_fixed_pitch`
 - `justpdf-formats/src/lib.rs` — `FormatDocument`
 - `justpdf-formats/Cargo.toml` — `plaintext`, `mobi`, `fb2`, `all`
 
@@ -33,4 +33,4 @@ The common trait that non-PDF inputs (XPS, EPUB, Office, SVG, CBZ, MOBI, FB2, te
 
 ## Known holes / open
 - Most `to_pdf` tests check only `starts_with(b"%PDF")`.
-- Tracked: #34 (non-ASCII content text)
+- Tracked: #173 (text beyond WinAnsi), #174 (width-based layout)

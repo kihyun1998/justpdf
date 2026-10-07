@@ -370,18 +370,7 @@ fn paginate(text: &str) -> Vec<Vec<String>> {
         if line.is_empty() {
             all_lines.push(String::new());
         } else {
-            let mut remaining = line;
-            while !remaining.is_empty() {
-                if remaining.len() <= chars_per_line {
-                    all_lines.push(remaining.to_string());
-                    break;
-                }
-                let break_at = remaining[..chars_per_line]
-                    .rfind(' ')
-                    .unwrap_or(chars_per_line);
-                all_lines.push(remaining[..break_at].to_string());
-                remaining = remaining[break_at..].trim_start();
-            }
+            all_lines.extend(crate::common::wrap_fixed_pitch(line, chars_per_line));
         }
     }
 
@@ -513,6 +502,16 @@ impl FormatDocument for MobiDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn long_korean_line() -> String {
+        "a".to_owned() + &"가나다라마바사아자차카타파하".repeat(20)
+    }
+
+    #[test]
+    fn wrapping_a_non_ascii_line_does_not_panic() {
+        let doc = MobiDocument::from_bytes(&build_test_mobi(&long_korean_line(), false)).unwrap();
+        assert!(doc.to_pdf().unwrap().starts_with(b"%PDF"));
+    }
 
     /// Build a minimal valid PDB/MOBI file for testing.
     fn build_test_mobi(text: &str, compress: bool) -> Vec<u8> {

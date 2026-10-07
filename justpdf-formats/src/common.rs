@@ -70,3 +70,22 @@ pub trait FormatDocument {
     /// Convert entire document to PDF bytes.
     fn to_pdf(&self) -> Result<Vec<u8>>;
 }
+
+/// `line` cut into pieces of at most `max_chars` characters for fixed-pitch
+/// text: each cut at the last space within the limit, else at the limit, with
+/// the spaces after a cut dropped. Counts and cuts by `char`.
+pub(crate) fn wrap_fixed_pitch(line: &str, max_chars: usize) -> Vec<String> {
+    let max_chars = max_chars.max(1);
+    let mut lines = Vec::new();
+    let mut remaining = line;
+    while !remaining.is_empty() {
+        let Some((limit, _)) = remaining.char_indices().nth(max_chars) else {
+            lines.push(remaining.to_string());
+            break;
+        };
+        let break_at = remaining[..limit].rfind(' ').unwrap_or(limit);
+        lines.push(remaining[..break_at].to_string());
+        remaining = remaining[break_at..].trim_start();
+    }
+    lines
+}

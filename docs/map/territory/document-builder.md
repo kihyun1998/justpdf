@@ -7,8 +7,9 @@ Builds a PDF from nothing. `DocumentBuilder` gathers fonts, pages, images, metad
 **None.**
 
 ## Design model
-- A standard font is a Type1 dictionary with neither `/Encoding` nor embedding (`add_standard_font`).
-- `show_text` writes the UTF-8 bytes of the Rust string with `write_string` — `(…) Tj` if they are printable ASCII, otherwise the same bytes as `<hex> Tj` (#29) — [Content text encoding](../invariant/content-text-encoding.md).
+- A standard font is a Type1 dictionary without embedding, declared `/Encoding /WinAnsiEncoding` except `Symbol` and `ZapfDingbats` (`standard_font_dict`, used by `add_standard_font` and `PageBuilder::add_font`'s inline dictionaries; until #34 neither declared an encoding).
+- `show_text` writes `encode_winansi(text)` with `write_string` — `(…) Tj` if the bytes are printable ASCII, otherwise `<hex> Tj` (#29). A character outside WinAnsi becomes `?` (measured, #34) — [Content text encoding](../invariant/content-text-encoding.md).
+- `embed_truetype_font` builds `Widths` and ToUnicode for codes 32–255 from the WinAnsi character of each code; until #34 it took the code as Latin-1, so 0x80–0x9F (`€`, `—`, `“`) got width 0 and no ToUnicode entry (measured with Noto Sans).
 - Info values such as `set_title` are stored as `as_bytes()` (UTF-8 without a BOM) — [Text string encoding](../invariant/text-string-encoding.md).
 - `set_font`, `draw_image` and `draw_inline_image` write names with `name_syntax` (#29). Coordinate, color and font-size reals are written with `Number` — integral values as integers, NaN and inf as finite numbers (#90, the generator reals of [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md)).
 - `draw_inline_image` writes only `BI … ID … EI` and no `cm`. The image maps onto the unit square, so the caller has to write the `cm` first. The data goes in as it is, so if it contains whitespace + `EI` + whitespace/delimiter, a reader ends the image there — it is meant for small images.
@@ -18,7 +19,7 @@ Builds a PDF from nothing. `DocumentBuilder` gathers fonts, pages, images, metad
 - When encrypting, the file ID is 16 bytes made by `random_file_id` and the two `/ID` elements are the same — [Object encryption](object-encryption.md). Without encryption no `/ID` is written.
 
 ## Code
-- `justpdf-core/src/writer/document.rs` — `DocumentBuilder`, `add_standard_font`, `embed_truetype_font`, `font_ref`, `set_title`, `set_xmp_metadata`, `set_encryption`, `build`, `save`, `embed_jpeg`, `embed_png`, `embed_rgb`, `generate_tounicode_cmap`
+- `justpdf-core/src/writer/document.rs` — `DocumentBuilder`, `standard_font_dict`, `add_standard_font`, `embed_truetype_font`, `font_ref`, `set_title`, `set_xmp_metadata`, `set_encryption`, `build`, `save`, `embed_jpeg`, `embed_png`, `embed_rgb`, `generate_tounicode_cmap`
 - `justpdf-core/src/writer/page.rs` — `PageBuilder`, `show_text`, `set_font`, `draw_image`, `draw_inline_image`
 - `justpdf-core/src/writer/encode.rs` — `make_stream`, `encode_flate`, `encode_flate_best`
 
@@ -38,6 +39,6 @@ Builds a PDF from nothing. `DocumentBuilder` gathers fonts, pages, images, metad
 
 ## Known holes / open
 - The public API cannot connect an embedded TrueType font to a page (Design model above). Tracked: #65.
-- There is no path to write non-ASCII text correctly: standard fonts are WinAnsi-family, and there is no UTF-16BE text string encoder either.
+- There is no path to draw text beyond WinAnsi (#173), and no UTF-16BE text string encoder (#33).
 - Without encryption no `/ID` is written. ISO 32000-1 §14.4 says "optional but should be used"; whether it is required in PDF 2.0 was not checked.
-- Tracked: #33 (text string encoding), #34 (non-ASCII content text), #77 (no `/ID` without encryption)
+- Tracked: #33 (text string encoding), #173 (text beyond WinAnsi), #77 (no `/ID` without encryption)

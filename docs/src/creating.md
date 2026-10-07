@@ -21,7 +21,7 @@ let pdf_bytes = builder.build()?;
 std::fs::write("output.pdf", &pdf_bytes)?;
 ```
 
-Standard fonts are not embedded and cover ASCII text only.
+Standard fonts are not embedded. `show_text` encodes text as WinAnsi (Windows-1252), so Western European characters such as `é`, `€` and `—` work; any other character is drawn as `?`.
 
 ## Adding Images
 

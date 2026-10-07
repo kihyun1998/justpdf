@@ -762,6 +762,32 @@ mod tests {
     }
 
     #[test]
+    fn win_ansi_text_round_trips_through_pdf() {
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("word/document.xml", opts).unwrap();
+            zip.write_all(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body><w:p><w:r><w:t>Müller — €</w:t></w:r></w:p></w:body>
+</w:document>"#
+                    .as_bytes(),
+            )
+            .unwrap();
+            zip.finish().unwrap();
+        }
+        let pdf = OfficeDocument::from_bytes(&buf, OfficeType::Docx)
+            .unwrap()
+            .to_pdf()
+            .unwrap();
+        let doc = justpdf_core::PdfDocument::from_bytes(pdf).unwrap();
+        let text = justpdf_core::text::extract_all_text_string(&doc).unwrap();
+        assert_eq!(text.trim(), "Müller — €");
+    }
+
+    #[test]
     fn test_page_out_of_range() {
         let data = create_test_docx();
         let doc = OfficeDocument::from_bytes(&data, OfficeType::Docx).unwrap();
