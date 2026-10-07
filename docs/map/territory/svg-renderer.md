@@ -35,4 +35,4 @@ Outputs a page as an SVG document. It is not a device but a **second interpreter
 
 ## Known holes / open
 - The test checks only that the output contains `<svg`.
-- `gs` ignores the ExtGState `/Font` entry, like the raster interpreter (inferred). Tracked: #238
+- `gs` ignores the ExtGState `/Font` entry, like the raster interpreter. Measured 2026-10-07: with no prior `Tf` the text emits no `<text>`; after `/F1 12 Tf` (Helvetica, width 500) it stays Helvetica with advance 6 instead of Courier's 7.2; a `gs` font absent from `/Font` (Times-Roman 20) is drawn as the previous Helvetica 12. Tracked: #238
