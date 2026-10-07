@@ -8,6 +8,7 @@ The one official PDF CLI. The `info`, `text`, `render`, `merge`, `split`, `encry
 
 ## Design model
 - Encrypted input is authenticated by `open_doc` with `--password`.
+- Page options are 1-based. `text --page` and `render --page` are `NonZeroUsize`, so clap rejects `0` while parsing (exit 2); `split --pages` rejects a `0` page or a range starting at `0` (`Page 0 out of range (1-N)`); `text --page` past the end reports `Page N out of range (total: M)` like `render`, mapping core's `PageOutOfRange`. Until #149 all three subtracted 1 from `0` and panicked (measured, `tests/page_numbers.rs`).
 - `encrypt` is always AES-128 and exposes only `--no-print` and `--no-copy`. It calls only `build` after `DocumentModifier::set_encryption` — `/Info`, `/ID` and `/Encrypt` are written by [Document modifier](document-modifier.md) ([Object encryption](object-encryption.md)).
 - `clean` only rebuilds (it does not call the [Clean](clean.md) module).
 - The integration tests write every input and output they make into a per-test `tempfile::tempdir()`, never under a fixed name in `std::env::temp_dir()`: that directory is shared by every `cargo test` on the machine, and worktrees with separate target dirs do not separate it. Four `cargo test -p justpdf-cli --tests` at once, three rounds: 3 of 12 runs failed before the switch (`overrides_layer_onto_preset_and_still_compress`, `encrypt_without_source_id_gets_a_fresh_one`) and none after; with each formerly fixed path occupied by a directory, 16 of the 27 tests failed before and none after (measured, #183).
@@ -21,6 +22,7 @@ The one official PDF CLI. The `info`, `text`, `render`, `merge`, `split`, `encry
 - `justpdf-cli/tests/compress_encrypted.rs` — `compresses_encrypted_pdf_with_password_and_drops_encryption`, `wrong_password_is_rejected`
 - `justpdf-cli/tests/encrypt.rs` — `encrypt_keeps_the_source_permanent_id`, `encrypt_without_source_id_gets_a_fresh_one`, `encrypt_with_empty_source_id_gets_a_fresh_one`
 - `justpdf-cli/tests/sign.rs` — `sign_fails_without_writing_output`
+- `justpdf-cli/tests/page_numbers.rs` — `text_page_zero_is_rejected`, `render_page_zero_is_rejected`, `text_page_past_the_end_reports_one_based_page`, `text_first_page_still_works`, `split_range_starting_at_zero_is_rejected`
 - `justpdf-cli/tests/convert.rs` — `fb2_converts_to_pdf`, `mobi_converts_to_pdf`, `fb2_and_mobi_convert_to_png`, `unsupported_output_fails_without_writing`
 
 ## Reference behaviour
@@ -41,4 +43,4 @@ The one official PDF CLI. The `info`, `text`, `render`, `merge`, `split`, `encry
 ## Known holes / open
 - The `--structural` help says "GC + dedup + object streams", but object stream packing is off.
 - The "`--password` on an unencrypted PDF" path has no test (it works when run by hand).
-- Tracked: #37 (connect signing), #181 (CLI sign: key and certificate input), #149 (`text --page`: 0-based message, `--page 0` panics)
+- Tracked: #37 (connect signing), #181 (CLI sign: key and certificate input)

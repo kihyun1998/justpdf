@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -24,7 +25,7 @@ enum Commands {
         file: PathBuf,
         /// Page number (1-based, default: all pages)
         #[arg(long)]
-        page: Option<usize>,
+        page: Option<NonZeroUsize>,
         /// Output format: plain, html, json, markdown
         #[arg(long, default_value = "plain")]
         format: String,
@@ -38,7 +39,7 @@ enum Commands {
         file: PathBuf,
         /// Page number (1-based, default: 1)
         #[arg(long, default_value = "1")]
-        page: usize,
+        page: NonZeroUsize,
         /// Render all pages
         #[arg(long)]
         all: bool,
@@ -376,7 +377,7 @@ fn cmd_info(file: &Path, password: Option<&str>) -> Result<(), Box<dyn std::erro
 
 fn cmd_text(
     file: &Path,
-    page: Option<usize>,
+    page: Option<NonZeroUsize>,
     format: &str,
     password: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -395,7 +396,12 @@ fn cmd_text(
     };
 
     if let Some(page_num) = page {
-        let page_info = justpdf_core::page::get_page(&doc, page_num - 1)?;
+        let page_info = match justpdf_core::page::get_page(&doc, page_num.get() - 1) {
+            Err(justpdf_core::JustPdfError::PageOutOfRange { count, .. }) => {
+                return Err(format!("Page {page_num} out of range (total: {count})").into());
+            }
+            result => result?,
+        };
         let page_text = justpdf_core::text::extract_page_text(&doc, &page_info)?;
         print!(
             "{}",
@@ -419,7 +425,7 @@ fn cmd_text(
 #[allow(clippy::too_many_arguments)]
 fn cmd_render(
     file: &Path,
-    page: usize,
+    page: NonZeroUsize,
     all: bool,
     dpi: f64,
     format: &str,
@@ -433,7 +439,7 @@ fn cmd_render(
     let render_indices: Vec<usize> = if all {
         (0..pages.len()).collect()
     } else {
-        vec![page - 1]
+        vec![page.get() - 1]
     };
 
     for &idx in &render_indices {
@@ -533,6 +539,9 @@ fn parse_page_range(s: &str, total: usize) -> Result<Vec<usize>, Box<dyn std::er
             } else {
                 start_str.parse()?
             };
+            if start == 0 {
+                return Err(format!("Page 0 out of range (1-{total})").into());
+            }
             let end: usize = if end_str.is_empty() {
                 total
             } else {
