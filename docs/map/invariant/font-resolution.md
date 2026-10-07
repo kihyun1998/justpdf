@@ -24,7 +24,7 @@ Both consumers start from core `parse_font_info`, but each builds on top of it *
 ## What a violation looks like
 - On a page with a Type0 (CJK) font, the rendered character spacing and the extracted text coordinates differ (render uses a fixed width of 1000 — inferred).
 - A subset font loses glyphs or draws the wrong ones in render while extracted text is fine — compress tests that only look at extraction pass.
-- In a `/Differences` font, extraction (#221), simple-TrueType render (#223) and bare-CFF render (#224) follow the encoding; Type1 glyphs by name are #225.
+- In a `/Differences` font, extraction (#221), simple-TrueType render (#223), bare-CFF render (#224) and Type1 render (#225) follow the encoding.
 
 ## Discovery history
 No incident recorded. Reported on 2026-09-23 by the font/text and render research agents while the map was being written. All of it was inferred from reading code.
