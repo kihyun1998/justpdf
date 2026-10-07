@@ -65,19 +65,52 @@ pub fn render_page_info(
     page: &PageInfo,
     options: &RenderOptions,
 ) -> Result<Vec<u8>> {
-    let media_box = page.crop_box.unwrap_or(page.media_box);
-    let page_width = media_box.width();
-    let page_height = media_box.height();
+    let device = render_to_device(doc, page, options)?;
+    match options.format {
+        OutputFormat::Png => device.encode_png(),
+        OutputFormat::Jpeg { quality } => device.encode_jpeg(quality),
+        OutputFormat::RawRgba => Ok(device.raw_rgba().to_vec()),
+    }
+}
 
-    if page_width <= 0.0 || page_height <= 0.0 {
+/// The visible box of a page placed on the output: its size after `/Rotate`,
+/// in output units, and the transform from PDF user space onto it.
+struct PageFrame {
+    width: f64,
+    height: f64,
+    transform: Matrix,
+}
+
+/// The [`PageFrame`] of `page` at `scale` output units per point. The visible
+/// box is the CropBox, else the MediaBox.
+fn page_frame(page: &PageInfo, scale: f64) -> Result<PageFrame> {
+    let visible = page.crop_box.unwrap_or(page.media_box);
+    let (w, h) = (visible.width(), visible.height());
+    if w <= 0.0 || h <= 0.0 {
         return Err(RenderError::InvalidDimensions {
-            detail: format!("page has zero/negative size: {page_width}x{page_height}"),
+            detail: format!("page has zero/negative size: {w}x{h}"),
         });
     }
+    let (width, height) = match normalize_rotation(page.rotate) {
+        90 | 270 => (h * scale, w * scale),
+        _ => (w * scale, h * scale),
+    };
+    Ok(PageFrame {
+        width,
+        height,
+        transform: compute_page_transform(&visible, scale, page.rotate),
+    })
+}
 
-    let scale = options.dpi / 72.0;
-    let pixel_width = (page_width * scale).ceil() as u32;
-    let pixel_height = (page_height * scale).ceil() as u32;
+/// A pixmap device of `page`'s rotated size at `options.dpi`, with the page drawn on it.
+fn render_to_device(
+    doc: &PdfDocument,
+    page: &PageInfo,
+    options: &RenderOptions,
+) -> Result<PixmapDevice> {
+    let frame = page_frame(page, options.dpi / 72.0)?;
+    let pixel_width = frame.width.ceil() as u32;
+    let pixel_height = frame.height.ceil() as u32;
 
     if pixel_width == 0 || pixel_height == 0 || pixel_width > 16384 || pixel_height > 16384 {
         return Err(RenderError::InvalidDimensions {
@@ -86,8 +119,6 @@ pub fn render_page_info(
     }
 
     let mut device = PixmapDevice::new(pixel_width, pixel_height)?;
-
-    // Fill background
     device.clear(tiny_skia::Color::from_rgba8(
         options.background[0],
         options.background[1],
@@ -95,20 +126,9 @@ pub fn render_page_info(
         options.background[3],
     ));
 
-    // Build the page transform:
-    // 1. Translate so media_box origin is at (0,0)
-    // 2. Flip Y axis (PDF Y goes up, pixel Y goes down)
-    // 3. Scale by DPI
-    let page_transform = compute_page_transform(&media_box, scale, page.rotate);
-
-    let mut interpreter = RenderInterpreter::new(doc, &mut device, page_transform);
+    let mut interpreter = RenderInterpreter::new(doc, &mut device, frame.transform);
     interpreter.render_page(page)?;
-
-    match options.format {
-        OutputFormat::Png => device.encode_png(),
-        OutputFormat::Jpeg { quality } => device.encode_jpeg(quality),
-        OutputFormat::RawRgba => Ok(device.raw_rgba().to_vec()),
-    }
+    Ok(device)
 }
 
 /// Render a page and save to a file.
@@ -148,44 +168,12 @@ pub fn render_page_to_pixmap(
         }))?
         .clone();
 
-    let media_box = page.crop_box.unwrap_or(page.media_box);
-    let page_width = media_box.width();
-    let page_height = media_box.height();
-
-    if page_width <= 0.0 || page_height <= 0.0 {
-        return Err(RenderError::InvalidDimensions {
-            detail: format!("page has zero/negative size: {page_width}x{page_height}"),
-        });
-    }
-
-    let scale = options.dpi / 72.0;
-    let pixel_width = (page_width * scale).ceil() as u32;
-    let pixel_height = (page_height * scale).ceil() as u32;
-
-    if pixel_width == 0 || pixel_height == 0 || pixel_width > 16384 || pixel_height > 16384 {
-        return Err(RenderError::InvalidDimensions {
-            detail: format!("pixel dimensions out of range: {pixel_width}x{pixel_height}"),
-        });
-    }
-
-    let mut device = PixmapDevice::new(pixel_width, pixel_height)?;
-
-    device.clear(tiny_skia::Color::from_rgba8(
-        options.background[0],
-        options.background[1],
-        options.background[2],
-        options.background[3],
-    ));
-
-    let page_transform = compute_page_transform(&media_box, scale, page.rotate);
-
-    let mut interpreter = RenderInterpreter::new(doc, &mut device, page_transform);
-    interpreter.render_page(&page)?;
-
+    let device = render_to_device(doc, &page, options)?;
+    let (width, height) = device.dimensions();
     Ok(RenderedPixmap {
         data: device.raw_rgba().to_vec(),
-        width: pixel_width,
-        height: pixel_height,
+        width,
+        height,
     })
 }
 
@@ -202,20 +190,9 @@ pub fn render_page_to_svg(doc: &PdfDocument, page_index: usize) -> Result<String
         }))?
         .clone();
 
-    let media_box = page.crop_box.unwrap_or(page.media_box);
-    let page_width = media_box.width();
-    let page_height = media_box.height();
-
-    if page_width <= 0.0 || page_height <= 0.0 {
-        return Err(RenderError::InvalidDimensions {
-            detail: format!("page has zero/negative size: {page_width}x{page_height}"),
-        });
-    }
-
-    // For SVG we use scale=1.0 (1pt = 1 SVG unit), no DPI scaling
-    let page_transform = compute_page_transform(&media_box, 1.0, page.rotate);
-
-    let renderer = SvgRenderer::new(doc, page_transform, page_width, page_height);
+    // 1pt = 1 SVG unit
+    let frame = page_frame(&page, 1.0)?;
+    let renderer = SvgRenderer::new(doc, frame.transform, frame.width, frame.height);
     renderer.render_page(&page)
 }
 
@@ -278,58 +255,64 @@ pub fn render_all_pages_parallel(
     render_pages_parallel(doc, &indices, options)
 }
 
+/// `/Rotate` reduced to 0..360; negative values count counterclockwise.
+fn normalize_rotation(rotate: i64) -> i64 {
+    rotate.rem_euclid(360)
+}
+
 /// Compute the transform from PDF user space to device (pixel) space.
+///
+/// `media_box` is the visible box, mapped onto the output with its top-left
+/// corner at the origin after turning it `rotate` degrees clockwise. For 90 and
+/// 270 the output is `media_box.height()` wide and `media_box.width()` tall.
+/// Rotations other than multiples of 90 are treated as 0.
 pub fn compute_page_transform(
     media_box: &justpdf_core::page::Rect,
     scale: f64,
     rotate: i64,
 ) -> Matrix {
-    let w = media_box.width();
-    let h = media_box.height();
+    let (llx, lly, urx, ury) = (media_box.llx, media_box.lly, media_box.urx, media_box.ury);
+    let s = scale;
 
-    // Base transform: translate origin, flip Y, scale
-    // PDF: origin at lower-left, Y up
-    // Pixels: origin at upper-left, Y down
-
-    match rotate % 360 {
-        90 | -270 => {
-            // Rotate 90°: swap width/height
-            Matrix {
-                a: 0.0,
-                b: -scale,
-                c: scale,
-                d: 0.0,
-                e: -media_box.lly * scale,
-                f: (media_box.llx + w) * scale,
-            }
-        }
-        180 | -180 => Matrix {
-            a: -scale,
+    // Device x right, y down; each case maps the box corner that ends up
+    // top-left to (0, 0).
+    match normalize_rotation(rotate) {
+        // x_dev = (y - lly), y_dev = (x - llx)
+        90 => Matrix {
+            a: 0.0,
+            b: s,
+            c: s,
+            d: 0.0,
+            e: -lly * s,
+            f: -llx * s,
+        },
+        // x_dev = (urx - x), y_dev = (y - lly)
+        180 => Matrix {
+            a: -s,
             b: 0.0,
             c: 0.0,
-            d: scale,
-            e: (media_box.llx + w) * scale,
-            f: -media_box.lly * scale,
+            d: s,
+            e: urx * s,
+            f: -lly * s,
         },
-        270 | -90 => Matrix {
+        // x_dev = (ury - y), y_dev = (urx - x)
+        270 => Matrix {
             a: 0.0,
-            b: scale,
-            c: -scale,
+            b: -s,
+            c: -s,
             d: 0.0,
-            e: (media_box.lly + h) * scale,
-            f: -media_box.llx * scale,
+            e: ury * s,
+            f: urx * s,
         },
-        _ => {
-            // 0° rotation (default)
-            Matrix {
-                a: scale,
-                b: 0.0,
-                c: 0.0,
-                d: -scale,
-                e: -media_box.llx * scale,
-                f: (media_box.lly + h) * scale,
-            }
-        }
+        // x_dev = (x - llx), y_dev = (ury - y)
+        _ => Matrix {
+            a: s,
+            b: 0.0,
+            c: 0.0,
+            d: -s,
+            e: -llx * s,
+            f: ury * s,
+        },
     }
 }
 
