@@ -35,6 +35,6 @@ There is no decision record (ADR). Maintainer decision (2026-09-29, #98): when a
 - [Compress pipeline](compress-pipeline.md) — the decision to refuse encrypted documents relies on `is_encrypted`.
 
 ## Known holes / open
-- When the number in an object header differs from the xref (the offset points at a different object), that object is returned anyway. The same goes for an object stream's index numbers. Tracked: #109
+- When the number in an object header differs from the xref (the offset points at a different object), that object is returned anyway. The same goes for an object stream's index numbers. Measured 2026-10-07: an xref entry for object 4 holding object 3's offset makes `resolve(4 0 R)` return object 3's Page dictionary. Decided in #109: compare the header's object number (not its generation, as MuPDF); on a mismatch or no header at the offset, look the object up in a header index of the whole file built lazily once (the scan in `repair.rs`, which `open` never calls today), and resolve to `Null` only when the file holds it nowhere (§7.3.10, #98, qpdf). Tracked: #109
 - The `open_mmap` unit tests in `parser.rs` run only with `--features mmap`; in CI only the all-features job turns it on (#187). They make their file in a `tempfile::tempdir()` declared before the document, so on Windows the mapping is dropped before the directory is removed.
 - A cache hit also takes the write lock, so `resolve` calls from several threads are serialized (inferred: a candidate bottleneck for parallel rendering).
