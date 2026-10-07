@@ -3,11 +3,14 @@ use std::collections::HashMap;
 use justpdf_core::PdfDocument;
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
-use justpdf_core::font::{FontInfo, ToUnicodeCMap, parse_font_info};
+use justpdf_core::font::{
+    Encoding, FontInfo, ToUnicodeCMap, parse_font_info, truetype_glyph_candidates,
+};
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::ocg::{self, OCConfig};
 use justpdf_core::page::PageInfo;
+use justpdf_core::ttf_parser;
 use tiny_skia::{FillRule, Mask, PathBuilder, Pixmap, Transform};
 
 use crate::device::PixmapDevice;
@@ -29,6 +32,10 @@ struct ResolvedFont {
     /// CIDToGIDMap for Type0 CID fonts: maps CID → glyph ID.
     /// None = identity mapping (CID == GID).
     cid_to_gid_map: Option<Vec<u16>>,
+    /// The base encoding of the font's `/Encoding`, `None` when it has none.
+    encoding: Option<Encoding>,
+    /// Bit 3 of the font descriptor's `/Flags`.
+    symbolic: bool,
 }
 
 /// An embedded font program and its [`font_hash`].
@@ -294,7 +301,20 @@ impl<'a> RenderInterpreter<'a> {
     }
 
     fn resolve_font(&mut self, fd: &PdfDict) -> Result<ResolvedFont> {
+        let mut fd = fd.clone();
+        if let Some(PdfObject::Reference(r)) = fd.get(b"Encoding") {
+            let r = r.clone();
+            if let Ok(encoding) = self.doc.resolve(&r) {
+                fd.insert(b"Encoding".to_vec(), encoding);
+            }
+        }
+        let fd = &fd;
         let mut info = parse_font_info(fd);
+        let encoding = fd.get(b"Encoding").map(|_| info.encoding);
+        let symbolic = self
+            .get_font_descriptor(fd)
+            .and_then(|d| d.get_i64(b"Flags"))
+            .is_some_and(|flags| flags & 4 != 0);
 
         // Resolve ToUnicode CMap
         let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {
@@ -358,6 +378,8 @@ impl<'a> RenderInterpreter<'a> {
             cmap,
             font_program,
             cid_to_gid_map,
+            encoding,
+            symbolic,
         })
     }
 
@@ -1150,6 +1172,31 @@ impl<'a> RenderInterpreter<'a> {
         let font_program = font.font_program.clone();
         let cid_to_gid_map = font.cid_to_gid_map.clone();
 
+        // A simple font's glyph for each code: the first §9.6.6.4 candidate.
+        let simple_glyphs: Option<Vec<Option<ttf_parser::GlyphId>>> = if is_cid {
+            None
+        } else {
+            font_program
+                .as_ref()
+                .and_then(|p| ttf_parser::Face::parse(&p.data, 0).ok())
+                .map(|face| {
+                    char_codes
+                        .iter()
+                        .map(|&code| {
+                            truetype_glyph_candidates(
+                                &face,
+                                code as u8,
+                                font.encoding,
+                                &font.info.differences,
+                                font.symbolic,
+                            )
+                            .first()
+                            .copied()
+                        })
+                        .collect()
+                })
+        };
+
         // Now we're done borrowing self.fonts, can mutably borrow self
         for (i, code) in char_codes.iter().enumerate() {
             let width = widths[i];
@@ -1164,6 +1211,7 @@ impl<'a> RenderInterpreter<'a> {
                     is_cid,
                     font_program.as_ref(),
                     cid_to_gid_map.as_deref(),
+                    simple_glyphs.as_ref().map(|g| g[i]),
                 )?;
             }
 
@@ -1192,6 +1240,7 @@ impl<'a> RenderInterpreter<'a> {
         is_cid: bool,
         font_program: Option<&FontProgram>,
         cid_to_gid_map: Option<&[u16]>,
+        simple_glyph: Option<Option<ttf_parser::GlyphId>>,
     ) -> Result<()> {
         if glyph_width.abs() < 0.001 {
             return Ok(());
@@ -1211,7 +1260,11 @@ impl<'a> RenderInterpreter<'a> {
                     ttf_parser::GlyphId(code as u16)
                 }
             } else {
-                crate::glyph::char_code_to_glyph_id(&face, code)
+                match simple_glyph.flatten() {
+                    Some(gid) => gid,
+                    // No glyph for this code: draw nothing.
+                    None => return Ok(()),
+                }
             };
 
             let gid_raw = glyph_id.0;
@@ -1250,6 +1303,9 @@ impl<'a> RenderInterpreter<'a> {
                         .fill_path(&path, FillRule::Winding, transform, color, bm);
                     return Ok(());
                 }
+            } else {
+                // The chosen glyph has no outline (a space): nothing to draw.
+                return Ok(());
             }
         }
 

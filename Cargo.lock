@@ -874,7 +874,6 @@ dependencies = [
  "justpdf-core",
  "rayon",
  "tiny-skia",
- "ttf-parser",
 ]
 
 [[package]]

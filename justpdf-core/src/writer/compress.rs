@@ -1440,16 +1440,11 @@ fn extract_char_codes(
     }
 }
 
-/// Glyph IDs a viewer may draw for `codes` in a simple TrueType font.
-///
-/// Keeps every glyph any lookup path reaches — each `cmap` subtable (with the
-/// symbolic `0xF000`/`0xF100`/`0xF200` prefixes), the `/Differences` glyph
-/// names through `post`, the WinAnsi reading of the code through the font's
-/// Unicode `cmap`, and the code taken as a glyph ID — so the kept set does not
-/// depend on which path a viewer takes. Returns `None` when a used code cannot
-/// be resolved: a `/Differences` name found by neither `post` nor its Unicode
-/// value, or a code at or above `0x80` in a non-symbolic font whose base
-/// encoding is not WinAnsi.
+/// Glyph IDs a viewer may draw for `codes` in a simple TrueType font: the
+/// union of every candidate `font::truetype_glyph_candidates` gives for each
+/// code, so the kept set does not depend on which path a viewer takes.
+/// Returns `None` when, in a non-symbolic font, a used code's `/Differences`
+/// name is found by neither `post` nor the Unicode the Adobe Glyph List gives it.
 fn simple_font_glyph_ids(
     font_obj_num: u32,
     codes: &HashSet<u16>,
@@ -1457,103 +1452,55 @@ fn simple_font_glyph_ids(
     modifier: &DocumentModifier,
 ) -> Option<Vec<u16>> {
     let face = ttf_parser::Face::parse(font_program, 0).ok()?;
-    let font_dict = find_object_dict(font_obj_num, modifier)?;
+    let mut font_dict = find_object_dict(font_obj_num, modifier)?.clone();
 
-    let (base_encoding, differences) = match font_dict.get(b"Encoding") {
-        None => (None, Vec::new()),
-        Some(PdfObject::Name(name)) => (Some(name.clone()), Vec::new()),
-        Some(PdfObject::Dict(enc)) => (
-            enc.get_name(b"BaseEncoding").map(|n| n.to_vec()),
-            crate::font::type3::parse_encoding_differences(&font_dict),
-        ),
-        Some(PdfObject::Reference(r)) => {
-            let enc = find_object_dict(r.obj_num, modifier)?;
-            let mut inline = PdfDict::new();
-            inline.insert(b"Encoding".to_vec(), PdfObject::Dict(enc.clone()));
-            (
-                enc.get_name(b"BaseEncoding").map(|n| n.to_vec()),
-                crate::font::type3::parse_encoding_differences(&inline),
-            )
+    if let Some(PdfObject::Reference(r)) = font_dict.get(b"Encoding") {
+        let encoding = modifier.find_object_pub(r.obj_num)?.clone();
+        font_dict.insert(b"Encoding".to_vec(), encoding);
+    }
+    let encoding = match font_dict.get(b"Encoding") {
+        None => None,
+        Some(PdfObject::Name(_) | PdfObject::Dict(_)) => {
+            Some(crate::font::parse_font_info(&font_dict).encoding)
         }
         Some(_) => return None,
     };
-    let winansi = base_encoding.as_deref() == Some(b"WinAnsiEncoding".as_slice());
+    let differences = crate::font::parse_font_info(&font_dict).differences;
 
     let flags = match font_dict.get(b"FontDescriptor") {
-        Some(PdfObject::Reference(r)) => find_object_dict(r.obj_num, modifier)
-            .and_then(|fd| fd.get_i64(b"Flags"))
-            .unwrap_or(0),
-        _ => 0,
+        Some(PdfObject::Reference(r)) => {
+            find_object_dict(r.obj_num, modifier).and_then(|fd| fd.get_i64(b"Flags"))
+        }
+        Some(PdfObject::Dict(fd)) => fd.get_i64(b"Flags"),
+        _ => None,
     };
-    let symbolic = flags & 4 != 0;
+    let symbolic = flags.unwrap_or(0) & 4 != 0;
 
     let mut gids: BTreeSet<u16> = BTreeSet::new();
     for &code in codes {
         let byte = u8::try_from(code).ok()?;
-
-        if let Some(cmap) = face.tables().cmap {
-            for subtable in cmap.subtables {
-                for prefix in [0u32, 0xF000, 0xF100, 0xF200] {
-                    if let Some(gid) = subtable.glyph_index(prefix | u32::from(byte)) {
-                        gids.insert(gid.0);
-                    }
-                }
-            }
-        }
-        if code < face.number_of_glyphs() {
-            gids.insert(code);
-        }
-
-        if let Some((_, name)) = differences.iter().rev().find(|(c, _)| *c == byte) {
-            let by_name = std::str::from_utf8(name)
+        // A symbolic font's glyph is chosen by code, so only a non-symbolic
+        // font's /Differences name has to resolve.
+        if !symbolic && let Some((_, name)) = differences.iter().rev().find(|(c, _)| *c == byte) {
+            let by_post = std::str::from_utf8(name)
                 .ok()
                 .and_then(|n| face.glyph_index_by_name(n));
-            let by_unicode = glyph_name_to_char(name).and_then(|c| face.glyph_index(c));
-            if by_name.is_none() && by_unicode.is_none() {
+            let by_unicode = crate::font::glyph_name_to_unicode(name)
+                .filter(|u| u.chars().count() == 1)
+                .and_then(|u| u.chars().next())
+                .and_then(|c| face.glyph_index(c));
+            if by_post.is_none() && by_unicode.is_none() {
                 return None;
-            }
-            gids.extend(by_name.map(|g| g.0));
-            gids.extend(by_unicode.map(|g| g.0));
-        } else {
-            if byte >= 0x80 && !symbolic && !winansi {
-                return None;
-            }
-            let decoded = crate::font::decode_text(&[byte], crate::font::Encoding::WinAnsiEncoding);
-            let standard_quote = match byte {
-                b'\'' => Some('\u{2019}'),
-                b'`' => Some('\u{2018}'),
-                _ => None,
-            };
-            for c in decoded.chars().chain(standard_quote) {
-                if let Some(gid) = face.glyph_index(c) {
-                    gids.insert(gid.0);
-                }
             }
         }
+        gids.extend(
+            crate::font::truetype_glyph_candidates(&face, byte, encoding, &differences, symbolic)
+                .into_iter()
+                .map(|g| g.0),
+        );
     }
 
     Some(gids.into_iter().collect())
-}
-
-/// The character a glyph name stands for, where the name spells it out:
-/// `uniXXXX`, `uXXXX`–`uXXXXXX`, or a single ASCII letter.
-fn glyph_name_to_char(name: &[u8]) -> Option<char> {
-    let name = std::str::from_utf8(name).ok()?;
-    let hex = name
-        .strip_prefix("uni")
-        .filter(|h| h.len() == 4)
-        .or_else(|| {
-            name.strip_prefix('u')
-                .filter(|h| (4..=6).contains(&h.len()))
-        });
-    if let Some(hex) = hex {
-        return u32::from_str_radix(hex, 16).ok().and_then(char::from_u32);
-    }
-    let mut chars = name.chars();
-    match (chars.next(), chars.next()) {
-        (Some(c), None) if c.is_ascii_alphabetic() => Some(c),
-        _ => None,
-    }
 }
 
 /// Glyph IDs for `cids` in an `Identity-H`/`Identity-V` Type0 font, through the
@@ -3223,7 +3170,8 @@ mod tests {
     }
 
     #[test]
-    fn test_subset_skips_high_code_outside_winansi() {
+    fn test_subset_mac_roman_high_code_keeps_glyph() {
+        // 0x8E is eacute in MacRoman; until #223 this kept the font whole.
         let mut pdf = TrueTypePdf::new();
         let mut font = pdf.dict(pdf.font);
         font.insert(
@@ -3234,8 +3182,92 @@ mod tests {
         pdf.set_content(b"BT /F1 24 Tf 72 720 Td (H) Tj <8E> Tj ET");
 
         let (stats, original, subset) = compress_and_fonts(&pdf.build());
-        assert_eq!(stats.fonts_subsetted, 0);
-        assert_eq!(subset, original);
+        assert_eq!(stats.fonts_subsetted, 1);
+        assert_char_outline_kept(&original, &subset, '\u{e9}');
+    }
+
+    /// The glyph IDs `simple_font_glyph_ids` keeps for `codes` when the page's
+    /// TrueType font has `encoding` and `flags` but `program` as its font program.
+    fn glyph_ids_for(
+        program: &[u8],
+        encoding: Option<PdfObject>,
+        flags: i64,
+        codes: &[u16],
+    ) -> Option<Vec<u16>> {
+        let mut pdf = TrueTypePdf::new();
+        let mut font = pdf.dict(pdf.font);
+        match encoding {
+            Some(e) => {
+                font.insert(b"Encoding".to_vec(), e);
+            }
+            None => {
+                font.remove(b"Encoding");
+            }
+        }
+        if let Some(PdfObject::Reference(r)) = font.get(b"FontDescriptor") {
+            let mut fd = pdf.dict(r.obj_num);
+            fd.insert(b"Flags".to_vec(), PdfObject::Integer(flags));
+            pdf.set_dict(r.obj_num, fd);
+        }
+        pdf.set_dict(pdf.font, font);
+        let codes: HashSet<u16> = codes.iter().copied().collect();
+        simple_font_glyph_ids(pdf.font, &codes, program, &pdf.modifier)
+    }
+
+    #[test]
+    fn test_glyph_ids_reach_one_zero_through_the_mac_roman_code() {
+        // #118 (a): no Unicode cmap; WinAnsi 0xE9 eacute is MacRoman 0x8E.
+        let program = crate::font::test_font::font(10, &[(1, 0, &[(0x8E, 5)])], &[]);
+        let enc = Some(PdfObject::Name(b"WinAnsiEncoding".to_vec()));
+        let gids = glyph_ids_for(&program, enc, 32, &[0xE9]).unwrap();
+        assert!(gids.contains(&5), "{gids:?}");
+    }
+
+    #[test]
+    fn test_glyph_ids_reach_a_base_encoding_name_only_in_post() {
+        // #118 (b): WinAnsi 0x80 is Euro, named only in post.
+        let program =
+            crate::font::test_font::font(2, &[(3, 1, &[(0x41, 0)])], &[".notdef", "Euro"]);
+        let enc = Some(PdfObject::Name(b"WinAnsiEncoding".to_vec()));
+        let gids = glyph_ids_for(&program, enc, 32, &[0x80]).unwrap();
+        assert!(gids.contains(&1), "{gids:?}");
+    }
+
+    #[test]
+    fn test_glyph_ids_of_a_symbolic_font_ignore_unresolvable_names() {
+        // A symbolic font draws by code through (3,0), whatever /Differences names it.
+        let program = crate::font::test_font::font(10, &[(3, 0, &[(0xF048, 3)])], &[]);
+        let mut enc = PdfDict::new();
+        enc.insert(
+            b"Differences".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Integer(72),
+                PdfObject::Name(b"g17".to_vec()),
+            ]),
+        );
+        let gids = glyph_ids_for(&program, Some(PdfObject::Dict(enc.clone())), 4, &[72]).unwrap();
+        assert!(gids.contains(&3), "{gids:?}");
+        // The same name in a non-symbolic font still keeps the font whole.
+        assert_eq!(
+            glyph_ids_for(&program, Some(PdfObject::Dict(enc)), 32, &[72]),
+            None
+        );
+    }
+
+    #[test]
+    fn test_glyph_ids_resolve_a_differences_name_only_the_agl_knows() {
+        // #269: Eacute is not in post, but the AGL gives U+00C9, which (3,1) maps.
+        let program = crate::font::test_font::font(10, &[(3, 1, &[(0xC9, 7)])], &[]);
+        let mut enc = PdfDict::new();
+        enc.insert(
+            b"Differences".to_vec(),
+            PdfObject::Array(vec![
+                PdfObject::Integer(72),
+                PdfObject::Name(b"Eacute".to_vec()),
+            ]),
+        );
+        let gids = glyph_ids_for(&program, Some(PdfObject::Dict(enc)), 32, &[72]).unwrap();
+        assert!(gids.contains(&7), "{gids:?}");
     }
 
     /// Adds form XObject `/X1` to the page, drawing `content` with `font`

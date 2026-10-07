@@ -6,6 +6,7 @@ mod common;
 use common::{Plain, Stream, page};
 use justpdf_core::PdfDocument;
 use justpdf_core::font::subset::subset_font;
+use justpdf_core::ttf_parser;
 use justpdf_render::{RenderOptions, render_page_to_pixmap};
 
 const NOTO_SANS: &[u8] = include_bytes!("../../justpdf-core/tests/fixtures/NotoSans-Regular.ttf");

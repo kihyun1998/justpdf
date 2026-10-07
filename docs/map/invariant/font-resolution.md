@@ -6,7 +6,7 @@ The same font **must be interpreted the same way** by text extraction and by ren
 ## Why it is cross-cutting
 Both consumers start from core `parse_font_info`, but each builds on top of it **on its own**, and neither calls the other:
 - Text reads `/W` and `/DW` (render does not) and decodes with the encoding tables (render does not use them).
-- Render reads `/CIDToGIDMap` (text does not need it) and treats the byte as a Unicode scalar to look up the font's cmap.
+- Render reads `/CIDToGIDMap` (text does not need it), and picks a simple TrueType glyph through the font's encoding with `font::truetype_glyph_candidates`, the function subsetting also uses (#223).
 - There are two copies of the ToUnicode interpretation code.
 - Core has several font modules that neither path uses (CFF, Type3, recovery, OpenType layout).
 
@@ -17,21 +17,21 @@ Both consumers start from core `parse_font_info`, but each builds on top of it *
 - [CID fonts](../territory/cid-fonts.md) — widths only in text, GID mapping only in render.
 - [Text extraction](../territory/text-extraction.md) — `resolve_fonts`, `resolve_to_unicode`.
 - [Render interpreter](../territory/render-interpreter.md) — `resolve_font`.
-- [Glyph rendering](../territory/glyph-rendering.md) — `char_code_to_glyph_id`.
+- [Glyph rendering](../territory/glyph-rendering.md) — the first of `truetype_glyph_candidates`.
 - [SVG renderer](../territory/svg-renderer.md) — the third `resolve_font`.
-- [Font subsetting](../territory/font-subsetting.md) — the two paths read the subset result differently (render through the font cmap, text through ToUnicode). Subsetting also resolves code → GID on its own (`simple_font_glyph_ids`, `cid_font_glyph_ids`) — a third interpretation, but because it keeps GIDs and keeps the union of every path, it loses no glyphs even where it disagrees with the other two.
+- [Font subsetting](../territory/font-subsetting.md) — the two paths read the subset result differently (render through the font cmap, text through ToUnicode). Subsetting keeps the union of the same simple-TrueType candidates the renderer draws the first of (`simple_font_glyph_ids`), and resolves CID fonts on its own (`cid_font_glyph_ids`); it keeps GIDs, so it loses no glyphs.
 
 ## What a violation looks like
 - On a page with a Type0 (CJK) font, the rendered character spacing and the extracted text coordinates differ (render uses a fixed width of 1000 — inferred).
 - A subset font loses glyphs or draws the wrong ones in render while extracted text is fine — compress tests that only look at extraction pass.
-- In a `/Differences` font, extraction follows the encoding (#221) but render does not (#223).
+- In a `/Differences` font, extraction (#221) and simple-TrueType render (#223) both follow the encoding; CFF and Type1 glyphs by name are #224/#225.
 
 ## Discovery history
 No incident recorded. Reported on 2026-09-23 by the font/text and render research agents while the map was being written. All of it was inferred from reading code.
 
 - 2026-09-23, while working on #9, the subset case was **reproduced by running it** (simple TrueType): the subset font's `cmap` pointed at old GIDs so all five characters to be drawn lost their outlines, while text extraction on the same output was unchanged — [Font subsetting](../territory/font-subsetting.md#design-model).
 
-- Tracked: #222 (CID widths in render), #223 (one core §9.6.6.4 code → GID function for render and subsetting; absorbed #118)
+- Tracked: #222 (CID widths in render)
 
 ## Where it will recur
 **Adding, on either the text or the render side, a function that gets a code, glyph, width or Unicode value from a font dictionary is subject to this invariant.** Check: does the other side need the same information? Until core has a shared font interpretation type, a fix on one side has to explicitly decide whether the other side needs the same fix.

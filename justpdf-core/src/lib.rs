@@ -36,3 +36,5 @@ pub mod xref;
 pub use error::{JustPdfError, Result};
 pub use object::{IndirectRef, PdfDict, PdfObject};
 pub use parser::PdfDocument;
+/// The TrueType parser core reads fonts with, for callers of [`font::truetype_glyph_candidates`].
+pub use ttf_parser;

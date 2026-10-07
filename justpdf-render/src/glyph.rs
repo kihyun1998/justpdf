@@ -1,5 +1,5 @@
+use justpdf_core::ttf_parser::{self, Face};
 use tiny_skia::{Path, PathBuilder};
-use ttf_parser::Face;
 
 /// Build a tiny-skia Path from a glyph outline.
 /// Returns None if the glyph has no outline.
@@ -7,19 +7,6 @@ pub fn glyph_outline(face: &Face, glyph_id: ttf_parser::GlyphId) -> Option<Path>
     let mut builder = OutlineBuilder::new();
     face.outline_glyph(glyph_id, &mut builder)?;
     builder.finish()
-}
-
-/// Map a character code to a glyph ID for simple fonts (non-CID).
-/// Uses the cmap table if available, otherwise uses identity mapping.
-pub fn char_code_to_glyph_id(face: &Face, code: u32) -> ttf_parser::GlyphId {
-    // Try direct Unicode cmap lookup
-    if let Some(c) = char::from_u32(code)
-        && let Some(gid) = face.glyph_index(c)
-    {
-        return gid;
-    }
-    // Fallback: treat code as glyph ID directly
-    ttf_parser::GlyphId(code as u16)
 }
 
 /// Get the units-per-em for a face (for coordinate normalization).
