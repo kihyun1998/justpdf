@@ -24,14 +24,14 @@ Both consumers start from core `parse_font_info`, but each builds on top of it *
 ## What a violation looks like
 - On a page with a Type0 (CJK) font, the rendered character spacing and the extracted text coordinates differ (render uses a fixed width of 1000 — inferred).
 - A subset font loses glyphs or draws the wrong ones in render while extracted text is fine — compress tests that only look at extraction pass.
-- In a `/Differences` font, extraction and render are wrong in different ways.
+- In a `/Differences` font, extraction follows the encoding (#221) but render does not (#223).
 
 ## Discovery history
 No incident recorded. Reported on 2026-09-23 by the font/text and render research agents while the map was being written. All of it was inferred from reading code.
 
 - 2026-09-23, while working on #9, the subset case was **reproduced by running it** (simple TrueType): the subset font's `cmap` pointed at old GIDs so all five characters to be drawn lost their outlines, while text extraction on the same output was unchanged — [Font subsetting](../territory/font-subsetting.md#design-model).
 
-- Tracked: #221 (/Differences and base tables in text), #222 (CID widths in render), #223 (one core §9.6.6.4 code → GID function for render and subsetting; absorbed #118)
+- Tracked: #222 (CID widths in render), #223 (one core §9.6.6.4 code → GID function for render and subsetting; absorbed #118)
 
 ## Where it will recur
 **Adding, on either the text or the render side, a function that gets a code, glyph, width or Unicode value from a font dictionary is subject to this invariant.** Check: does the other side need the same information? Until core has a shared font interpretation type, a fix on one side has to explicitly decide whether the other side needs the same fix.

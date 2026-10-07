@@ -420,11 +420,16 @@ impl TextInterpreter {
 
             // Decode to unicode
             let unicode = if let Some(f) = font {
-                if let Some(ref cmap) = f.cmap {
-                    cmap.lookup(code)
-                        .unwrap_or_else(|| decode_text(&raw[i..i + byte_len], f.info.encoding))
-                } else {
-                    decode_text(&raw[i..i + byte_len], f.info.encoding)
+                let decode = || {
+                    if byte_len == 1 {
+                        f.info.decode_simple_code(raw[i])
+                    } else {
+                        decode_text(&raw[i..i + byte_len], f.info.encoding)
+                    }
+                };
+                match f.cmap.as_ref().and_then(|cmap| cmap.lookup(code)) {
+                    Some(text) => text,
+                    None => decode(),
                 }
             } else {
                 String::from_utf8_lossy(&raw[i..i + byte_len]).into_owned()
@@ -709,6 +714,13 @@ fn resolve_fonts(
             _ => continue,
         };
 
+        let mut font_dict = font_dict;
+        if let Some(PdfObject::Reference(r)) = font_dict.get(b"Encoding") {
+            let r = r.clone();
+            if let Ok(encoding) = doc.resolve(&r) {
+                font_dict.insert(b"Encoding".to_vec(), encoding);
+            }
+        }
         let mut info = parse_font_info(&font_dict);
 
         // Resolve ToUnicode CMap
@@ -1029,6 +1041,7 @@ mod tests {
                     base_font: b"Helvetica".to_vec(),
                     subtype: b"Type1".to_vec(),
                     encoding: Encoding::WinAnsiEncoding,
+                    differences: Vec::new(),
                     widths: crate::font::FontWidths::None {
                         default_width: 600.0,
                     },
@@ -1086,6 +1099,7 @@ mod tests {
                     base_font: b"Helvetica".to_vec(),
                     subtype: b"Type1".to_vec(),
                     encoding: Encoding::WinAnsiEncoding,
+                    differences: Vec::new(),
                     widths: crate::font::FontWidths::None {
                         default_width: 500.0,
                     },
@@ -1227,6 +1241,7 @@ mod tests {
                     base_font: b"Courier".to_vec(),
                     subtype: b"Type1".to_vec(),
                     encoding: Encoding::WinAnsiEncoding,
+                    differences: Vec::new(),
                     widths: crate::font::FontWidths::None {
                         default_width: 600.0,
                     },
@@ -1329,6 +1344,7 @@ mod tests {
                     base_font: b"Helvetica".to_vec(),
                     subtype: b"Type1".to_vec(),
                     encoding: Encoding::WinAnsiEncoding,
+                    differences: Vec::new(),
                     widths: crate::font::FontWidths::None {
                         default_width: 600.0,
                     },

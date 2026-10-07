@@ -289,6 +289,7 @@ pub fn fallback_font_info(font_name: &[u8]) -> FontInfo {
         base_font: substitute.to_vec(),
         subtype: b"Type1".to_vec(),
         encoding: Encoding::WinAnsiEncoding,
+        differences: Vec::new(),
         widths,
         to_unicode: None,
         is_standard14: true,
