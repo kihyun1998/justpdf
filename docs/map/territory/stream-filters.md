@@ -25,6 +25,7 @@ Applies a stream's `/Filter` (a name or an array) in order and passes each filte
 
 ## Reference behaviour
 **None.** The code cites ITU-T T.4/T.6 tables for CCITT. Clause to compare against: ISO 32000-2 §7.4.
+- Decoded-size limit (read 2026-10-07): MuPDF `fz_read_best` refuses output past `max(200 × encoded length, 100 MB)`, or for an image `((W × nc × bpc + 7) >> 3) × H` floored at 100 MB, checked while reading ("compression bomb detected"). qpdf caps each filter only when the caller sets a limit (off by default; fuzz mode sets Flate to 200,000). pdf.js `flate_stream.js`/`decode_stream.js` have no cap.
 
 ## Cross-cutting invariants
 **None.**
@@ -39,4 +40,5 @@ Applies a stream's `/Filter` (a name or an array) in order and passes each filte
 - LZW and the TIFF predictor have no tests.
 - Tolerant decoding (recovering broken streams) exists only as API, and no feature uses it. The renderer's tolerance is only swallowing errors (`unwrap_or_default`).
 - CCITT Group 4 decodes every line as white: `decode_2d_line` loops `while (a0 as usize) < columns` from `a0 = -1`, and `-1 as usize` is `usize::MAX`, so no bit is read. Measured 2026-10-07: `26 B0` (`/K -1 /Columns 8 /Rows 1`, three black pixels) decodes to eight `FF`. Mixed G3 2D lines share the function (inferred). `test_group4_all_white_line` asserts all white, so it cannot fail on this. Tracked: #246
-- CCITT output is `/Columns × /Rows` whatever the data: undecoded lines are padded white, and a line that consumes no bits runs the loop to `/Rows` or the 100,000 cap. Measured 2026-10-07: 0 bytes with `/Columns 20000 /Rows 20000` → 400 MB; 1 byte `FF` with `/Columns 10000000` and no `/Rows` → allocation failure, process abort. Decided in #160: return only decoded lines and let `decode_image` complete the height. Tracked: #160; the `/Columns` ratio that remains is #161's policy question.
+- CCITT output is `/Columns × /Rows` whatever the data: undecoded lines are padded white, and a line that consumes no bits runs the loop to `/Rows` or the 100,000 cap. Measured 2026-10-07: 0 bytes with `/Columns 20000 /Rows 20000` → 400 MB; 1 byte `FF` with `/Columns 10000000` and no `/Rows` → allocation failure, process abort. Decided in #160: return only decoded lines and let `decode_image` complete the height. Tracked: #160.
+- No filter bounds its output: Flate reads to the end, and a 62.6 KB file inflates an object stream to 64 MB (measured 2026-09-30). Decided in #161: MuPDF's rule, always on — a limit of `max(200 × encoded length, 100 MB)` (image: from `/Width`, `/Height`, components and bpc, at least `W × H` with CCITT), applied to every filter's output while decoding, with its own error kind. Tracked: #161
