@@ -31,4 +31,4 @@ A WASM module that compresses PDFs in the browser with no server. It exposes onl
 
 ## Known holes / open
 - In `compress_advanced`, even with `jpeg_quality` set to 0, images are re-encoded at q75 when `max_dpi > 0` (documented in the README). Only the DPI side can be turned off with a knob.
-- Tracked: #57 (jpeg_quality truncation), #58 (extreme removes embedded files)
+- Tracked: #57 (jpeg_quality truncation; decided: 0 = off, 1–100 pass, anything else a JS error, taken as a type wide enough to check — `image`'s JPEG encoder clamps to 1–100, so `compress_custom(0)` encoded at quality 1; and `None` + downscaling stays q75 with the docs fixed), #58 (extreme removes embedded files)

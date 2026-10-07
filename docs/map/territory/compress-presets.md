@@ -38,4 +38,4 @@ Checklist for changing a preset's name, meaning or default:
 ## Known holes / open
 - `remove_unused_resources` has no CLI flag (#11 was closed by merge, and there is no record of deciding to leave it out).
 - There is no record of deciding the default preset mismatch (CLI medium vs example and web high).
-- Tracked: #57 (jpeg_quality truncation), #58 (extreme removes embedded files)
+- Tracked: #57 (jpeg_quality truncation; decided: 0 = off, 1–100 pass, anything else a JS error, taken as a type wide enough to check — `image`'s JPEG encoder clamps to 1–100, so `compress_custom(0)` encoded at quality 1; and `None` + downscaling stays q75 with the docs fixed), #58 (extreme removes embedded files)
