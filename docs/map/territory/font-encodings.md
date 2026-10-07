@@ -31,4 +31,4 @@ The encoding tables (Standard, WinAnsi, MacRoman, PDFDoc, Identity) that turn a 
 
 ## Known holes / open
 - Not handling `/Differences` makes text extraction wrong for fonts with non-standard encodings: Helvetica with `/Differences [65 /B]` showing `(A)` extracts `"A"`, and `/MacRomanEncoding` `<8E>` extracts `"Ž"` instead of `"é"` (measured 2026-10-06, synthetic pages, during #45's triage). Such fonts are among the most common in real-world files (inferred).
-- Tracked: #33 (text string encoding), #221 (/Differences and base tables in text), #223 (encoding in render glyph selection)
+- Tracked: #33 (text string encoding), #221 (/Differences and base tables in text), #223 (encoding in render glyph selection, and the shared §9.6.6.4 code → GID function; blocked by #221)
