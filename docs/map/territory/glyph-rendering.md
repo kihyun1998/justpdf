@@ -7,7 +7,7 @@ Turns the character codes of text-showing operators into glyph IDs, takes outlin
 **None.**
 
 ## Design model
-- Font data is looked up in the order FontFile2 → FontFile3 → FontFile and all of it is handed to `ttf_parser::Face::parse`. Pure CFF and Type1 programs fail and a **placeholder box** is drawn (inferred). Core's [CFF parser](cff.md) is not used.
+- Font data is looked up in the order FontFile2 → FontFile3 → FontFile and all of it is handed to `ttf_parser::Face::parse`. Pure CFF and Type1 programs fail and a **placeholder box** is drawn (CFF measured 2026-10-07). Core's [CFF parser](cff.md) is not used. Decided in #224: a bare CFF goes through `ttf_parser::cff::Table` (glyph by name through the encoding, CID through a reverse of `glyph_cid`, scaled by `FontMatrix`), a path #227's bundled substitutes reuse.
 - Code → GID: `char_code_to_glyph_id` treats the byte as a Unicode scalar and looks it up in the font's cmap, and if that fails, code == GID. The font's `/Encoding` and `/Differences` are not used ([Font encodings](font-encodings.md)).
 - CID fonts use `/CIDToGIDMap` but not `/W` — [Font resolution](../invariant/font-resolution.md).
 - Text is not filled with patterns (`fill_color_rgba` only — inferred).
