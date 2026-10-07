@@ -19,7 +19,7 @@ For a missing or damaged font, guesses from its name whether it is bold, italic,
 **None.**
 
 ## Blast radius
-- [Glyph rendering](glyph-rendering.md) — the side that would use a substitute font (currently a placeholder rectangle).
+- [Glyph rendering](glyph-rendering.md) — the side that would use a substitute font (currently a placeholder rectangle). #227 makes it the renderer's source for picking a bundled URW base-14 substitute.
 - [Text extraction](text-extraction.md) — could use it for width substitution.
 
 ## Known holes / open

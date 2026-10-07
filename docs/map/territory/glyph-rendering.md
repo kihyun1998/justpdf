@@ -31,5 +31,5 @@ Turns the character codes of text-showing operators into glyph IDs, takes outlin
 - [SVG renderer](svg-renderer.md) — a separate text path.
 
 ## Known holes / open
-- Text with no embedded font (#227), CFF (#224), Type1 (#225) and Type3 (#226) are drawn as boxes (inferred; no pixel-checking test). Standard-14 Helvetica rendered as one black box per glyph (measured 2026-10-06, `render_page` at 150 dpi, #184).
+- Text with no embedded font (#227), CFF (#224), Type1 (#225) and Type3 (#226) are drawn as boxes (inferred; no pixel-checking test). Standard-14 Helvetica rendered as one black box per glyph (measured 2026-10-06, `render_page` at 150 dpi, #184). The box is already `/Widths` wide, so a substitute keeps today's positions. Decided in #227: bundle MuPDF's URW base-14 set (`resources/fonts/urw/*.cff`, SIL OFL 1.1, about 610 KB) behind a default-on feature, chosen with `find_substitute` and drawn by glyph name; blocked by #224 and #223. The `.otf`/`.ttf` set in `urw-base35-fonts` is AGPLv3 and not usable here; pdf.js ships Foxit `.pfb` (BSD) plus Liberation Sans 1.07 (GPLv2 + font exception).
 - Tracked: #222 (CID widths), #223 (encoding in glyph selection)
