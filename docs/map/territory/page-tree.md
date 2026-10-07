@@ -38,4 +38,4 @@ Rules read from the code.
 ## Known holes / open
 - There is no depth limit — extreme depth without a cycle can overflow the stack (inferred).
 - `get_page` and `collect_pages`/`page_count` can answer differently for the same file — "What this invariant does not cover" in [Tree traversal cycles](../invariant/tree-traversal-cycles.md).
-- Tracked: #122 (depth limit), #133 (page API disagreement)
+- Tracked: #122 (depth limit: 256, overflow measured at depth 500 debug / 900 release), #133 (page API disagreement)
