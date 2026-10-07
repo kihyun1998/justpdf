@@ -29,4 +29,4 @@ The render crate's public entry points: page → PNG/JPEG/RGBA/SVG, saving to a 
 
 ## Known holes / open
 - The render test (`tests/render_test.rs`) has a conditional escape that passes silently when the repo-tracked `testpdf.pdf` is missing (it does not fire today, since the file is there).
-- Tracked: #150 (`render_pages_parallel` stringifies a `collect_pages` failure)
+- Tracked: #150 (`render_pages_parallel` stringifies a `collect_pages` failure; decided in #150: look the page up with `get_page`, inheriting #134's `PageOutOfRange`/`InvalidObject` rule per index inside the parallel map, so each result keeps its core error kind without cloning `JustPdfError`)
