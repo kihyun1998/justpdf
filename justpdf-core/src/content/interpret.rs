@@ -215,6 +215,10 @@ pub(crate) trait ContentResources {
     /// The font named `name` in the `/Font` category.
     fn font(&mut self, name: &[u8]) -> Option<Rc<ResolvedFont>>;
 
+    /// The font and size the `/Font [font size]` entry of the ExtGState
+    /// named `name` sets; `None` when the entry is missing or malformed.
+    fn ext_gstate_font(&mut self, name: &[u8]) -> Option<(Rc<ResolvedFont>, f64)>;
+
     /// The Form XObject named `name` in the `/XObject` category. `None` for
     /// an image, a missing name or a stream that does not decode.
     fn form(&mut self, name: &[u8]) -> Option<FormXObject<'_>>;
@@ -257,6 +261,19 @@ impl<'d> DocResources<'d> {
         }
     }
 
+    /// The font dictionary `r`, loaded once per page.
+    fn font_by_ref(&self, r: &IndirectRef) -> Option<Rc<ResolvedFont>> {
+        let doc = self.doc;
+        self.fonts_by_ref
+            .borrow_mut()
+            .entry(r.clone())
+            .or_insert_with(|| match doc.resolve(r) {
+                Ok(PdfObject::Dict(d)) => Some(Rc::new(load_font(doc, &d))),
+                _ => None,
+            })
+            .clone()
+    }
+
     /// The entry `name` in resource category `category`, innermost scope first.
     fn lookup(&self, category: &[u8], name: &[u8]) -> Option<PdfObject> {
         self.scopes.iter().rev().find_map(|scope| {
@@ -271,22 +288,25 @@ impl ContentResources for DocResources<'_> {
         if let Some(font) = self.fonts_by_name.get(name) {
             return font.clone();
         }
-        let doc = self.doc;
         let font = match self.lookup(b"Font", name) {
-            Some(PdfObject::Reference(r)) => self
-                .fonts_by_ref
-                .borrow_mut()
-                .entry(r.clone())
-                .or_insert_with(|| match doc.resolve(&r) {
-                    Ok(PdfObject::Dict(d)) => Some(Rc::new(load_font(doc, &d))),
-                    _ => None,
-                })
-                .clone(),
-            Some(PdfObject::Dict(d)) => Some(Rc::new(load_font(doc, &d))),
+            Some(PdfObject::Reference(r)) => self.font_by_ref(&r),
+            Some(PdfObject::Dict(d)) => Some(Rc::new(load_font(self.doc, &d))),
             _ => None,
         };
         self.fonts_by_name.insert(name.to_vec(), font.clone());
         font
+    }
+
+    fn ext_gstate_font(&mut self, name: &[u8]) -> Option<(Rc<ResolvedFont>, f64)> {
+        let ext_gstate = resolve_dict(self.doc, &self.lookup(b"ExtGState", name)?)?;
+        let Some(PdfObject::Array(entry)) = ext_gstate.get(b"Font") else {
+            return None;
+        };
+        let [PdfObject::Reference(font), size] = entry.as_slice() else {
+            return None;
+        };
+        let size = size.as_f64()?;
+        Some((self.font_by_ref(font)?, size))
     }
 
     fn form(&mut self, name: &[u8]) -> Option<FormXObject<'_>> {
@@ -343,9 +363,11 @@ pub(crate) struct TextState {
     pub(crate) horiz_scaling: f64,
     /// Leading (TL).
     pub(crate) leading: f64,
-    /// Resource name the font was selected by.
+    /// Resource name the font was selected by; empty for a font an
+    /// ExtGState's `/Font` set.
     pub(crate) font_name: Vec<u8>,
-    /// The font selected by `Tf`, resolved when `Tf` ran.
+    /// The font selected by `Tf` (resolved when `Tf` ran) or by an
+    /// ExtGState's `/Font`.
     pub(crate) font: Option<Rc<ResolvedFont>>,
     /// Font size (Tfs).
     pub(crate) font_size: f64,
@@ -568,6 +590,15 @@ impl Interpreter {
             b"Ts" => {
                 if let Some(v) = num(0) {
                     self.gs.text.text_rise = v;
+                }
+            }
+            b"gs" => {
+                if let Some(name) = op.operands.first().and_then(|o| o.as_name())
+                    && let Some((font, size)) = resources.ext_gstate_font(name)
+                {
+                    self.gs.text.font_name = Vec::new();
+                    self.gs.text.font = Some(font);
+                    self.gs.text.font_size = size;
                 }
             }
             b"Tr" => {
@@ -826,6 +857,10 @@ pub(crate) struct MapForm {
 impl ContentResources for MapResources {
     fn font(&mut self, name: &[u8]) -> Option<Rc<ResolvedFont>> {
         self.fonts.get(name).cloned()
+    }
+
+    fn ext_gstate_font(&mut self, _name: &[u8]) -> Option<(Rc<ResolvedFont>, f64)> {
+        None
     }
 
     fn form(&mut self, name: &[u8]) -> Option<FormXObject<'_>> {

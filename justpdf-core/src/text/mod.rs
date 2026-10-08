@@ -39,7 +39,8 @@ pub struct TextChar {
     pub y: f64,
     /// Effective font size in user space.
     pub font_size: f64,
-    /// Font name (resource name).
+    /// Font name (resource name); empty for a font an ExtGState's `/Font`
+    /// set through `gs`.
     pub font_name: String,
     /// Character advance width in user space.
     pub width: f64,
