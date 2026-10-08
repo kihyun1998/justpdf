@@ -12,7 +12,7 @@ One divergence from MuPDF (derived from `pdf-op-run.c`, 2026-09-30; not measured
 Holding the pattern as an object is **the maintainer's judgement** (2026-09-30, #127 triage). Shown: clearing the painting side's pattern on tile entry (MuPDF `pdf_unset_pattern(what)`, reversing #119's call), and leaving it to the implementer. Chosen: hold the object. That keeps [content stream recursion](content-stream-recursion.md)'s "the pattern selection is not cleared on tile entry" true. Holding the font as an object is a derivation for the same reason; the maintainer did not decide it separately.
 
 ## Why it is cross-cutting
-There are two content stream executors: `RenderInterpreter` (raster) and `SvgRenderer` (SVG). They do not call each other but share the scope stack `ResourceScopes` and the graphics state types. Text extraction and font subsetting read only the page's `/Font` and do not enter forms (#48, #68). Once they do, they become a third and fourth executor under this rule.
+There are two content stream executors: `RenderInterpreter` (raster) and `SvgRenderer` (SVG). They do not call each other but share the scope stack `ResourceScopes` and the graphics state types. The core [Content interpreter](../territory/content-interpreter.md) is a third, under this rule since #207 (text extraction runs it without entering forms, #48). Font subsetting reads only the page's `/Font` and does not enter forms (#68); once it does, it is a fourth.
 
 ## Territories it holds in
 - [Render interpreter](../territory/render-interpreter.md) — `ResourceScopes` (`select_font`, `select_pattern`), `with_stream_resources`. `render_page` sets up the page scope; `do_xobject` enters a form's.
@@ -20,6 +20,7 @@ There are two content stream executors: `RenderInterpreter` (raster) and `SvgRen
 - [Tiling patterns](../territory/render-tiling-patterns.md) — `render_pattern` draws the tile in the pattern's scope.
 - [Transparency](../territory/render-transparency.md) — `apply_soft_mask` draws the `/G` form in its scope.
 - [Render annotations](../territory/render-annotations.md) — `render_annotations` draws the appearance form in its scope.
+- [Content interpreter](../territory/content-interpreter.md) — `DocResources` (`page`, `child`, `lookup`); `Tf` selects through it.
 
 ## What a violation looks like
 Measured before #127 (2026-09-30 probe, reproduced by `tests/render_resources.rs`):
@@ -36,6 +37,6 @@ Measured by mutation (2026-09-30):
 Found by reading code during #119 on 2026-09-29 (#127). Reproduced with a probe and fixed on 2026-09-30.
 
 ## Where it will recur
-**New code that resolves a resource name an operator in a content stream uses is under this invariant.** To find it: `rg -n 'resources_ref' justpdf-*/src` — places that read the page's resources directly. In the renderer only `ResourceScopes::for_page` should remain. The other site today is text extraction's `resolve_fonts` (`justpdf-core/src/text/mod.rs`) — not yet a violation, since it does not enter forms. Also watch for a new graphics state field that holds a name: `rg -n 'pub \w+: .*Vec<u8>' justpdf-render/src/graphics_state.rs` (no match today).
+**New code that resolves a resource name an operator in a content stream uses is under this invariant.** To find it: `rg -n 'resources_ref' justpdf-*/src` — places that read the page's resources directly. In the renderer only `ResourceScopes::for_page` should remain. The other site today is the core [Content interpreter](../territory/content-interpreter.md)'s `DocResources::page` (`justpdf-core/src/content/interpret.rs`), which follows this rule: innermost scope first, a form without `/Resources` pushes nothing, and `Tf` holds the resolved font (#207). Also watch for a new graphics state field that holds a name: `rg -n 'pub \w+: .*Vec<u8>' justpdf-render/src/graphics_state.rs` (no match today).
 
 What this invariant does not cover: the `/Properties` lookup for `BDC /OC /name` (no lookup exists — TODO), colour space names (`cs`/`CS` — resource colour spaces are not resolved), Type3 glyph `/Resources` (Type3 unsupported), ExtGState `/Font` (ignored), inline image colour spaces (`BI` is not rendered). Once implemented, they resolve through the same scope stack.
