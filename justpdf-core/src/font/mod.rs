@@ -3,6 +3,7 @@ pub mod cff;
 pub mod cjk;
 pub mod cmap;
 mod encoding;
+mod encoding_cmap;
 pub mod opentype;
 mod program;
 pub mod recovery;
@@ -11,6 +12,7 @@ pub mod subset;
 pub mod type3;
 
 pub use cmap::ToUnicodeCMap;
+pub use encoding_cmap::{CMapCode, EncodingCMap, type0_encoding_cmap};
 pub use program::{FontProgramData, font_hash};
 mod encoding_tables;
 mod glyph_select;

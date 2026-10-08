@@ -11,7 +11,8 @@ use std::rc::Rc;
 
 use crate::content::{ContentOp, Operand, parse_content_stream};
 use crate::font::{
-    Encoding, FontInfo, ToUnicodeCMap, descendant_font, parse_font_info, resolve_font_entries,
+    Encoding, EncodingCMap, FontInfo, ToUnicodeCMap, descendant_font, parse_font_info,
+    resolve_font_entries, type0_encoding_cmap,
 };
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::parser::PdfDocument;
@@ -118,6 +119,8 @@ impl Matrix {
 pub(crate) struct ResolvedFont {
     pub(crate) info: FontInfo,
     pub(crate) cmap: Option<ToUnicodeCMap>,
+    /// A Type0 font's encoding CMap, codes to CIDs.
+    pub(crate) encoding: Option<EncodingCMap>,
 }
 
 impl ResolvedFont {
@@ -154,11 +157,21 @@ pub(crate) fn load_font(doc: &PdfDocument, font_dict: &PdfDict) -> ResolvedFont 
         info.to_unicode = None;
     }
 
+    let mut encoding = None;
     if font_dict.get_name(b"Subtype") == Some(b"Type0") {
         resolve_type0_descendant(doc, &font_dict, &mut info);
+        encoding = Some(type0_encoding_cmap(
+            &font_dict,
+            |r| doc.resolve(r).ok(),
+            |dict, data| doc.decode_stream(dict, data).ok(),
+        ));
     }
 
-    ResolvedFont { info, cmap }
+    ResolvedFont {
+        info,
+        cmap,
+        encoding,
+    }
 }
 
 fn resolve_to_unicode(doc: &PdfDocument, font_dict: &PdfDict) -> Option<ToUnicodeCMap> {
@@ -429,6 +442,10 @@ pub(crate) struct Glyph<'a> {
     /// The code's bytes.
     pub(crate) bytes: &'a [u8],
     pub(crate) code: u32,
+    /// The CID a Type0 font's encoding CMap maps `code` to; `code` itself
+    /// for any other font.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) cid: u32,
     /// The font in effect; `None` when `Tf` named no font that resolves.
     pub(crate) font: Option<&'a ResolvedFont>,
     /// Glyph width in glyph space (1/1000 text space units).
@@ -735,6 +752,7 @@ impl Interpreter {
     ) {
         let font = self.gs.text.font.clone();
         let font = font.as_deref();
+        let encoding = font.and_then(|f| f.encoding.as_ref());
         let is_two_byte = font.map(ResolvedFont::is_two_byte).unwrap_or(false);
         let (bottom, top) = font
             .map(ResolvedFont::glyph_height)
@@ -748,13 +766,17 @@ impl Interpreter {
 
         let mut i = 0;
         while i < raw.len() {
-            let (code, byte_len) = if is_two_byte && i + 1 < raw.len() {
-                (((raw[i] as u32) << 8) | raw[i + 1] as u32, 2)
+            let (code, byte_len, cid) = if let Some(encoding) = encoding {
+                let c = encoding.next_code(&raw[i..]);
+                (c.code, c.len, c.cid)
+            } else if is_two_byte && i + 1 < raw.len() {
+                let code = ((raw[i] as u32) << 8) | raw[i + 1] as u32;
+                (code, 2, code)
             } else {
-                (raw[i] as u32, 1)
+                (raw[i] as u32, 1, raw[i] as u32)
             };
 
-            let w0 = font.map(|f| f.char_width(code)).unwrap_or(500.0);
+            let w0 = font.map(|f| f.char_width(cid)).unwrap_or(500.0);
             let trm = self.text_rendering_matrix(tfs, th, rise);
             let (w, lo, hi) = (w0 / 1000.0, bottom / 1000.0, top / 1000.0);
             let quad = [
@@ -771,6 +793,7 @@ impl Interpreter {
                     byte_range: i..i + byte_len,
                     bytes: &raw[i..i + byte_len],
                     code,
+                    cid,
                     font,
                     width: w0,
                     trm,
@@ -926,6 +949,7 @@ mod tests {
                 }),
             },
             cmap: None,
+            encoding: None,
         })
     }
 
@@ -945,6 +969,7 @@ mod tests {
         tj_index: Option<usize>,
         byte_range: Range<usize>,
         code: u32,
+        cid: u32,
         quad: [(f64, f64); 4],
         trm_origin: (f64, f64),
         font_size: f64,
@@ -972,6 +997,7 @@ mod tests {
                 tj_index: g.tj_index,
                 byte_range: g.byte_range.clone(),
                 code: g.code,
+                cid: g.cid,
                 quad: g.quad,
                 trm_origin: g.trm.transform_point(0.0, 0.0),
                 font_size: state.text.font_size,
@@ -1478,6 +1504,23 @@ mod tests {
             rec.glyphs[0].quad,
             [(0.0, -2.0), (7.0, -2.0), (7.0, 8.0), (0.0, 8.0)],
         );
+    }
+
+    #[test]
+    fn a_type0_glyph_carries_the_cid_its_embedded_cmap_maps_the_code_to() {
+        // <0041> is CID 300, 2000 units wide: the box spans 20 at 10 pt.
+        let doc = document(
+            "<< /Font << /F1 6 0 R >> >>",
+            "BT /F1 10 Tf <0041> Tj ET",
+            &[
+                "<< /Type /CMap >>\nSTREAM 1 begincodespacerange <0000> <FFFF> endcodespacerange 1 begincidchar <0041> 300 endcidchar",
+                "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Test /CIDSystemInfo << /Registry (Adobe) /Ordering (Test) /Supplement 0 >> /W [65 [500] 300 [2000]] >>",
+                "<< /Type /Font /Subtype /Type0 /BaseFont /Test /Encoding 4 0 R /DescendantFonts [5 0 R] >>",
+            ],
+        );
+        let rec = run_document(&doc, InterpretOptions::default());
+        assert_eq!((rec.glyphs[0].code, rec.glyphs[0].cid), (0x41, 300));
+        assert_point(rec.glyphs[0].quad[1], (20.0, -2.5));
     }
 
     #[test]

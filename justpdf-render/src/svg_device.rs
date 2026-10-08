@@ -7,7 +7,8 @@ use justpdf_core::PdfDocument;
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
 use justpdf_core::font::{
-    FontInfo, ToUnicodeCMap, descendant_font, parse_font_info, resolve_font_entries,
+    EncodingCMap, FontInfo, ToUnicodeCMap, descendant_font, parse_font_info, resolve_font_entries,
+    type0_encoding_cmap,
 };
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
@@ -23,6 +24,8 @@ struct ResolvedFont {
     cmap: Option<ToUnicodeCMap>,
     #[allow(dead_code)]
     font_data: Option<Vec<u8>>,
+    /// A Type0 font's encoding CMap, codes to CIDs.
+    cid_encoding: Option<EncodingCMap>,
 }
 
 /// SVG rendering interpreter: walks content stream ops and builds SVG XML.
@@ -192,11 +195,19 @@ impl<'a> SvgRenderer<'a> {
             let cid_dict = resolve_font_entries(&cid_dict, |r| doc.resolve(r).ok());
             info.widths = parse_font_info(&cid_dict).widths;
         }
+        let cid_encoding = (info.subtype == b"Type0").then(|| {
+            type0_encoding_cmap(
+                fd,
+                |r| doc.resolve(r).ok(),
+                |dict, data| doc.decode_stream(dict, data).ok(),
+            )
+        });
 
         Ok(ResolvedFont {
             info,
             cmap,
             font_data: None, // SVG uses <text>, not glyph outlines
+            cid_encoding,
         })
     }
 
@@ -928,31 +939,23 @@ impl<'a> SvgRenderer<'a> {
         let word_spacing = self.state.text.word_spacing;
         let text_rise = self.state.text.text_rise;
         let render_mode = self.state.text.render_mode;
-        let is_cid = font.info.subtype == b"Type0";
-
-        // Decode char codes
-        let char_codes: Vec<u32> = if is_cid {
-            string_bytes
-                .chunks(2)
-                .map(|c| {
-                    if c.len() == 2 {
-                        ((c[0] as u32) << 8) | (c[1] as u32)
-                    } else {
-                        c[0] as u32
-                    }
-                })
-                .collect()
-        } else {
-            string_bytes.iter().map(|b| *b as u32).collect()
+        // Decode char codes and their CIDs
+        let (char_codes, cids): (Vec<u32>, Vec<u32>) = match &font.cid_encoding {
+            Some(cmap) => cmap
+                .decode(string_bytes)
+                .into_iter()
+                .map(|c| (c.code, c.cid))
+                .unzip(),
+            None => string_bytes.iter().map(|&b| (b as u32, b as u32)).unzip(),
         };
 
         // Collect Unicode text using the CMap
         let cmap = font.cmap.as_ref();
 
         // Get widths
-        let widths: Vec<f64> = char_codes
+        let widths: Vec<f64> = cids
             .iter()
-            .map(|code| font.info.widths.get_width(*code))
+            .map(|cid| font.info.widths.get_width(*cid))
             .collect();
 
         // Get font family name from font info
