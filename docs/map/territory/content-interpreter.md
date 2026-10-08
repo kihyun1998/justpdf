@@ -13,11 +13,13 @@ The graphics- and text-state interpreter in core that walks a content stream's p
 - `/FontDescriptor` is resolved by `font::resolve_font_entries`, so `FontInfo::descriptor` (and its `/FontBBox`) is filled in for every consumer. Before #207 an indirect descriptor (the usual case) read as absent; every consumer of the resolved dictionary already accepted both a reference and a dictionary there (*inferred*, read 2026-10-08: the raster and SVG renderers' descriptor readers, `simple_font_glyph_ids`).
 - A font is resolved **when `Tf` runs**, and the text state holds the resolved font, not the name — [Resource name scope](../invariant/resource-scope.md). Each scope chain remembers what a name resolved to, so a repeated `Tf` does not look the name up again; fonts reached by reference are also cached by reference across the page and its forms.
 - Form XObjects are entered only with `InterpretOptions::enter_forms` (off for text extraction; turning it on there is #48). Entering applies `/Matrix`, pushes the form's `/Resources` in front of the caller's (a form without `/Resources` uses the caller's), saves the graphics state and the text matrices, and restores them on leaving. Inside a form, `Q` cannot pop below the stack depth at which the form was entered. A form already being interpreted is refused as `FormRefusal::Cycle`; one that would be the eleventh nested form is refused as `FormRefusal::Depth` (`MAX_FORM_DEPTH` = 10; the raster renderer enters up to 11, `xobject_depth > 10`). `/BBox` clipping is not tracked.
-- Not interpreted: `gs` (ExtGState `/Font` is #235), marked content (`BDC`/`EMC`, #219), clipping, colour, paths and images. Codes are split as before: two bytes for an `Identity` encoding or a Type0 font, otherwise one (#303 is about CMaps other than Identity).
+- `gs` applies only the ExtGState's `/Font` entry (#235): when it is a direct two-element array of an indirect font reference and a number, the font and size become those, as `Tf` would set them, and the font name becomes empty. The font is looked up by reference (`DocResources::font_by_ref`), sharing the cache with the same object reached through `Tf`, so it need not appear in any `/Font` dictionary. Any other shape leaves font and size unchanged — the same rule as the raster and SVG renderers (#238), as [Font resolution](../invariant/font-resolution.md) asks. The ExtGState name resolves innermost scope first, like every resource name. Other ExtGState keys are ignored.
+- Not interpreted: marked content (`BDC`/`EMC`, #219), clipping, colour, paths and images. Codes are split as before: two bytes for an `Identity` encoding or a Type0 font, otherwise one (#303 is about CMaps other than Identity).
 
 ## Code
-- `justpdf-core/src/content/interpret.rs` — `interpret`, `InterpretOptions`, `ContentVisitor`, `Glyph`, `FormRefusal`, `MAX_FORM_DEPTH`, `ContentResources`, `FormXObject`, `DocResources`, `MapResources`, `ResolvedFont`, `load_font`, `GraphicsState`, `TextState`, `Matrix`
+- `justpdf-core/src/content/interpret.rs` — `interpret`, `InterpretOptions`, `ContentVisitor`, `Glyph`, `FormRefusal`, `MAX_FORM_DEPTH`, `ContentResources`, `ext_gstate_font`, `FormXObject`, `DocResources`, `font_by_ref`, `MapResources`, `ResolvedFont`, `load_font`, `GraphicsState`, `TextState`, `Matrix`
 - `justpdf-core/src/font/mod.rs` — `resolve_font_entries`
+- `justpdf-core/tests/extgstate_font.rs` — `gs_sets_the_font_and_size_with_no_tf`, `a_malformed_font_entry_changes_nothing`
 
 ## Reference behaviour
 **None.** Clauses to compare against: ISO 32000-2 §8.4 (graphics state), §9.3 (text state), §9.4.4 (text space details), §8.10 (Form XObjects).
@@ -34,7 +36,6 @@ The graphics- and text-state interpreter in core that walks a content stream's p
 - [Render interpreter](render-interpreter.md), [SVG renderer](svg-renderer.md) — separate operator walkers in `justpdf-render`, which depends on core; a positioning fix on one side has to decide whether the other needs it.
 
 ## Known holes / open
-- ExtGState `/Font` set through `gs` is ignored. Tracked: #235.
 - Text inside Form XObjects is not extracted, because extraction does not turn on `enter_forms`. Tracked: #48.
 - Hidden optional content is not told apart. Tracked: #219.
 - Codes are split by the font's encoding name, not by its CMap. Tracked: #303.
