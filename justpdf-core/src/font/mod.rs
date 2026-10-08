@@ -202,7 +202,7 @@ impl FontWidths {
 
 /// Parse basic font info from a font dictionary. An indirect entry reads as
 /// absent; [`resolve_font_entries`] resolves `/Widths`, `/FirstChar`,
-/// `/LastChar` and `/Encoding` beforehand.
+/// `/LastChar`, `/Encoding`, `/FontDescriptor`, `/W` and `/DW` beforehand.
 pub fn parse_font_info(dict: &PdfDict) -> FontInfo {
     let base_font = dict
         .get(b"BaseFont")
@@ -243,8 +243,8 @@ pub fn parse_font_info(dict: &PdfDict) -> FontInfo {
 
 /// A copy of the font dictionary `dict` whose indirect `/Widths` (and each
 /// indirect element of that array), `/FirstChar`, `/LastChar`, `/Encoding`,
-/// and a CID font's `/W` (with the arrays and values inside it) and `/DW`
-/// are replaced by what `resolve` returns for them. A reference `resolve`
+/// `/FontDescriptor`, and a CID font's `/W` (with the arrays and values
+/// inside it) and `/DW` are replaced by what `resolve` returns for them. A reference `resolve`
 /// returns `None` for is left as it is.
 pub fn resolve_font_entries(
     dict: &PdfDict,
@@ -258,6 +258,7 @@ pub fn resolve_font_entries(
         b"Encoding",
         b"W",
         b"DW",
+        b"FontDescriptor",
     ] {
         if let Some(PdfObject::Reference(r)) = resolved.get(key)
             && let Some(value) = resolve(r)

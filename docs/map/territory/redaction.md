@@ -31,8 +31,9 @@ The actual rules of the content filter (`filter_content_ops`):
 - [Document modifier](document-modifier.md) — whether it GCs on save decides whether the promise holds.
 - [Annotations](annotations.md) — the Redact annotation input.
 - [Text extraction](text-extraction.md) — the judge that would confirm the deletion (no test uses it today).
+- [Content interpreter](content-interpreter.md) — the shared interpreter ADR 0004 takes glyph boxes from (#207); `filter_content_ops` does not use it yet (#209).
 
 ## Known holes / open
 - `test_redaction_apply` only checks that the Redact annotation is gone, not that the text was deleted.
 - On a page with no content, Redact annotations are not removed. A Redact without `/Rect` is silently dropped. `overlay_text` is `dead_code`.
-- Tracked: #39 (erased content left in the output file), #203 (implementing ADR 0004: #207 shared interpreter, #209 text, #210 paths, #211 images, #214 Form XObjects, #212 other annotations and `/Thumb`, #213 incremental save, #215 structure tree), #150 (a page index out of range is `AnnotationError`; decided in #150: look the page up with `get_page`, inheriting #134's `PageOutOfRange`/`InvalidObject` rule)
+- Tracked: #39 (erased content left in the output file), #203 (implementing ADR 0004: #209 text, #210 paths, #211 images, #214 Form XObjects, #212 other annotations and `/Thumb`, #213 incremental save, #215 structure tree), #150 (a page index out of range is `AnnotationError`; decided in #150: look the page up with `get_page`, inheriting #134's `PageOutOfRange`/`InvalidObject` rule)

@@ -15,7 +15,7 @@ The path that reads Type0 composite fonts and their descendant CIDFont: splittin
 
 ## Code
 - `justpdf-core/src/font/mod.rs` — `descendant_font`, `parse_cid_widths`, `resolve_font_entries`
-- `justpdf-core/src/text/mod.rs` — `resolve_type0_descendant`, `show_string`
+- `justpdf-core/src/content/interpret.rs` — `resolve_type0_descendant`, `show_string`
 - `justpdf-core/tests/cid_widths.rs` — `both_w_forms_place_the_glyphs`, `an_indirect_width_inside_a_w_list_is_read`, `a_non_number_in_a_w_list_keeps_the_widths_after_it_in_place`, `a_direct_descendant_font_is_read`
 - `justpdf-render/tests/render_cid_widths.rs` — `a_raster_box_is_as_wide_as_w`, `raster_glyphs_advance_by_both_w_forms`, `an_svg_placeholder_is_as_wide_as_w`
 - `justpdf-render/src/interpreter.rs` — `parse_cid_to_gid_map`, `parse_cid_gid_stream`, `render_text_string`

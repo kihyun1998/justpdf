@@ -8,7 +8,7 @@ Parses the `bfchar`/`bfrange` sections of a font's `/ToUnicode` stream into a co
 
 ## Design model
 - Scans the text for `beginbfchar`/`beginbfrange`. `codespacerange` is not parsed.
-- ToUnicode interpretation is duplicated in two places: `resolve_to_unicode` in text extraction and `resolve_font` in the renderer (SVG included). Only the SVG device uses the render side's result.
+- ToUnicode interpretation is duplicated in two places: `resolve_to_unicode` in the [Content interpreter](content-interpreter.md) (for text extraction) and `resolve_font` in the renderer (SVG included). Only the SVG device uses the render side's result.
 
 ## Code
 - `justpdf-core/src/font/cmap.rs` — `ToUnicodeCMap`, `parse`, `lookup`, `parse_bfchar_section`, `parse_bfrange_section`, `hex_to_unicode_string`

@@ -15,7 +15,8 @@ Both consumers start from core `parse_font_info`, but each builds on top of it *
 - [Font encodings](../territory/font-encodings.md) — encoding tables only text uses.
 - [ToUnicode](../territory/tounicode.md) — two copies of the interpretation.
 - [CID fonts](../territory/cid-fonts.md) — widths shared (#222), GID mapping only in render.
-- [Text extraction](../territory/text-extraction.md) — `resolve_fonts`, `resolve_to_unicode`.
+- [Text extraction](../territory/text-extraction.md) — `CharCollector` (Unicode).
+- [Content interpreter](../territory/content-interpreter.md) — `load_font` (widths, descriptor, ToUnicode).
 - [Render interpreter](../territory/render-interpreter.md) — `resolve_font`.
 - [Glyph rendering](../territory/glyph-rendering.md) — the first of `truetype_glyph_candidates`.
 - [SVG renderer](../territory/svg-renderer.md) — the third `resolve_font`.
