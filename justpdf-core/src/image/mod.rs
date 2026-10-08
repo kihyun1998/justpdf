@@ -1,5 +1,6 @@
 use crate::error::{JustPdfError, Result};
 use crate::object::{PdfDict, PdfObject};
+use crate::parser::PdfDocument;
 use crate::stream;
 use crate::stream::dct;
 
@@ -103,8 +104,9 @@ pub enum ImageFormat {
     CcittFax,
 }
 
-/// Decode an image XObject's stream data.
-pub fn decode_image(raw_data: &[u8], dict: &PdfDict) -> Result<DecodedImage> {
+/// Decode an image XObject's raw stream data: every filter of `/Filter`
+/// in order, the image codec last; `doc` resolves `/JBIG2Globals`.
+pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Result<DecodedImage> {
     let info = image_info(dict).ok_or_else(|| JustPdfError::StreamDecode {
         filter: "image".into(),
         detail: "missing Width or Height in image dict".into(),
@@ -114,7 +116,8 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict) -> Result<DecodedImage> {
 
     match filter {
         Some(b"DCTDecode") | Some(b"DCT") => {
-            let decoded = dct::decode(raw_data)?;
+            let codec_input = stream::decode_stream_cow(raw_data, dict)?;
+            let decoded = dct::decode(&codec_input)?;
             Ok(DecodedImage {
                 width: decoded.width,
                 height: decoded.height,
@@ -125,10 +128,12 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict) -> Result<DecodedImage> {
             })
         }
         Some(b"JPXDecode") => {
-            let jp2_image = justjp2::decode(raw_data).map_err(|e| JustPdfError::StreamDecode {
-                filter: "JPXDecode".into(),
-                detail: format!("JPEG2000 decode error: {e}"),
-            })?;
+            let codec_input = stream::decode_stream_cow(raw_data, dict)?;
+            let jp2_image =
+                justjp2::decode(&codec_input).map_err(|e| JustPdfError::StreamDecode {
+                    filter: "JPXDecode".into(),
+                    detail: format!("JPEG2000 decode error: {e}"),
+                })?;
             let num_comp = jp2_image.components.len() as u32;
             if num_comp == 0 || jp2_image.components[0].data.is_empty() {
                 return Err(JustPdfError::StreamDecode {
@@ -157,11 +162,15 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict) -> Result<DecodedImage> {
             })
         }
         Some(b"JBIG2Decode") => {
-            let pages =
-                justbig2::decode_embedded(raw_data).map_err(|e| JustPdfError::StreamDecode {
-                    filter: "JBIG2Decode".into(),
-                    detail: format!("JBIG2 decode error: {e}"),
-                })?;
+            let codec_input = stream::decode_stream_cow(raw_data, dict)?;
+            let pages = match jbig2_globals(dict, doc)? {
+                Some(globals) => justbig2::decode_embedded_with_globals(&codec_input, &globals),
+                None => justbig2::decode_embedded(&codec_input),
+            }
+            .map_err(|e| JustPdfError::StreamDecode {
+                filter: "JBIG2Decode".into(),
+                detail: format!("JBIG2 decode error: {e}"),
+            })?;
             let page = pages
                 .into_iter()
                 .next()
@@ -212,7 +221,6 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict) -> Result<DecodedImage> {
             })
         }
         _ => {
-            // Raw or FlateDecode (already decoded by stream decoder)
             let decoded = stream::decode_stream(raw_data, dict)?;
             Ok(DecodedImage {
                 width: info.width,
@@ -226,16 +234,45 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict) -> Result<DecodedImage> {
     }
 }
 
-/// Extract raw JPEG bytes from a DCTDecode image stream (passthrough, no decoding).
-pub fn extract_jpeg_bytes(raw_data: &[u8], dict: &PdfDict) -> Result<Vec<u8>> {
-    let filter = match dict.get(b"Filter") {
-        Some(PdfObject::Name(n)) => n.clone(),
-        Some(PdfObject::Array(arr)) => arr.last().and_then(|o| o.as_name()).unwrap_or(b"").to_vec(),
-        _ => Vec::new(),
+/// The decoded `/JBIG2Globals` stream named by the `JBIG2Decode` filter's
+/// `/DecodeParms`, or `None` when it names none.
+fn jbig2_globals(dict: &PdfDict, doc: &PdfDocument) -> Result<Option<Vec<u8>>> {
+    let index = stream::get_filters(dict)
+        .iter()
+        .rposition(|f| f.as_slice() == b"JBIG2Decode");
+    let parms = index.and_then(|i| stream::get_decode_params(dict).into_iter().nth(i).flatten());
+    let Some(globals) = parms.as_ref().and_then(|p| p.get(b"JBIG2Globals")) else {
+        return Ok(None);
     };
+    let unreadable = |detail: String| JustPdfError::StreamDecode {
+        filter: "JBIG2Decode".into(),
+        detail,
+    };
+    let PdfObject::Reference(r) = globals else {
+        return Err(unreadable("/JBIG2Globals is not a stream reference".into()));
+    };
+    match doc.resolve(r) {
+        Ok(PdfObject::Stream { dict, data }) => Ok(Some(stream::decode_stream(&data, &dict)?)),
+        Ok(_) => Err(unreadable(format!(
+            "/JBIG2Globals {} {} R is not a stream",
+            r.obj_num, r.gen_num
+        ))),
+        Err(e) => Err(unreadable(format!(
+            "/JBIG2Globals {} {} R: {e}",
+            r.obj_num, r.gen_num
+        ))),
+    }
+}
 
-    if filter == b"DCTDecode" || filter == b"DCT" {
-        Ok(raw_data.to_vec())
+/// The JPEG bytes of a DCTDecode image stream: the filters before `DCTDecode`
+/// applied, the JPEG itself not decoded.
+pub fn extract_jpeg_bytes(raw_data: &[u8], dict: &PdfDict) -> Result<Vec<u8>> {
+    let filters = stream::get_filters(dict);
+    if matches!(
+        filters.last().map(Vec::as_slice),
+        Some(b"DCTDecode" | b"DCT")
+    ) {
+        stream::decode_stream(raw_data, dict)
     } else {
         Err(JustPdfError::StreamDecode {
             filter: "image".into(),

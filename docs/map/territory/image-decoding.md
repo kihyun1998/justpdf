@@ -1,16 +1,16 @@
 # Image decoding
 
 ## What it is
-Takes an image XObject's dictionary (`image_info`) and data and turns them into pixels (`DecodedImage`). DCT goes through `jpeg-decoder`, JPX through `justjp2`, JBIG2 through `justbig2`, CCITT through the core decoder, and everything else is the stream decode result as is. It is the **only** image decode path, shared by the renderer and the compressor.
+Takes an image XObject's dictionary (`image_info`) and **raw** stream data and turns them into pixels (`DecodedImage`). DCT goes through `jpeg-decoder`, JPX through `justjp2`, JBIG2 through `justbig2`, CCITT through the core decoder, and everything else is the stream decode result as is. It is the **only** image decode path, shared by the renderer and the compressor.
 
 ## Governing decisions
-**None.**
+- #46 (maintainer, 2026-10-06): `decode_image` keeps returning samples, and functions that need indirect objects take the document — `decode_image(raw, dict, doc)` since #229.
 
 ## Design model
-- The branch is picked by the **last filter** of the filter chain, and the raw bytes are handed straight to that decoder. With a chain like `[/FlateDecode /DCTDecode]`, compressed bytes go to the JPEG decoder (inferred).
+- The codec is the **last filter** of the chain. Every filter runs in order through `decode_stream`, which passes DCT/JPX/JBIG2 through untouched, and the codec gets the result (#229); `extract_jpeg_bytes` returns that same pre-codec output for a DCT image. Until #229 the raw bytes went straight to the codec: a `[/FlateDecode /DCTDecode]` JPEG failed with "first two bytes are not an SOI marker" and compression skipped it (measured 2026-10-06).
 - `/ColorSpace` is read only when it is a name. Arrays and references (Indexed, ICCBased and so on) fall back to DeviceRGB with 3 components. It does not use `from_pdf_object` from [Color spaces](color-spaces.md).
 - `/Decode` is not applied. `SMask`/`ImageMask` only set a flag.
-- JBIG2: `JBIG2Globals` is not read. The output is spread out to 8-bit gray (1 → 0x00).
+- JBIG2: `/JBIG2Globals` is read from the `/DecodeParms` entry at the JBIG2 filter's index, resolved through `doc` and decoded; an entry that does not resolve to a stream is an error, never a decode without it. Not verified against a real symbol-dictionary pair (no such fixture; the tests use an empty globals stream). The output is spread out to 8-bit gray (1 → 0x00).
 - JPX: components are truncated i32 → u8 and the bit depth is ignored. `SMaskInData` is not handled.
 - What the output pixels mean (component count, bit depth) is interpreted differently by each caller — [Image pixel layout](../invariant/image-pixel-layout.md).
 
@@ -30,6 +30,6 @@ Takes an image XObject's dictionary (`image_info`) and data and turns them into 
 - [Color spaces](color-spaces.md) — supporting array color spaces means using `from_pdf_object` here.
 
 ## Known holes / open
-- `decode_image` has no unit tests (JPX/JBIG2/CCITT/masks, all of them).
+- `justpdf-core/tests/image_decode.rs` covers filter chains and `/JBIG2Globals`; JPX, CCITT and masks still have no tests here.
 - JPX and JBIG2 pass through the stream layer as raw bytes and are decoded to pixels only in the image layer. Callers of `decode_stream` do not get pixels.
 - Tracked: #46 (image decode color space and Decode)

@@ -1425,22 +1425,7 @@ impl<'a> RenderInterpreter<'a> {
             PdfObject::Stream { dict, data } => {
                 let subtype = dict.get_name(b"Subtype").unwrap_or(b"");
                 match subtype {
-                    b"Image" => {
-                        // For JPEG, pass raw data
-                        let filter = dict.get(b"Filter").and_then(|o| o.as_name());
-                        let image_data = if filter == Some(b"DCTDecode") {
-                            data.clone()
-                        } else {
-                            match self.doc.decode_stream(&dict, &data) {
-                                Ok(d) => d,
-                                Err(_) => return Ok(None),
-                            }
-                        };
-                        Ok(Some(XObjectData::Image {
-                            dict,
-                            data: image_data,
-                        }))
-                    }
+                    b"Image" => Ok(Some(XObjectData::Image { dict, data })),
                     b"Form" => match self.doc.decode_stream(&dict, &data) {
                         Ok(decoded) => Ok(Some(XObjectData::Form {
                             obj_ref: xobj_ref,
@@ -1466,7 +1451,7 @@ impl<'a> RenderInterpreter<'a> {
             return self.render_image_mask(img_info, data, dict);
         }
 
-        let decoded = image::decode_image(data, dict).map_err(RenderError::Core)?;
+        let decoded = image::decode_image(data, dict, self.doc).map_err(RenderError::Core)?;
 
         // Convert decoded image to RGBA
         let mut rgba_data = image_to_rgba(&decoded);
@@ -1548,7 +1533,7 @@ impl<'a> RenderInterpreter<'a> {
 
         // Decode the mask data if it has filters
         let decoded_data = match dict.get(b"Filter") {
-            Some(_) => match image::decode_image(data, dict) {
+            Some(_) => match image::decode_image(data, dict, self.doc) {
                 Ok(img) => img.data,
                 Err(_) => data.to_vec(),
             },
@@ -1629,13 +1614,7 @@ impl<'a> RenderInterpreter<'a> {
         smask_dict: &PdfDict,
         smask_data: &[u8],
     ) {
-        // Decode the SMask image
-        let decoded = match self.doc.decode_stream(smask_dict, smask_data) {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-
-        let smask_decoded = match image::decode_image(&decoded, smask_dict) {
+        let smask_decoded = match image::decode_image(smask_data, smask_dict, self.doc) {
             Ok(img) => img,
             Err(_) => return,
         };
@@ -1682,12 +1661,7 @@ impl<'a> RenderInterpreter<'a> {
         mask_dict: &PdfDict,
         mask_data: &[u8],
     ) {
-        let decoded = match self.doc.decode_stream(mask_dict, mask_data) {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-
-        let mask_decoded = match image::decode_image(&decoded, mask_dict) {
+        let mask_decoded = match image::decode_image(mask_data, mask_dict, self.doc) {
             Ok(img) => img,
             Err(_) => return,
         };

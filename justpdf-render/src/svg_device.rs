@@ -1118,21 +1118,7 @@ impl<'a> SvgRenderer<'a> {
             PdfObject::Stream { dict, data } => {
                 let subtype = dict.get_name(b"Subtype").unwrap_or(b"");
                 match subtype {
-                    b"Image" => {
-                        let filter = dict.get(b"Filter").and_then(|o| o.as_name());
-                        let image_data = if filter == Some(b"DCTDecode") {
-                            data.clone()
-                        } else {
-                            match self.doc.decode_stream(&dict, &data) {
-                                Ok(d) => d,
-                                Err(_) => return Ok(None),
-                            }
-                        };
-                        Ok(Some(XObjectData::Image {
-                            dict,
-                            data: image_data,
-                        }))
-                    }
+                    b"Image" => Ok(Some(XObjectData::Image { dict, data })),
                     b"Form" => match self.doc.decode_stream(&dict, &data) {
                         Ok(decoded) => Ok(Some(XObjectData::Form {
                             obj_ref: xobj_ref,
@@ -1149,7 +1135,7 @@ impl<'a> SvgRenderer<'a> {
     }
 
     fn render_image(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
-        let decoded = image::decode_image(data, dict).map_err(RenderError::Core)?;
+        let decoded = image::decode_image(data, dict, self.doc).map_err(RenderError::Core)?;
 
         let rgba_data = image_to_rgba(&decoded);
         let w = decoded.width;
