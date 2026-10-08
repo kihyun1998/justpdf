@@ -198,7 +198,9 @@ impl FontWidths {
     }
 }
 
-/// Parse basic font info from a font dictionary.
+/// Parse basic font info from a font dictionary. An indirect entry reads as
+/// absent; [`resolve_font_entries`] resolves `/Widths`, `/FirstChar`,
+/// `/LastChar` and `/Encoding` beforehand.
 pub fn parse_font_info(dict: &PdfDict) -> FontInfo {
     let base_font = dict
         .get(b"BaseFont")
@@ -231,6 +233,35 @@ pub fn parse_font_info(dict: &PdfDict) -> FontInfo {
         is_standard14: is_std14,
         descriptor,
     }
+}
+
+/// A copy of the font dictionary `dict` whose indirect `/Widths` (and each
+/// indirect element of that array), `/FirstChar`, `/LastChar` and `/Encoding`
+/// are replaced by what `resolve` returns for them. A reference `resolve`
+/// returns `None` for is left as it is.
+pub fn resolve_font_entries(
+    dict: &PdfDict,
+    mut resolve: impl FnMut(&IndirectRef) -> Option<PdfObject>,
+) -> PdfDict {
+    let mut resolved = dict.clone();
+    for key in [&b"Widths"[..], b"FirstChar", b"LastChar", b"Encoding"] {
+        if let Some(PdfObject::Reference(r)) = resolved.get(key)
+            && let Some(value) = resolve(r)
+        {
+            resolved.insert(key.to_vec(), value);
+        }
+    }
+    if let Some(PdfObject::Array(widths)) = resolved.get(b"Widths") {
+        let widths = widths
+            .iter()
+            .map(|w| match w {
+                PdfObject::Reference(r) => resolve(r).unwrap_or_else(|| w.clone()),
+                other => other.clone(),
+            })
+            .collect();
+        resolved.insert(b"Widths".to_vec(), PdfObject::Array(widths));
+    }
+    resolved
 }
 
 /// Parse a font descriptor dictionary (PDF spec section 7.6).

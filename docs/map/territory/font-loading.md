@@ -7,13 +7,16 @@ Turns a font dictionary into a `FontInfo` (BaseFont, Subtype, Encoding, widths, 
 **None.**
 
 ## Design model
+- `parse_font_info` takes a bare `PdfDict` and reads a reference as absent. Indirect entries are resolved one step before it, in core, by `resolve_font_entries(dict, resolve)`: `/Widths` (and each indirect element of the array — MuPDF's `pdf_array_get_*` resolve elements too, read raw 2026-10-08), `/FirstChar`, `/LastChar` and `/Encoding` are replaced by what `resolve` (`FnMut(&IndirectRef) -> Option<PdfObject>`) returns. Text extraction (`resolve_fonts`), the raster renderer and the SVG renderer pass `PdfDocument::resolve`; font subsetting (`simple_font_glyph_ids`) passes `DocumentModifier::find_object_pub`. It returns the resolved dictionary rather than a `FontInfo`, because every consumer also reads the dictionary (`/Encoding` as a name or a dictionary, `/ToUnicode`, `/FontDescriptor`). A reference `resolve` cannot answer is left in place, so `parse_font_info` reads it as absent (the result before #287) and subsetting still sees a reference and keeps the font whole (`Some(_) => return None`); dropping it instead would let subsetting choose glyphs through StandardEncoding. Until #287 each consumer inlined an indirect `/Encoding` on its own, the SVG renderer none, and an indirect `/Widths` fell back to the default width everywhere (measured 2026-10-08: arXiv 1706.03762, pdfTeX, all 13 Type1 fonts carry `/Widths N 0 R`; rendered glyphs spread apart and overlap; `tests/font_widths.rs`: `[10, 16.67, 23.34]` for `[10, 11, 31]`).
 - ToUnicode is not resolved here ("Resolved later by the document").
 - Default width: 600 for the standard 14, otherwise 1000. The standard 14 width tables are approximations ("Simplified Helvetica widths"; Symbol/ZapfDingbats are all 500).
 - **CID widths (`/W`) are not filled in here**. Only `parse_cid_widths` on the text extraction side fills `FontWidths::CID`. The renderer calls `parse_font_info` on the descendant font and so gets `FontWidths::None` — the same Type0 font advances differently in rendering and in text ([Font resolution](../invariant/font-resolution.md)).
 
 ## Code
-- `justpdf-core/src/font/mod.rs` — `FontInfo`, `FontDescriptor`, `FontWidths`, `CIDWidthEntry`, `get_width`, `parse_font_info`, `parse_font_descriptor`, `parse_widths`
+- `justpdf-core/src/font/mod.rs` — `FontInfo`, `FontDescriptor`, `FontWidths`, `CIDWidthEntry`, `get_width`, `parse_font_info`, `resolve_font_entries`, `parse_font_descriptor`, `parse_widths`
 - `justpdf-core/src/font/standard14.rs` — `is_standard14`, `standard14_widths`, `strip_subset_prefix`
+- `justpdf-core/tests/font_widths.rs` — `indirect_widths_place_the_glyphs`, `an_indirect_first_char_is_read`, `indirect_width_elements_are_read`, `a_widths_reference_that_does_not_resolve_is_ignored`
+- `justpdf-render/tests/render_font_widths.rs` — `raster_glyphs_advance_by_indirect_widths`, `svg_glyphs_advance_by_indirect_widths`
 
 ## Reference behaviour
 **None.** The code cites "PDF spec 7.6" and "Table 123". Clauses to compare against: ISO 32000-2 §9.6 (simple fonts), §9.7 (composite fonts), §9.8 (descriptors).
@@ -30,4 +33,4 @@ Turns a font dictionary into a `FontInfo` (BaseFont, Subtype, Encoding, widths, 
 
 ## Known holes / open
 - The comment "CID font: /W array (not yet fully parsed)" is still true of this function.
-- `parse_font_info` takes a bare `PdfDict` and cannot resolve references, so an indirect entry reads as absent. An indirect `/Widths` falls back to the default width in raster render, SVG render and text extraction (measured 2026-10-08: arXiv 1706.03762, pdfTeX, all 13 Type1 fonts carry `/Widths N 0 R`; rendered glyphs spread apart and overlap). Callers inline an indirect `/Encoding` themselves — text `resolve_fonts`, raster `resolve_font`, subsetting `simple_font_glyph_ids` (through `DocumentModifier`); the SVG `resolve_font` does not (inferred). Decided in #287: one core font-loading step takes the font dict plus a resolver usable from both `PdfDocument` and `DocumentModifier`, resolves `/Widths`, `/FirstChar`, `/LastChar` and `/Encoding`, and all four consumers use it; #222's CID `/W`/`/DW` builds on that step. Tracked: #287.
+- A descendant CID font's dictionary and its `/FontDescriptor` are not passed through `resolve_font_entries`; `/W` and `/DW` are #222's, which builds on this step.
