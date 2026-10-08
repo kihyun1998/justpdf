@@ -21,7 +21,7 @@ Draws SVG with its own pixel rasterizer, then puts the result into the PDF as an
 
 ## Blast radius
 - [Document builder](document-builder.md) — `embed_rgb`, `draw_image`.
-- [Render images](render-images.md) — justpdf's own renderer draws the resulting PDF blank: `resolve_xobject` decodes the Flate image XObject, then `decode_image` decodes it again with the same dictionary, fails, and `do_xobject` drops the error (measured 2026-09-30: a 200×100 SVG with a 180×80 red rect — pdfium draws 14400 red pixels, justpdf none; `decode_image` on the raw bytes succeeds, on the once-decoded bytes it returns "corrupt deflate stream").
+- [Render images](render-images.md) — until #229 justpdf's own renderer drew the resulting PDF blank: it decoded the Flate image XObject before `decode_image` decoded it again (measured 2026-09-30: a 200×100 SVG with a 180×80 red rect — pdfium drew 14400 red pixels, justpdf none; `decode_image` on the raw bytes succeeded, on the once-decoded bytes it returned "corrupt deflate stream").
 - [SVG renderer](svg-renderer.md) — separate code that shares the name but goes the opposite way (PDF → SVG).
 
 ## Known holes / open

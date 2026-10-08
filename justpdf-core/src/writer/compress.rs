@@ -201,12 +201,18 @@ pub fn compress_pdf(data: &[u8], options: &CompressOptions) -> Result<(Vec<u8>, 
 
     // --- Step 1: Image compression ---
     if options.jpeg_quality.is_some() || options.max_image_dpi.is_some() {
-        recompress_images(&mut modifier, options, &mut stats, &image_display_sizes)?;
+        recompress_images(
+            &mut modifier,
+            &doc,
+            options,
+            &mut stats,
+            &image_display_sizes,
+        )?;
     }
 
     // --- Step 1.5: Grayscale conversion ---
     if options.grayscale {
-        convert_images_to_grayscale(&mut modifier, &mut stats);
+        convert_images_to_grayscale(&mut modifier, &doc, &mut stats);
         rewrite_color_operators_to_gray(&mut modifier);
     }
 
@@ -298,6 +304,7 @@ fn should_skip_image(info: &ImageInfo, stream_size: usize, options: &CompressOpt
 /// Walk all objects, find Image XObjects, decode, re-encode, replace.
 fn recompress_images(
     modifier: &mut DocumentModifier,
+    doc: &PdfDocument,
     options: &CompressOptions,
     stats: &mut CompressStats,
     image_display_sizes: &HashMap<u32, (f64, f64)>,
@@ -334,7 +341,7 @@ fn recompress_images(
         }
 
         // Decode the image pixels
-        let decoded = match image::decode_image(&raw_data, &dict) {
+        let decoded = match image::decode_image(&raw_data, &dict, doc) {
             Ok(d) => d,
             Err(_) => {
                 stats.images_skipped += 1;
@@ -828,7 +835,11 @@ fn pack_into_object_streams(
 /// For RGB: each pixel (3 bytes) → 1 byte grayscale using luminance formula.
 /// For CMYK: each pixel (4 bytes) → 1 byte grayscale.
 /// Already-grayscale images are skipped.
-fn convert_images_to_grayscale(modifier: &mut DocumentModifier, stats: &mut CompressStats) {
+fn convert_images_to_grayscale(
+    modifier: &mut DocumentModifier,
+    doc: &PdfDocument,
+    stats: &mut CompressStats,
+) {
     let image_entries: Vec<(u32, PdfDict, Vec<u8>)> = modifier
         .writer()
         .objects
@@ -860,7 +871,7 @@ fn convert_images_to_grayscale(modifier: &mut DocumentModifier, stats: &mut Comp
         }
 
         // Decode image pixels
-        let decoded = match image::decode_image(&raw_data, &dict) {
+        let decoded = match image::decode_image(&raw_data, &dict, doc) {
             Ok(d) => d,
             Err(_) => continue,
         };

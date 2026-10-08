@@ -11,7 +11,7 @@ Outputs a page as an SVG document. It is not a device but a **second interpreter
 - Resource names resolve through the same scope stack as the raster side (`ResourceScopes`) — [resource name scope](../invariant/resource-scope.md).
 - A Form XObject is skipped when a running form (`running_forms`) is met again, and skipped past depth 10 — [Content stream recursion](../invariant/content-stream-recursion.md).
 - Text becomes `<text>` through ToUnicode; without it only ASCII (<128); without an outline, a "rectangle placeholder".
-- Its `resolve_xobject` decodes every non-DCT image before `render_image` hands it to `decode_image`, the same double decode as the raster side: a Flate image XObject produces no `<image>` element (measured 2026-10-06). Tracked: #42.
+- Its `resolve_xobject` passes image streams raw to `decode_image`, as the raster side does (#229). Until #229 it decoded every non-DCT image first, and a Flate image XObject produced no `<image>` element (measured 2026-10-06).
 - It has copies of `image_to_rgba` and `cs_from_name` — [Image pixel layout](../invariant/image-pixel-layout.md).
 - `gs` applies an ExtGState's `/Font [font size]` through `select_font_ref`, the same rule as the raster interpreter ([Render interpreter](render-interpreter.md), #238). Until #238 it was ignored: with no prior `Tf` the text emitted no `<text>`; after `/F1 12 Tf` (Helvetica, width 500) it stayed Helvetica with advance 6 instead of Courier's 7.2; a `gs` font absent from `/Font` (Times-Roman 20) was drawn as the previous Helvetica 12 (measured 2026-10-07).
 

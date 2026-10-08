@@ -183,7 +183,7 @@ fn decode_single(data: &[u8], filter: &[u8], params: Option<&PdfDict>) -> Result
 }
 
 /// Extract filter names from stream dict.
-fn get_filters(dict: &PdfDict) -> Vec<Vec<u8>> {
+pub(crate) fn get_filters(dict: &PdfDict) -> Vec<Vec<u8>> {
     match dict.get(b"Filter") {
         Some(PdfObject::Name(name)) => vec![name.clone()],
         Some(PdfObject::Array(arr)) => arr
@@ -198,7 +198,7 @@ fn get_filters(dict: &PdfDict) -> Vec<Vec<u8>> {
 }
 
 /// Extract DecodeParms from stream dict.
-fn get_decode_params(dict: &PdfDict) -> Vec<Option<PdfDict>> {
+pub(crate) fn get_decode_params(dict: &PdfDict) -> Vec<Option<PdfDict>> {
     match dict.get(b"DecodeParms") {
         Some(PdfObject::Dict(d)) => vec![Some(d.clone())],
         Some(PdfObject::Array(arr)) => arr
