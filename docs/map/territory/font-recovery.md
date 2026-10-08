@@ -19,8 +19,8 @@ For a missing or damaged font, guesses from its name whether it is bold, italic,
 **None.**
 
 ## Blast radius
-- [Glyph rendering](glyph-rendering.md) — the side that would use a substitute font (currently a placeholder rectangle). #227 makes it the renderer's source for picking a bundled URW base-14 substitute.
+- [Glyph rendering](glyph-rendering.md) — the raster renderer draws a simple font with no embedded program from the bundled URW program for the name `find_substitute` returns (#227), so a change to the name rules changes which face such text is drawn in.
 - [Text extraction](text-extraction.md) — could use it for width substitution.
 
 ## Known holes / open
-- Neither text extraction nor rendering calls it.
+- Text extraction does not call it; the SVG renderer does not either (it emits `font-family`).

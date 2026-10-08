@@ -16,6 +16,7 @@ pub mod interpreter;
 pub mod render;
 mod resources;
 pub mod shading;
+mod substitute;
 pub mod svg_device;
 
 pub use bbox_device::compute_page_bbox;
