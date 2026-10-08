@@ -13,9 +13,10 @@ Outputs a page as an SVG document. It is not a device but a **second interpreter
 - Text becomes `<text>` through ToUnicode; without it only ASCII (<128); without an outline, a "rectangle placeholder".
 - Its `resolve_xobject` decodes every non-DCT image before `render_image` hands it to `decode_image`, the same double decode as the raster side: a Flate image XObject produces no `<image>` element (measured 2026-10-06). Tracked: #42.
 - It has copies of `image_to_rgba` and `cs_from_name` — [Image pixel layout](../invariant/image-pixel-layout.md).
+- `gs` applies an ExtGState's `/Font [font size]` through `select_font_ref`, the same rule as the raster interpreter ([Render interpreter](render-interpreter.md), #238). Until #238 it was ignored: with no prior `Tf` the text emitted no `<text>`; after `/F1 12 Tf` (Helvetica, width 500) it stayed Helvetica with advance 6 instead of Courier's 7.2; a `gs` font absent from `/Font` (Times-Roman 20) was drawn as the previous Helvetica 12 (measured 2026-10-07).
 
 ## Code
-- `justpdf-render/src/svg_device.rs` — `SvgRenderer`, `execute_op`, `select_font`, `resolve_font`, `get_page_content`, `concat_content_streams`, `do_xobject`, `render_image`, `render_form_xobject`, `apply_extgstate`, `image_to_rgba`, `cs_from_name`, `render_text_string`
+- `justpdf-render/src/svg_device.rs` — `SvgRenderer`, `execute_op`, `select_font`, `select_font_ref`, `resolve_font`, `get_page_content`, `concat_content_streams`, `do_xobject`, `render_image`, `render_form_xobject`, `apply_extgstate`, `image_to_rgba`, `cs_from_name`, `render_text_string`
 
 ## Reference behaviour
 **None.**
@@ -35,6 +36,5 @@ Outputs a page as an SVG document. It is not a device but a **second interpreter
 
 ## Known holes / open
 - The test checks only that the output contains `<svg`.
-- `gs` ignores the ExtGState `/Font` entry, like the raster interpreter. Measured 2026-10-07: with no prior `Tf` the text emits no `<text>`; after `/F1 12 Tf` (Helvetica, width 500) it stays Helvetica with advance 6 instead of Courier's 7.2; a `gs` font absent from `/Font` (Times-Roman 20) is drawn as the previous Helvetica 12. Tracked: #238
 - `BMC`/`BDC`/`EMC`/`MP`/`DP` are no-ops and `Do` ignores `/OC`, so OFF optional content is emitted. Measured 2026-10-07: fills inside `/OC /Off BDC`, inside an `/On` section nested in it, and in a Form XObject with `/OC <Off>` all appear in the output. To reuse the visibility helper #44 adds in core. Tracked: #218
 - Annotations are not drawn at all: neither `render_page_to_svg` nor `svg_device.rs` reads `/Annots` (inferred).
