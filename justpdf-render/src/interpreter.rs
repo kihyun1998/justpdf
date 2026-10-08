@@ -306,6 +306,20 @@ impl<'a> RenderInterpreter<'a> {
         Some(selection.key)
     }
 
+    /// Selects the font object `font_ref`, as an ExtGState's `/Font` names
+    /// it, resolving it on first use.
+    fn select_font_ref(&mut self, font_ref: &IndirectRef) -> Option<FontKey> {
+        let key = FontKey::Object(font_ref.clone());
+        if !self.fonts.contains_key(&key) {
+            let PdfObject::Dict(dict) = self.doc.resolve(font_ref).ok()? else {
+                return None;
+            };
+            let font = self.resolve_font(&dict).ok()?;
+            self.fonts.insert(key.clone(), font);
+        }
+        Some(key)
+    }
+
     fn resolve_font(&mut self, fd: &PdfDict) -> Result<ResolvedFont> {
         let doc = self.doc;
         let fd = &resolve_font_entries(fd, |r| doc.resolve(r).ok());
@@ -1950,6 +1964,14 @@ impl<'a> RenderInterpreter<'a> {
         };
 
         if let PdfObject::Dict(gs_dict) = &gs_obj {
+            if let Some(PdfObject::Array(font)) = gs_dict.get(b"Font")
+                && let [PdfObject::Reference(font_ref), size] = font.as_slice()
+                && let Some(size) = size.as_f64()
+                && let Some(key) = self.select_font_ref(font_ref)
+            {
+                self.state.text.font = Some(key);
+                self.state.text.font_size = size;
+            }
             if let Some(lw) = gs_dict.get(b"LW").and_then(|o| o.as_f64()) {
                 self.state.line_width = lw;
             }
