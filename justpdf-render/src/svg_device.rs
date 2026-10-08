@@ -6,7 +6,7 @@ use std::fmt::Write as FmtWrite;
 use justpdf_core::PdfDocument;
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
-use justpdf_core::font::{FontInfo, ToUnicodeCMap, parse_font_info};
+use justpdf_core::font::{FontInfo, ToUnicodeCMap, parse_font_info, resolve_font_entries};
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::page::PageInfo;
@@ -153,6 +153,8 @@ impl<'a> SvgRenderer<'a> {
     }
 
     fn resolve_font(&mut self, fd: &PdfDict) -> Result<ResolvedFont> {
+        let doc = self.doc;
+        let fd = &resolve_font_entries(fd, |r| doc.resolve(r).ok());
         let mut info = parse_font_info(fd);
 
         let cmap = if let Some(PdfObject::Reference(tu_ref)) = fd.get(b"ToUnicode") {

@@ -1452,12 +1452,10 @@ fn simple_font_glyph_ids(
     modifier: &DocumentModifier,
 ) -> Option<Vec<u16>> {
     let face = ttf_parser::Face::parse(font_program, 0).ok()?;
-    let mut font_dict = find_object_dict(font_obj_num, modifier)?.clone();
-
-    if let Some(PdfObject::Reference(r)) = font_dict.get(b"Encoding") {
-        let encoding = modifier.find_object_pub(r.obj_num)?.clone();
-        font_dict.insert(b"Encoding".to_vec(), encoding);
-    }
+    let font_dict =
+        crate::font::resolve_font_entries(&find_object_dict(font_obj_num, modifier)?, |r| {
+            modifier.find_object_pub(r.obj_num).cloned()
+        });
     let encoding = match font_dict.get(b"Encoding") {
         None => None,
         Some(PdfObject::Name(_) | PdfObject::Dict(_)) => {
@@ -3212,6 +3210,16 @@ mod tests {
         pdf.set_dict(pdf.font, font);
         let codes: HashSet<u16> = codes.iter().copied().collect();
         simple_font_glyph_ids(pdf.font, &codes, program, &pdf.modifier)
+    }
+
+    #[test]
+    fn test_glyph_ids_of_an_encoding_reference_that_does_not_resolve_keep_the_font() {
+        let program = crate::font::test_font::font(10, &[(3, 1, &[(0x48, 3)])], &[]);
+        let enc = Some(PdfObject::Reference(IndirectRef {
+            obj_num: 999,
+            gen_num: 0,
+        }));
+        assert_eq!(glyph_ids_for(&program, enc, 32, &[0x48]), None);
     }
 
     #[test]

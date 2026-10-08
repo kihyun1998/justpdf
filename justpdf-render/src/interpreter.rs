@@ -5,7 +5,9 @@ use justpdf_core::PdfDocument;
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
 use justpdf_core::font::recovery::find_substitute;
-use justpdf_core::font::{Encoding, FontInfo, ToUnicodeCMap, parse_font_info};
+use justpdf_core::font::{
+    Encoding, FontInfo, ToUnicodeCMap, parse_font_info, resolve_font_entries,
+};
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::ocg::{self, OCConfig};
@@ -305,14 +307,8 @@ impl<'a> RenderInterpreter<'a> {
     }
 
     fn resolve_font(&mut self, fd: &PdfDict) -> Result<ResolvedFont> {
-        let mut fd = fd.clone();
-        if let Some(PdfObject::Reference(r)) = fd.get(b"Encoding") {
-            let r = r.clone();
-            if let Ok(encoding) = self.doc.resolve(&r) {
-                fd.insert(b"Encoding".to_vec(), encoding);
-            }
-        }
-        let fd = &fd;
+        let doc = self.doc;
+        let fd = &resolve_font_entries(fd, |r| doc.resolve(r).ok());
         let mut info = parse_font_info(fd);
         let encoding = fd.get(b"Encoding").map(|_| info.encoding);
         let explicit_base = match fd.get(b"Encoding") {

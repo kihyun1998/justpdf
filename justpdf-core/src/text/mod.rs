@@ -7,7 +7,9 @@ use std::collections::HashMap;
 
 use crate::content::{ContentOp, Operand, parse_content_stream};
 use crate::error::Result;
-use crate::font::{Encoding, FontInfo, ToUnicodeCMap, decode_text, parse_font_info};
+use crate::font::{
+    Encoding, FontInfo, ToUnicodeCMap, decode_text, parse_font_info, resolve_font_entries,
+};
 use crate::object::{PdfDict, PdfObject};
 use crate::page::{PageInfo, collect_pages};
 use crate::parser::PdfDocument;
@@ -714,13 +716,7 @@ fn resolve_fonts(
             _ => continue,
         };
 
-        let mut font_dict = font_dict;
-        if let Some(PdfObject::Reference(r)) = font_dict.get(b"Encoding") {
-            let r = r.clone();
-            if let Ok(encoding) = doc.resolve(&r) {
-                font_dict.insert(b"Encoding".to_vec(), encoding);
-            }
-        }
+        let font_dict = resolve_font_entries(&font_dict, |r| doc.resolve(r).ok());
         let mut info = parse_font_info(&font_dict);
 
         // Resolve ToUnicode CMap
