@@ -2,7 +2,7 @@
 name = "justpdf-render"
 version = "0.1.2"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "(MIT OR Apache-2.0) AND OFL-1.1"
 description = "PDF rendering engine for justpdf - rasterize pages to images"
 repository = "https://github.com/kihyun1998/justpdf"
 keywords = ["pdf", "render", "png", "image", "rasterize"]
@@ -10,7 +10,8 @@ categories = ["graphics", "rendering"]
 homepage = "https://github.com/kihyun1998/justpdf"
 
 [features]
-default = []
+default = ["base14-fonts"]
+base14-fonts = []
 parallel = ["rayon"]
 
 [dependencies]

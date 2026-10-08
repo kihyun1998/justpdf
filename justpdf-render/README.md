@@ -35,6 +35,7 @@ let svg = justpdf_render::render_page_to_svg(&doc, 0)?;
 - Configurable DPI and background color
 - PNG, JPEG, raw RGBA, and SVG output
 - Page-level rendering; multi-threaded rendering of many pages with the `parallel` feature
+- Fonts a PDF does not embed are drawn from bundled URW base-14 fonts, with the default `base14-fonts` feature (about 600 KB); turn default features off to leave them out, and such text is drawn as boxes
 
 ## Repository
 
@@ -42,4 +43,4 @@ let svg = justpdf_render::render_page_to_svg(&doc, 0)?;
 
 ## License
 
-MIT OR Apache-2.0
+The code is MIT OR Apache-2.0. The fonts under `fonts/urw/` are (URW)++'s, under the SIL Open Font License 1.1 (`fonts/urw/OFL.txt`).

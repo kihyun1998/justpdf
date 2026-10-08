@@ -20,13 +20,14 @@ const BARE_FORM: &str = "/Type /XObject /Subtype /Form /BBox [0 0 100 100]";
 const FILL_RED: &str = "1 0 0 rg 0 0 100 100 re f";
 const FILL_BLUE: &str = "0 0 1 rg 0 0 100 100 re f";
 
-/// A font with no font program named `base`, whose one glyph (`A`) is
+/// A Type3 font with no `/CharProcs` named `base`, whose one glyph (`A`) is
 /// `width` thousandths of an em wide. Its glyph is drawn as a filled
 /// rectangle that wide.
 fn font(base: &str, width: u32) -> String {
     format!(
-        "<< /Type /Font /Subtype /Type1 /BaseFont /{base} /FirstChar 65 /LastChar 65 \
-         /Widths [{width}] >>"
+        "<< /Type /Font /Subtype /Type3 /BaseFont /{base} /FontBBox [0 0 1000 1000] \
+         /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << >> \
+         /Encoding << /Differences [65 /A] >> /FirstChar 65 /LastChar 65 /Widths [{width}] >>"
     )
 }
 
