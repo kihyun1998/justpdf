@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::path::Path;
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::crypto;
 use crate::crypto::SecurityState;
@@ -161,7 +162,17 @@ pub struct PdfDocument {
     /// Cache of decoded object streams by object stream number
     /// (interior-mutable).
     decoded_obj_streams: RwLock<HashMap<u32, ObjStm>>,
+    /// Decoded font programs by font-file stream reference, failures
+    /// included (interior-mutable).
+    font_programs: RwLock<HashMap<IndirectRef, Arc<FontProgramCell>>>,
+    /// Number of font-file streams decoded, successfully or not.
+    font_program_decodes: AtomicUsize,
 }
+
+/// A font program, decoded on first use; a failure holds the error when its
+/// variant can be rebuilt, `None` when it cannot.
+type FontProgramCell =
+    OnceLock<std::result::Result<Arc<crate::font::FontProgramData>, Option<JustPdfError>>>;
 
 /// A decoded object stream and the offset of each object in it.
 struct ObjStm {
@@ -257,6 +268,8 @@ impl PdfDocument {
             objects: RwLock::new(LruCache::new(DEFAULT_CACHE_CAPACITY)),
             security: None,
             decoded_obj_streams: RwLock::new(HashMap::new()),
+            font_programs: RwLock::new(HashMap::new()),
+            font_program_decodes: AtomicUsize::new(0),
         };
 
         // Detect encryption
@@ -288,6 +301,8 @@ impl PdfDocument {
             objects: RwLock::new(LruCache::new(DEFAULT_CACHE_CAPACITY)),
             security: None,
             decoded_obj_streams: RwLock::new(HashMap::new()),
+            font_programs: RwLock::new(HashMap::new()),
+            font_program_decodes: AtomicUsize::new(0),
         }
     }
 
@@ -408,6 +423,7 @@ impl PdfDocument {
         // Clear cached objects — they need to be re-loaded with decryption
         self.objects.write().unwrap().clear();
         self.decoded_obj_streams.write().unwrap().clear();
+        self.font_programs.write().unwrap().clear();
 
         Ok(())
     }
@@ -680,6 +696,82 @@ impl PdfDocument {
                 .defined_generation()
                 .map(|gen_num| IndirectRef { obj_num, gen_num })
         })
+    }
+
+    /// The decoded font program in the font-file stream `stream_ref`
+    /// (`/FontFile`, `/FontFile2`, `/FontFile3`), shared: the stream is
+    /// resolved and decoded on first use, and later calls return the same
+    /// entry. A failure is returned again without another attempt, except
+    /// an I/O error or a circular reference.
+    pub fn font_program(
+        &self,
+        stream_ref: &IndirectRef,
+    ) -> Result<Arc<crate::font::FontProgramData>> {
+        let cached = self.font_programs.read().unwrap().get(stream_ref).cloned();
+        let cell = match cached {
+            Some(cell) => cell,
+            None => self
+                .font_programs
+                .write()
+                .unwrap()
+                .entry(stream_ref.clone())
+                .or_default()
+                .clone(),
+        };
+        let mut fresh = None;
+        let stored = cell.get_or_init(|| {
+            self.font_program_decodes.fetch_add(1, Ordering::Relaxed);
+            match self.decode_font_program(stream_ref) {
+                Ok(program) => Ok(Arc::new(program)),
+                Err(e) => {
+                    let kept = e.rebuilt();
+                    fresh = Some(e);
+                    Err(kept)
+                }
+            }
+        });
+        match stored {
+            Ok(program) => Ok(program.clone()),
+            Err(kept) => {
+                if kept.is_none() {
+                    self.font_programs.write().unwrap().remove(stream_ref);
+                }
+                Err(fresh
+                    .or_else(|| kept.as_ref().and_then(JustPdfError::rebuilt))
+                    .unwrap_or_else(|| JustPdfError::InvalidObject {
+                        offset: 0,
+                        detail: format!(
+                            "font program {} {} R failed to load",
+                            stream_ref.obj_num, stream_ref.gen_num
+                        ),
+                    }))
+            }
+        }
+    }
+
+    fn decode_font_program(
+        &self,
+        stream_ref: &IndirectRef,
+    ) -> Result<crate::font::FontProgramData> {
+        match self.resolve(stream_ref)? {
+            PdfObject::Stream { dict, data } => Ok(crate::font::FontProgramData::new(
+                stream::decode_stream(&data, &dict)?,
+            )),
+            _ => Err(JustPdfError::InvalidObject {
+                offset: 0,
+                detail: format!(
+                    "font program {} {} R is not a stream",
+                    stream_ref.obj_num, stream_ref.gen_num
+                ),
+            }),
+        }
+    }
+
+    /// Number of font-file streams [`Self::font_program`] has decoded,
+    /// successfully or not.
+    #[doc(hidden)]
+    pub fn font_program_decodes(&self) -> usize {
+        self.font_program_decodes.load(Ordering::Relaxed)
     }
 
     /// Decode a stream object's data.

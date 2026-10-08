@@ -1,9 +1,10 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use justpdf_core::PdfDocument;
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
+use justpdf_core::font::FontProgramData;
 use justpdf_core::font::recovery::find_substitute;
 use justpdf_core::font::{
     Encoding, FontInfo, ToUnicodeCMap, descendant_font, parse_font_info, resolve_font_entries,
@@ -17,7 +18,7 @@ use tiny_skia::{FillRule, Mask, PathBuilder, Pixmap, Transform};
 
 use crate::device::PixmapDevice;
 use crate::error::{RenderError, Result};
-use crate::glyph_cache::{GlyphCache, font_hash};
+use crate::glyph_cache::GlyphCache;
 use crate::graphics_state::{
     FontKey, GraphicsState, LineCap, LineJoin, Matrix, PatternSelection, PdfBlendMode, SoftMask,
     SoftMaskSubtype,
@@ -30,7 +31,7 @@ struct ResolvedFont {
     #[allow(dead_code)]
     cmap: Option<ToUnicodeCMap>,
     /// Embedded font program for glyph outlines.
-    font_program: Option<FontProgram>,
+    font_program: Option<Arc<FontProgramData>>,
     /// CIDToGIDMap for Type0 CID fonts: maps CID → glyph ID.
     /// None = identity mapping (CID == GID).
     cid_to_gid_map: Option<Vec<u16>>,
@@ -42,14 +43,6 @@ struct ResolvedFont {
     cff_cid_to_gid: Option<std::collections::HashMap<u16, u16>>,
     /// Bit 3 of the font descriptor's `/Flags`.
     symbolic: bool,
-}
-
-/// A font program and its [`font_hash`]: the embedded one, or a bundled substitute.
-#[derive(Clone)]
-struct FontProgram {
-    /// Raw font data (TrueType/OpenType/CFF/Type1).
-    data: Cow<'static, [u8]>,
-    hash: u64,
 }
 
 /// The rendering interpreter: walks content stream ops and renders onto a device.
@@ -378,17 +371,11 @@ impl<'a> RenderInterpreter<'a> {
         // without one it can read is drawn with the substitute its name picks.
         let font_program = self
             .extract_font_data(fd, cid_font_descriptor.as_ref())
-            .filter(|data| crate::glyph::GlyphSource::parse(data).is_some())
-            .map(Cow::Owned)
+            .filter(|program| crate::glyph::GlyphSource::parse(&program.data).is_some())
             .or_else(|| {
                 (info.subtype != b"Type0" && info.subtype != b"Type3")
                     .then(|| crate::substitute::base14_program(find_substitute(&info.base_font)))
                     .flatten()
-                    .map(Cow::Borrowed)
-            })
-            .map(|data| FontProgram {
-                hash: font_hash(&data),
-                data,
             });
 
         let cff_cid_to_gid = font_program
@@ -415,7 +402,7 @@ impl<'a> RenderInterpreter<'a> {
         &mut self,
         font_dict: &PdfDict,
         cid_descriptor: Option<&PdfDict>,
-    ) -> Option<Vec<u8>> {
+    ) -> Option<Arc<FontProgramData>> {
         // First try the font's own descriptor, then CID font descriptor
         let descriptor = self
             .get_font_descriptor(font_dict)
@@ -425,19 +412,17 @@ impl<'a> RenderInterpreter<'a> {
 
         // Try FontFile2 (TrueType), FontFile3 (CFF/OpenType), FontFile (Type1)
         for key in &[b"FontFile2".as_slice(), b"FontFile3", b"FontFile"] {
-            if let Some(obj) = descriptor.get(key) {
-                let stream_obj = match obj {
-                    PdfObject::Reference(r) => {
-                        let r = r.clone();
-                        self.doc.resolve(&r).ok()
-                    }
-                    other => Some(other.clone()),
-                };
-                if let Some(PdfObject::Stream { dict, data }) = stream_obj
-                    && let Ok(decoded) = self.doc.decode_stream(&dict, &data)
-                {
-                    return Some(decoded);
-                }
+            let program = match descriptor.get(key) {
+                Some(PdfObject::Reference(r)) => self.doc.font_program(r).ok(),
+                Some(PdfObject::Stream { dict, data }) => self
+                    .doc
+                    .decode_stream(dict, data)
+                    .ok()
+                    .map(|decoded| Arc::new(FontProgramData::new(decoded))),
+                _ => None,
+            };
+            if program.is_some() {
+                return program;
             }
         }
 
@@ -1194,41 +1179,41 @@ impl<'a> RenderInterpreter<'a> {
             .map(|code| font.info.widths.get_width(*code))
             .collect();
 
-        // Clone the font program and CIDToGIDMap for glyph outline rendering
+        // The font program, shared, and its CIDToGIDMap for glyph outline rendering
         let font_program = font.font_program.clone();
         let cid_to_gid_map = font.cid_to_gid_map.clone();
+        let source = font_program
+            .as_ref()
+            .and_then(|p| crate::glyph::GlyphSource::parse(&p.data));
 
         // The glyph each code draws, when the font program can be read.
-        let glyphs: Option<Vec<Option<crate::glyph::GlyphRef>>> = font_program
-            .as_ref()
-            .and_then(|p| crate::glyph::GlyphSource::parse(&p.data))
-            .map(|source| {
-                char_codes
-                    .iter()
-                    .map(|&code| {
-                        if !is_cid {
-                            return source.simple_glyph(
-                                code as u8,
-                                font.encoding,
-                                font.explicit_base,
-                                &font.info.differences,
-                                font.symbolic,
-                            );
-                        }
-                        let cid = code as u16;
-                        if let Some(map) = &font.cff_cid_to_gid {
-                            return map
-                                .get(&cid)
-                                .map(|&gid| crate::glyph::GlyphRef::Id(ttf_parser::GlyphId(gid)));
-                        }
-                        let gid = cid_to_gid_map
-                            .as_deref()
-                            .and_then(|map| map.get(cid as usize).copied())
-                            .unwrap_or(cid);
-                        Some(crate::glyph::GlyphRef::Id(ttf_parser::GlyphId(gid)))
-                    })
-                    .collect()
-            });
+        let glyphs: Option<Vec<Option<crate::glyph::GlyphRef>>> = source.as_ref().map(|source| {
+            char_codes
+                .iter()
+                .map(|&code| {
+                    if !is_cid {
+                        return source.simple_glyph(
+                            code as u8,
+                            font.encoding,
+                            font.explicit_base,
+                            &font.info.differences,
+                            font.symbolic,
+                        );
+                    }
+                    let cid = code as u16;
+                    if let Some(map) = &font.cff_cid_to_gid {
+                        return map
+                            .get(&cid)
+                            .map(|&gid| crate::glyph::GlyphRef::Id(ttf_parser::GlyphId(gid)));
+                    }
+                    let gid = cid_to_gid_map
+                        .as_deref()
+                        .and_then(|map| map.get(cid as usize).copied())
+                        .unwrap_or(cid);
+                    Some(crate::glyph::GlyphRef::Id(ttf_parser::GlyphId(gid)))
+                })
+                .collect()
+        });
 
         // Now we're done borrowing self.fonts, can mutably borrow self
         for (i, code) in char_codes.iter().enumerate() {
@@ -1240,7 +1225,7 @@ impl<'a> RenderInterpreter<'a> {
                     w0 * font_size,
                     font_size,
                     text_rise,
-                    font_program.as_ref(),
+                    source.as_ref().zip(font_program.as_ref().map(|p| p.hash)),
                     glyphs.as_ref().map(|g| g[i].clone()),
                 )?;
             }
@@ -1266,7 +1251,7 @@ impl<'a> RenderInterpreter<'a> {
         glyph_width: f64,
         font_size: f64,
         text_rise: f64,
-        font_program: Option<&FontProgram>,
+        source: Option<(&crate::glyph::GlyphSource, u64)>,
         glyph: Option<Option<crate::glyph::GlyphRef>>,
     ) -> Result<()> {
         if glyph_width.abs() < 0.001 {
@@ -1274,16 +1259,15 @@ impl<'a> RenderInterpreter<'a> {
         }
 
         // Try to render with real glyph outlines (using glyph cache)
-        if let Some(program) = font_program
+        if let Some((source, program_hash)) = source
             && let Some(glyph) = glyph
-            && let Some(source) = crate::glyph::GlyphSource::parse(&program.data)
         {
             // No glyph for this code: draw nothing.
             let Some(glyph) = glyph else {
                 return Ok(());
             };
 
-            let (key_hash, key_glyph) = glyph.cache_key(program.hash);
+            let (key_hash, key_glyph) = glyph.cache_key(program_hash);
             let cached_path = self
                 .glyph_cache
                 .get_or_insert(key_hash, key_glyph, || source.outline(&glyph))
