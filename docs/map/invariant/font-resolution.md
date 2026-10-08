@@ -5,7 +5,7 @@ The same font **must be interpreted the same way** by text extraction and by ren
 
 ## Why it is cross-cutting
 Both consumers start from core `parse_font_info`, but each builds on top of it **on its own**, and neither calls the other:
-- Text reads `/W` and `/DW` (render does not) and decodes with the encoding tables (render does not use them).
+- Text decodes with the encoding tables (render does not use them). CID widths (`/W`, `/DW`) are shared since #222.
 - Render reads `/CIDToGIDMap` (text does not need it), and picks a simple TrueType glyph through the font's encoding with `font::truetype_glyph_candidates`, the function subsetting also uses (#223).
 - There are two copies of the ToUnicode interpretation code.
 - Core has several font modules that neither path uses (CFF, Type3, recovery, OpenType layout).
@@ -14,7 +14,7 @@ Both consumers start from core `parse_font_info`, but each builds on top of it *
 - [Font loading](../territory/font-loading.md) — the common starting point (does not fill in CID widths).
 - [Font encodings](../territory/font-encodings.md) — encoding tables only text uses.
 - [ToUnicode](../territory/tounicode.md) — two copies of the interpretation.
-- [CID fonts](../territory/cid-fonts.md) — widths only in text, GID mapping only in render.
+- [CID fonts](../territory/cid-fonts.md) — widths shared (#222), GID mapping only in render.
 - [Text extraction](../territory/text-extraction.md) — `resolve_fonts`, `resolve_to_unicode`.
 - [Render interpreter](../territory/render-interpreter.md) — `resolve_font`.
 - [Glyph rendering](../territory/glyph-rendering.md) — the first of `truetype_glyph_candidates`.
@@ -31,7 +31,7 @@ No incident recorded. Reported on 2026-09-23 by the font/text and render researc
 
 - 2026-09-23, while working on #9, the subset case was **reproduced by running it** (simple TrueType): the subset font's `cmap` pointed at old GIDs so all five characters to be drawn lost their outlines, while text extraction on the same output was unchanged — [Font subsetting](../territory/font-subsetting.md#design-model).
 
-- Tracked: #222 (CID widths in render)
+- 2026-10-08, #222: CID widths moved into core (`parse_font_info` on the descendant), so text extraction and both renderers advance a Type0 font alike; a glyph with `/W` 2000 at 10 pt renders 20 units wide, as it extracts.
 - 2026-10-08, while proving #225 on arXiv 1706.03762, an indirect `/Widths` was **measured** to fall back to the default width on both sides (render) and inferred for text: `parse_font_info` cannot resolve references, and each consumer patches indirect `/Encoding` on its own (SVG does not). #287 put a shared step in core: `font::resolve_font_entries` resolves `/Widths`, `/FirstChar`, `/LastChar` and `/Encoding` for text extraction, the raster and SVG renderers and font subsetting — the first piece of the shared interpretation this invariant asks for; #222 builds on it.
 
 ## Where it will recur

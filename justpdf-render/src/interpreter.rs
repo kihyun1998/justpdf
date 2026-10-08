@@ -6,7 +6,7 @@ use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
 use justpdf_core::font::recovery::find_substitute;
 use justpdf_core::font::{
-    Encoding, FontInfo, ToUnicodeCMap, parse_font_info, resolve_font_entries,
+    Encoding, FontInfo, ToUnicodeCMap, descendant_font, parse_font_info, resolve_font_entries,
 };
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
@@ -352,36 +352,26 @@ impl<'a> RenderInterpreter<'a> {
         let mut cid_font_descriptor: Option<PdfDict> = None;
         let mut cid_to_gid_map: Option<Vec<u16>> = None;
         if info.subtype == b"Type0"
-            && let Some(PdfObject::Array(descendants)) = fd.get(b"DescendantFonts")
-            && let Some(desc_ref) = descendants.first()
+            && let Some(cid_dict) = descendant_font(fd, |r| doc.resolve(r).ok())
         {
-            let desc_obj = match desc_ref {
-                PdfObject::Reference(r) => {
-                    let r = r.clone();
-                    self.doc.resolve(&r)?
-                }
-                other => other.clone(),
-            };
-            if let PdfObject::Dict(cid_dict) = &desc_obj {
-                let cid_info = parse_font_info(cid_dict);
-                info.widths = cid_info.widths;
-                // Get font descriptor from CID font
-                if let Some(fd_obj) = cid_dict.get(b"FontDescriptor") {
-                    let fd_resolved = match fd_obj {
-                        PdfObject::Reference(r) => {
-                            let r = r.clone();
-                            self.doc.resolve(&r).ok()
-                        }
-                        other => Some(other.clone()),
-                    };
-                    if let Some(PdfObject::Dict(d)) = fd_resolved {
-                        cid_font_descriptor = Some(d);
+            let cid_dict = &resolve_font_entries(&cid_dict, |r| doc.resolve(r).ok());
+            info.widths = parse_font_info(cid_dict).widths;
+            // Get font descriptor from CID font
+            if let Some(fd_obj) = cid_dict.get(b"FontDescriptor") {
+                let fd_resolved = match fd_obj {
+                    PdfObject::Reference(r) => {
+                        let r = r.clone();
+                        self.doc.resolve(&r).ok()
                     }
+                    other => Some(other.clone()),
+                };
+                if let Some(PdfObject::Dict(d)) = fd_resolved {
+                    cid_font_descriptor = Some(d);
                 }
-
-                // Parse CIDToGIDMap
-                cid_to_gid_map = self.parse_cid_to_gid_map(cid_dict);
             }
+
+            // Parse CIDToGIDMap
+            cid_to_gid_map = self.parse_cid_to_gid_map(cid_dict);
         }
 
         // Extract embedded font data from FontDescriptor; a simple font

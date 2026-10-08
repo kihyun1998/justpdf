@@ -6,7 +6,9 @@ use std::fmt::Write as FmtWrite;
 use justpdf_core::PdfDocument;
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
-use justpdf_core::font::{FontInfo, ToUnicodeCMap, parse_font_info, resolve_font_entries};
+use justpdf_core::font::{
+    FontInfo, ToUnicodeCMap, descendant_font, parse_font_info, resolve_font_entries,
+};
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::page::PageInfo;
@@ -185,20 +187,10 @@ impl<'a> SvgRenderer<'a> {
 
         // Resolve CID font widths for Type0
         if info.subtype == b"Type0"
-            && let Some(PdfObject::Array(descendants)) = fd.get(b"DescendantFonts")
-            && let Some(desc_ref) = descendants.first()
+            && let Some(cid_dict) = descendant_font(fd, |r| doc.resolve(r).ok())
         {
-            let desc_obj = match desc_ref {
-                PdfObject::Reference(r) => {
-                    let r = r.clone();
-                    self.doc.resolve(&r)?
-                }
-                other => other.clone(),
-            };
-            if let PdfObject::Dict(cid_dict) = &desc_obj {
-                let cid_info = parse_font_info(cid_dict);
-                info.widths = cid_info.widths;
-            }
+            let cid_dict = resolve_font_entries(&cid_dict, |r| doc.resolve(r).ok());
+            info.widths = parse_font_info(&cid_dict).widths;
         }
 
         Ok(ResolvedFont {

@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use crate::content::{ContentOp, Operand, parse_content_stream};
 use crate::error::Result;
 use crate::font::{
-    Encoding, FontInfo, ToUnicodeCMap, decode_text, parse_font_info, resolve_font_entries,
+    Encoding, FontInfo, ToUnicodeCMap, decode_text, descendant_font, parse_font_info,
+    resolve_font_entries,
 };
 use crate::object::{PdfDict, PdfObject};
 use crate::page::{PageInfo, collect_pages};
@@ -759,86 +760,14 @@ fn resolve_to_unicode(doc: &PdfDocument, font_dict: &PdfDict) -> Option<ToUnicod
 }
 
 fn resolve_type0_descendant(doc: &PdfDocument, font_dict: &PdfDict, info: &mut FontInfo) {
-    let descendants = match font_dict.get(b"DescendantFonts") {
-        Some(PdfObject::Array(arr)) => arr.clone(),
-        _ => return,
+    let Some(descendant) = descendant_font(font_dict, |r| doc.resolve(r).ok()) else {
+        return;
     };
-
-    let descendant_ref = match descendants.first() {
-        Some(PdfObject::Reference(r)) => r.clone(),
-        _ => return,
-    };
-
-    let descendant = match doc.resolve(&descendant_ref) {
-        Ok(PdfObject::Dict(d)) => d,
-        _ => return,
-    };
-
-    // Get /W array for CID widths
-    if let Some(PdfObject::Array(w_array)) = descendant.get(b"W") {
-        info.widths = parse_cid_widths(w_array);
-    }
-
-    // Get /DW (default width)
-    if let Some(dw) = descendant.get(b"DW").and_then(|o| o.as_f64()) {
-        match &mut info.widths {
-            crate::font::FontWidths::CID { default_width, .. } => *default_width = dw,
-            crate::font::FontWidths::None { default_width } => *default_width = dw,
-            _ => {}
-        }
-    }
+    let descendant = resolve_font_entries(&descendant, |r| doc.resolve(r).ok());
+    info.widths = parse_font_info(&descendant).widths;
 
     // Mark as Identity encoding for Type0
     info.encoding = Encoding::Identity;
-}
-
-fn parse_cid_widths(w_array: &[PdfObject]) -> crate::font::FontWidths {
-    use crate::font::{CIDWidthEntry, FontWidths};
-
-    let mut entries = Vec::new();
-    let mut i = 0;
-
-    while i < w_array.len() {
-        let first = match w_array[i].as_i64() {
-            Some(v) => v as u32,
-            None => {
-                i += 1;
-                continue;
-            }
-        };
-        i += 1;
-
-        if i >= w_array.len() {
-            break;
-        }
-
-        match &w_array[i] {
-            PdfObject::Array(widths) => {
-                let ws: Vec<f64> = widths.iter().filter_map(|o| o.as_f64()).collect();
-                entries.push(CIDWidthEntry::List { first, widths: ws });
-                i += 1;
-            }
-            PdfObject::Integer(_) | PdfObject::Real(_) => {
-                if i + 1 < w_array.len() {
-                    let last = w_array[i].as_f64().unwrap_or(0.0) as u32;
-                    i += 1;
-                    let width = w_array.get(i).and_then(|o| o.as_f64()).unwrap_or(1000.0);
-                    i += 1;
-                    entries.push(CIDWidthEntry::Range { first, last, width });
-                } else {
-                    break;
-                }
-            }
-            _ => {
-                i += 1;
-            }
-        }
-    }
-
-    FontWidths::CID {
-        default_width: 1000.0,
-        w_entries: entries,
-    }
 }
 
 // ---------------------------------------------------------------------------
