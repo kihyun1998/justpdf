@@ -1,8 +1,10 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use justpdf_core::PdfDocument;
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
+use justpdf_core::font::recovery::find_substitute;
 use justpdf_core::font::{Encoding, FontInfo, ToUnicodeCMap, parse_font_info};
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
@@ -40,11 +42,11 @@ struct ResolvedFont {
     symbolic: bool,
 }
 
-/// An embedded font program and its [`font_hash`].
+/// A font program and its [`font_hash`]: the embedded one, or a bundled substitute.
 #[derive(Clone)]
 struct FontProgram {
-    /// Raw embedded font data (TrueType/OpenType/CFF).
-    data: Vec<u8>,
+    /// Raw font data (TrueType/OpenType/CFF/Type1).
+    data: Cow<'static, [u8]>,
     hash: u64,
 }
 
@@ -372,9 +374,18 @@ impl<'a> RenderInterpreter<'a> {
             }
         }
 
-        // Extract embedded font data from FontDescriptor
+        // Extract embedded font data from FontDescriptor; a simple font
+        // without one it can read is drawn with the substitute its name picks.
         let font_program = self
             .extract_font_data(fd, cid_font_descriptor.as_ref())
+            .filter(|data| crate::glyph::GlyphSource::parse(data).is_some())
+            .map(Cow::Owned)
+            .or_else(|| {
+                (info.subtype != b"Type0" && info.subtype != b"Type3")
+                    .then(|| crate::substitute::base14_program(find_substitute(&info.base_font)))
+                    .flatten()
+                    .map(Cow::Borrowed)
+            })
             .map(|data| FontProgram {
                 hash: font_hash(&data),
                 data,
