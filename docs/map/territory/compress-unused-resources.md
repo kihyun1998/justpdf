@@ -26,5 +26,6 @@ Collects the `Tf` (font), `Do` (XObject) and `gs` (ExtGState) names that page co
 - [Compress presets](compress-presets.md) — the `remove_unused_resources` knob (also missing from the plan for CLI exposure).
 
 ## Known holes / open
+- The Form recursion reads a form's names into the page's used-sets and looks up a nested `Do` in the page's XObject map, not the form's own `/Resources`. Measured 2026-10-08: a page `/F2` (Courier) used by nothing survives because a drawn form uses `/F2` for its own Times-Roman; renaming the form's font to `/F3` removes it. Same root as #68, #139, #48 (the #207 Form hook). Tracked: #295.
 - In a file where resources used outside pages (annotation appearances, patterns) are shared through the page resources, they can be deleted (inferred, no test).
 - `DocumentBuilder` cannot put a font into a page's Resources that the content does not use (a font not passed to `PageBuilder::add_font` is not in Resources at all), so a test of removing an unused `Font` entry has to build or patch that Resources dictionary by hand. An unused helper in `writer/compress.rs` tests that tried it with the builder was removed in #189.
