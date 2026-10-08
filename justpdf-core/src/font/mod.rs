@@ -137,7 +137,7 @@ pub enum FontWidths {
         widths: Vec<f64>,
         default_width: f64,
     },
-    /// CID font: /W array (not yet fully parsed).
+    /// CID font: /W entries and /DW.
     CID {
         default_width: f64,
         w_entries: Vec<CIDWidthEntry>,
@@ -217,7 +217,11 @@ pub fn parse_font_info(dict: &PdfDict) -> FontInfo {
     let is_std14 = is_standard14(&base_font);
 
     let (encoding, differences) = parse_encoding(dict);
-    let widths = parse_widths(dict, &base_font, is_std14);
+    let widths = if subtype == b"CIDFontType0" || subtype == b"CIDFontType2" {
+        parse_cid_widths(dict)
+    } else {
+        parse_widths(dict, &base_font, is_std14)
+    };
 
     let descriptor = dict
         .get_dict(b"FontDescriptor")
@@ -236,7 +240,8 @@ pub fn parse_font_info(dict: &PdfDict) -> FontInfo {
 }
 
 /// A copy of the font dictionary `dict` whose indirect `/Widths` (and each
-/// indirect element of that array), `/FirstChar`, `/LastChar` and `/Encoding`
+/// indirect element of that array), `/FirstChar`, `/LastChar`, `/Encoding`,
+/// and a CID font's `/W` (with the arrays and values inside it) and `/DW`
 /// are replaced by what `resolve` returns for them. A reference `resolve`
 /// returns `None` for is left as it is.
 pub fn resolve_font_entries(
@@ -244,24 +249,64 @@ pub fn resolve_font_entries(
     mut resolve: impl FnMut(&IndirectRef) -> Option<PdfObject>,
 ) -> PdfDict {
     let mut resolved = dict.clone();
-    for key in [&b"Widths"[..], b"FirstChar", b"LastChar", b"Encoding"] {
+    for key in [
+        &b"Widths"[..],
+        b"FirstChar",
+        b"LastChar",
+        b"Encoding",
+        b"W",
+        b"DW",
+    ] {
         if let Some(PdfObject::Reference(r)) = resolved.get(key)
             && let Some(value) = resolve(r)
         {
             resolved.insert(key.to_vec(), value);
         }
     }
-    if let Some(PdfObject::Array(widths)) = resolved.get(b"Widths") {
-        let widths = widths
+    let mut resolve_elements = |array: &[PdfObject]| -> Vec<PdfObject> {
+        array
             .iter()
-            .map(|w| match w {
-                PdfObject::Reference(r) => resolve(r).unwrap_or_else(|| w.clone()),
+            .map(|o| match o {
+                PdfObject::Reference(r) => resolve(r).unwrap_or_else(|| o.clone()),
                 other => other.clone(),
             })
-            .collect();
+            .collect()
+    };
+    if let Some(PdfObject::Array(widths)) = resolved.get(b"Widths") {
+        let widths = resolve_elements(widths);
         resolved.insert(b"Widths".to_vec(), PdfObject::Array(widths));
     }
+    if let Some(PdfObject::Array(w)) = resolved.get(b"W") {
+        let w = resolve_elements(w)
+            .into_iter()
+            .map(|o| match o {
+                PdfObject::Array(list) => PdfObject::Array(resolve_elements(&list)),
+                other => other,
+            })
+            .collect();
+        resolved.insert(b"W".to_vec(), PdfObject::Array(w));
+    }
     resolved
+}
+
+/// The descendant CID font of the Type0 font dictionary `dict`: the first
+/// element of `/DescendantFonts`, each resolved through `resolve` when it is
+/// a reference. `None` when that is not a dictionary.
+pub fn descendant_font(
+    dict: &PdfDict,
+    mut resolve: impl FnMut(&IndirectRef) -> Option<PdfObject>,
+) -> Option<PdfDict> {
+    let mut direct = |o: &PdfObject| match o {
+        PdfObject::Reference(r) => resolve(r),
+        other => Some(other.clone()),
+    };
+    let PdfObject::Array(descendants) = direct(dict.get(b"DescendantFonts")?)? else {
+        return None;
+    };
+    match direct(descendants.first()?)? {
+        PdfObject::Dict(d) => Some(d),
+        _ => None,
+    }
 }
 
 /// Parse a font descriptor dictionary (PDF spec section 7.6).
@@ -359,6 +404,47 @@ impl FontInfo {
             Some((_, name)) => glyph_name_to_unicode(name).unwrap_or_default(),
             None => decode_text(&[code], self.encoding),
         }
+    }
+}
+
+/// A CID font's widths: `/W` in both forms (`c [w1 w2 …]` and
+/// `c_first c_last w`) and `/DW`, 1000 when absent. A non-number in a
+/// `c [w1 w2 …]` list is 0 wide.
+fn parse_cid_widths(dict: &PdfDict) -> FontWidths {
+    let default_width = dict.get_f64(b"DW").unwrap_or(1000.0);
+    let w = dict.get_array(b"W").unwrap_or(&[]);
+    let mut w_entries = Vec::new();
+    let mut i = 0;
+    while i + 1 < w.len() {
+        let Some(first) = w[i].as_i64() else {
+            i += 1;
+            continue;
+        };
+        let first = first as u32;
+        match &w[i + 1] {
+            PdfObject::Array(list) => {
+                let widths = list.iter().map(|o| o.as_f64().unwrap_or(0.0)).collect();
+                w_entries.push(CIDWidthEntry::List { first, widths });
+                i += 2;
+            }
+            last => {
+                let (Some(last), Some(width)) =
+                    (last.as_i64(), w.get(i + 2).and_then(PdfObject::as_f64))
+                else {
+                    break;
+                };
+                w_entries.push(CIDWidthEntry::Range {
+                    first,
+                    last: last as u32,
+                    width,
+                });
+                i += 3;
+            }
+        }
+    }
+    FontWidths::CID {
+        default_width,
+        w_entries,
     }
 }
 
