@@ -14,7 +14,7 @@ The graphics- and text-state interpreter in core that walks a content stream's p
 - A font is resolved **when `Tf` runs**, and the text state holds the resolved font, not the name — [Resource name scope](../invariant/resource-scope.md). Each scope chain remembers what a name resolved to, so a repeated `Tf` does not look the name up again; fonts reached by reference are also cached by reference across the page and its forms.
 - Form XObjects are entered only with `InterpretOptions::enter_forms` (off for text extraction; turning it on there is #48). Entering applies `/Matrix`, pushes the form's `/Resources` in front of the caller's (a form without `/Resources` uses the caller's), saves the graphics state and the text matrices, and restores them on leaving. Inside a form, `Q` cannot pop below the stack depth at which the form was entered. A form already being interpreted is refused as `FormRefusal::Cycle`; one that would be the eleventh nested form is refused as `FormRefusal::Depth` (`MAX_FORM_DEPTH` = 10; the raster renderer enters up to 11, `xobject_depth > 10`). `/BBox` clipping is not tracked.
 - `gs` applies only the ExtGState's `/Font` entry (#235): when it is a direct two-element array of an indirect font reference and a number, the font and size become those, as `Tf` would set them, and the font name becomes empty. The font is looked up by reference (`DocResources::font_by_ref`), sharing the cache with the same object reached through `Tf`, so it need not appear in any `/Font` dictionary. Any other shape leaves font and size unchanged — the same rule as the raster and SVG renderers (#238), as [Font resolution](../invariant/font-resolution.md) asks. The ExtGState name resolves innermost scope first, like every resource name. Other ExtGState keys are ignored.
-- Not interpreted: marked content (`BDC`/`EMC`, #219), clipping, colour, paths and images. Codes are split as before: two bytes for an `Identity` encoding or a Type0 font, otherwise one (#303 is about CMaps other than Identity).
+- Not interpreted: marked content (`BDC`/`EMC`, #219), clipping, colour, paths and images. A Type0 font's codes are split and mapped to CIDs by its encoding CMap ([CID fonts](cid-fonts.md), #303) and its widths looked up by CID; `Glyph::code` stays the code (for ToUnicode) and `Glyph::cid` carries the CID. Any other font reads one byte per code, or two for a simple font declaring `Identity`.
 
 ## Code
 - `justpdf-core/src/content/interpret.rs` — `interpret`, `InterpretOptions`, `ContentVisitor`, `Glyph`, `FormRefusal`, `MAX_FORM_DEPTH`, `ContentResources`, `ext_gstate_font`, `FormXObject`, `DocResources`, `font_by_ref`, `MapResources`, `ResolvedFont`, `load_font`, `GraphicsState`, `TextState`, `Matrix`
@@ -32,10 +32,10 @@ The graphics- and text-state interpreter in core that walks a content stream's p
 - [Text extraction](text-extraction.md) — built on it; any change in position or width shows in extracted text and in [Reading order](reading-order.md), [Text output formats](text-output-formats.md) and [Text search](text-search.md).
 - [Redaction](redaction.md) — meant to take glyph boxes from here (ADR 0004).
 - [Content stream parsing](content-stream-parsing.md) — its input.
-- [Font loading](font-loading.md), [CID fonts](cid-fonts.md), [ToUnicode](tounicode.md) — `load_font`'s input.
+- [Font loading](font-loading.md), [CID fonts](cid-fonts.md), [ToUnicode](tounicode.md) — `load_font`'s input; `type0_encoding_cmap` gives a Type0 font's CMap.
 - [Render interpreter](render-interpreter.md), [SVG renderer](svg-renderer.md) — separate operator walkers in `justpdf-render`, which depends on core; a positioning fix on one side has to decide whether the other needs it.
 
 ## Known holes / open
 - Text inside Form XObjects is not extracted, because extraction does not turn on `enter_forms`. Tracked: #48.
 - Hidden optional content is not told apart. Tracked: #219.
-- Codes are split by the font's encoding name, not by its CMap. Tracked: #303.
+- A predefined CMap other than Identity is read as Identity-H. Tracked: #306.

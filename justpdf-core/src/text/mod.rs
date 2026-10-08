@@ -507,6 +507,7 @@ mod tests {
                     descriptor: None,
                 },
                 cmap: None,
+                encoding: None,
             },
         );
 
@@ -565,6 +566,7 @@ mod tests {
                     descriptor: None,
                 },
                 cmap: None,
+                encoding: None,
             },
         );
 
@@ -707,6 +709,7 @@ mod tests {
                     descriptor: None,
                 },
                 cmap: None,
+                encoding: None,
             },
         );
 
@@ -810,6 +813,7 @@ mod tests {
                     descriptor: None,
                 },
                 cmap: None,
+                encoding: None,
             },
         );
 

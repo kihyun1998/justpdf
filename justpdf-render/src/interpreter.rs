@@ -7,7 +7,8 @@ use justpdf_core::content::{ContentOp, Operand, parse_content_stream};
 use justpdf_core::font::FontProgramData;
 use justpdf_core::font::recovery::find_substitute;
 use justpdf_core::font::{
-    Encoding, FontInfo, ToUnicodeCMap, descendant_font, parse_font_info, resolve_font_entries,
+    Encoding, EncodingCMap, FontInfo, ToUnicodeCMap, descendant_font, parse_font_info,
+    resolve_font_entries, type0_encoding_cmap,
 };
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
@@ -43,6 +44,8 @@ struct ResolvedFont {
     cff_cid_to_gid: Option<std::collections::HashMap<u16, u16>>,
     /// Bit 3 of the font descriptor's `/Flags`.
     symbolic: bool,
+    /// A Type0 font's encoding CMap, codes to CIDs.
+    cid_encoding: Option<EncodingCMap>,
 }
 
 /// The rendering interpreter: walks content stream ops and renders onto a device.
@@ -344,6 +347,13 @@ impl<'a> RenderInterpreter<'a> {
         // Resolve CIDFont widths, font descriptor, and CIDToGIDMap for Type0 fonts
         let mut cid_font_descriptor: Option<PdfDict> = None;
         let mut cid_to_gid_map: Option<Vec<u16>> = None;
+        let cid_encoding = (info.subtype == b"Type0").then(|| {
+            type0_encoding_cmap(
+                fd,
+                |r| doc.resolve(r).ok(),
+                |dict, data| doc.decode_stream(dict, data).ok(),
+            )
+        });
         if info.subtype == b"Type0"
             && let Some(cid_dict) = descendant_font(fd, |r| doc.resolve(r).ok())
         {
@@ -393,6 +403,7 @@ impl<'a> RenderInterpreter<'a> {
             explicit_base,
             cff_cid_to_gid,
             symbolic,
+            cid_encoding,
         })
     }
 
@@ -1155,28 +1166,21 @@ impl<'a> RenderInterpreter<'a> {
         let text_rise = self.state.text.text_rise;
         let render_mode = self.state.text.render_mode;
 
-        // Determine if this is a 2-byte CID font
-        let is_cid = font.info.subtype == b"Type0";
+        let is_cid = font.cid_encoding.is_some();
 
-        // Pre-compute char codes, widths, and font data while borrowing fonts immutably
-        let char_codes: Vec<u32> = if is_cid {
-            string_bytes
-                .chunks(2)
-                .map(|c| {
-                    if c.len() == 2 {
-                        ((c[0] as u32) << 8) | (c[1] as u32)
-                    } else {
-                        c[0] as u32
-                    }
-                })
-                .collect()
-        } else {
-            string_bytes.iter().map(|b| *b as u32).collect()
+        // Pre-compute char codes, CIDs, widths, and font data while borrowing fonts immutably
+        let (char_codes, cids): (Vec<u32>, Vec<u32>) = match &font.cid_encoding {
+            Some(cmap) => cmap
+                .decode(string_bytes)
+                .into_iter()
+                .map(|c| (c.code, c.cid))
+                .unzip(),
+            None => string_bytes.iter().map(|&b| (b as u32, b as u32)).unzip(),
         };
 
-        let widths: Vec<f64> = char_codes
+        let widths: Vec<f64> = cids
             .iter()
-            .map(|code| font.info.widths.get_width(*code))
+            .map(|cid| font.info.widths.get_width(*cid))
             .collect();
 
         // The font program, shared, and its CIDToGIDMap for glyph outline rendering
@@ -1190,7 +1194,8 @@ impl<'a> RenderInterpreter<'a> {
         let glyphs: Option<Vec<Option<crate::glyph::GlyphRef>>> = source.as_ref().map(|source| {
             char_codes
                 .iter()
-                .map(|&code| {
+                .zip(&cids)
+                .map(|(&code, &cid)| {
                     if !is_cid {
                         return source.simple_glyph(
                             code as u8,
@@ -1200,7 +1205,9 @@ impl<'a> RenderInterpreter<'a> {
                             font.symbolic,
                         );
                     }
-                    let cid = code as u16;
+                    let Ok(cid) = u16::try_from(cid) else {
+                        return Some(crate::glyph::GlyphRef::Id(ttf_parser::GlyphId(0)));
+                    };
                     if let Some(map) = &font.cff_cid_to_gid {
                         return map
                             .get(&cid)
