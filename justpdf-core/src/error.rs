@@ -79,6 +79,81 @@ pub enum JustPdfError {
 
 pub type Result<T> = std::result::Result<T, JustPdfError>;
 
+impl JustPdfError {
+    /// A copy of this error, for a variant that carries only data. `None`
+    /// for `Io` and `CircularReference`.
+    pub(crate) fn rebuilt(&self) -> Option<JustPdfError> {
+        use JustPdfError::*;
+        Some(match self {
+            Io(_) | CircularReference { .. } => return None,
+            NotPdf => NotPdf,
+            UnexpectedEof { offset } => UnexpectedEof { offset: *offset },
+            InvalidToken { offset, detail } => InvalidToken {
+                offset: *offset,
+                detail: detail.clone(),
+            },
+            InvalidXref { offset, detail } => InvalidXref {
+                offset: *offset,
+                detail: detail.clone(),
+            },
+            ObjectNotFound { obj_num, gen_num } => ObjectNotFound {
+                obj_num: *obj_num,
+                gen_num: *gen_num,
+            },
+            StreamDecode { filter, detail } => StreamDecode {
+                filter: filter.clone(),
+                detail: detail.clone(),
+            },
+            LimitExceeded { obj_num, gen_num } => LimitExceeded {
+                obj_num: *obj_num,
+                gen_num: *gen_num,
+            },
+            PageOutOfRange { index, count } => PageOutOfRange {
+                index: *index,
+                count: *count,
+            },
+            UnsupportedVersion { version } => UnsupportedVersion {
+                version: version.clone(),
+            },
+            InvalidObject { offset, detail } => InvalidObject {
+                offset: *offset,
+                detail: detail.clone(),
+            },
+            StartXrefNotFound => StartXrefNotFound,
+            TrailerNotFound => TrailerNotFound,
+            AnnotationError { detail } => AnnotationError {
+                detail: detail.clone(),
+            },
+            FormError { detail } => FormError {
+                detail: detail.clone(),
+            },
+            EncryptionError { detail } => EncryptionError {
+                detail: detail.clone(),
+            },
+            IncorrectPassword => IncorrectPassword,
+            UnsupportedEncryption { detail } => UnsupportedEncryption {
+                detail: detail.clone(),
+            },
+            EncryptedDocument => EncryptedDocument,
+            SignatureError { detail } => SignatureError {
+                detail: detail.clone(),
+            },
+            OutlineError { detail } => OutlineError {
+                detail: detail.clone(),
+            },
+            EmbeddedFileError { detail } => EmbeddedFileError {
+                detail: detail.clone(),
+            },
+            OptionalContentError { detail } => OptionalContentError {
+                detail: detail.clone(),
+            },
+            RepairError { detail } => RepairError {
+                detail: detail.clone(),
+            },
+        })
+    }
+}
+
 /// Pretty-print a byte slice as a short preview (for error messages).
 #[allow(dead_code)]
 pub(crate) fn preview_bytes(data: &[u8], max_len: usize) -> String {

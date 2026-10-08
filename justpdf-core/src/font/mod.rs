@@ -4,12 +4,14 @@ pub mod cjk;
 pub mod cmap;
 mod encoding;
 pub mod opentype;
+mod program;
 pub mod recovery;
 mod standard14;
 pub mod subset;
 pub mod type3;
 
 pub use cmap::ToUnicodeCMap;
+pub use program::{FontProgramData, font_hash};
 mod encoding_tables;
 mod glyph_select;
 #[cfg(test)]

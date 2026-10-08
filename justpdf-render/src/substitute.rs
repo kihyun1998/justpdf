@@ -1,14 +1,26 @@
 //! The bundled URW base-14 font programs a font with no embedded program is
 //! drawn with (`base14-fonts`).
 
+use std::sync::Arc;
+
+use justpdf_core::font::FontProgramData;
+
 /// The bare CFF program standing in for the Standard 14 font `name`, as
-/// `justpdf_core::font::recovery::find_substitute` names it.
+/// `justpdf_core::font::recovery::find_substitute` names it, built once per
+/// process.
 #[cfg(feature = "base14-fonts")]
-pub fn base14_program(name: &[u8]) -> Option<&'static [u8]> {
+pub fn base14_program(name: &[u8]) -> Option<Arc<FontProgramData>> {
     macro_rules! urw {
-        ($file:literal) => {
-            &include_bytes!(concat!("../fonts/urw/", $file))[..]
-        };
+        ($file:literal) => {{
+            static PROGRAM: std::sync::OnceLock<Arc<FontProgramData>> = std::sync::OnceLock::new();
+            PROGRAM
+                .get_or_init(|| {
+                    Arc::new(FontProgramData::new(
+                        &include_bytes!(concat!("../fonts/urw/", $file))[..],
+                    ))
+                })
+                .clone()
+        }};
     }
     Some(match name {
         b"Helvetica" => urw!("NimbusSans-Regular.cff"),
@@ -31,6 +43,6 @@ pub fn base14_program(name: &[u8]) -> Option<&'static [u8]> {
 
 /// No substitutes without `base14-fonts`.
 #[cfg(not(feature = "base14-fonts"))]
-pub fn base14_program(_name: &[u8]) -> Option<&'static [u8]> {
+pub fn base14_program(_name: &[u8]) -> Option<Arc<FontProgramData>> {
     None
 }
