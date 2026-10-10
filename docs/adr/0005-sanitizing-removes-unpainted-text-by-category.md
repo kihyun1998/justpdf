@@ -10,7 +10,7 @@ Each is a separate option, all on by default.
 - **Navigation**: `/Outlines`; named destinations, after every reference to one is rewritten to its explicit destination array; the `/P` prefixes of `/PageLabels` (the numbering style `/S` and start `/St` stay).
 - **Attachments**: the `EmbeddedFiles` name tree, `/AF` arrays, FileAttachment annotations.
 - **JavaScript**: the `JavaScript` name tree, and JavaScript actions in `/OpenAction`, `/AA` and annotation actions.
-- **External actions**: URI, Launch, GoToR, SubmitForm and ImportData actions. A Link annotation that loses its action stays; GoTo actions within the document stay.
+- **External actions**: URI, Launch, GoToR, GoToE, SubmitForm and ImportData actions. A Link annotation that loses its action stays; GoTo actions within the document stay.
 - **Annotation text**: `/Contents`, `/T`, `/Subj` and `/RC` of every annotation, and Popup annotations; a form field's `/TU` and `/TM`.
 
 A document whose modifier sanitized is refused incremental save, as after applying redactions: the original revision still holds what was removed.
