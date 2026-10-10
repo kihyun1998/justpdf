@@ -43,3 +43,11 @@ _Avoid_: redact rect, redaction box
 **Applied redaction**:
 A page from which nothing that would paint inside a redaction area can be recovered from the file; removing content outside the area as well is acceptable, leaving any inside it is not.
 _Avoid_: redacted, blacked out
+
+**Unpainted text**:
+Text a document carries that no page paints: metadata, bookmarks, destination names, page label prefixes, attachments, scripts, link and action targets, annotation text and form field tooltips.
+_Avoid_: hidden text, document-level text
+
+**Sanitized document**:
+A document from which the chosen categories of unpainted text have been removed whole, independent of any redaction area.
+_Avoid_: scrubbed, cleaned, stripped
