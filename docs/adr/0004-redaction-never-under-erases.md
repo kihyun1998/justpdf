@@ -26,3 +26,5 @@ Glyph positions come from the same graphics- and text-state interpreter that tex
 ## Out of scope
 
 The structure tree's `/Alt` and `/ActualText` (document-level), and drawing `OverlayText`.
+
+Text the document carries but no page paints — metadata, bookmarks, destination names, attachments, scripts, action targets, annotation text — has no position for a redaction area to decide. Sanitizing removes it by category: [ADR 0005](0005-sanitizing-removes-unpainted-text-by-category.md).
