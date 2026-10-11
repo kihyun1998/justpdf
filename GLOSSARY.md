@@ -51,3 +51,9 @@ _Avoid_: hidden text, document-level text
 **Sanitized document**:
 A document from which the chosen categories of unpainted text have been removed whole, independent of any redaction area.
 _Avoid_: scrubbed, cleaned, stripped
+
+### Appearances
+
+**Appearance font**:
+The font, supplied by the caller, that a document's generated appearances draw with wherever justpdf chooses the font — signature, stamp, and form fields without a usable `/DA` font.
+_Avoid_: default font, form font
