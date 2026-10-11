@@ -386,16 +386,6 @@ pub fn random_file_id() -> Result<Vec<u8>> {
     Ok(id)
 }
 
-/// Generate a file ID based on document content.
-pub fn generate_file_id(title: &[u8], timestamp: u64) -> Vec<u8> {
-    use md5::Digest;
-    let mut h = md5::Md5::new();
-    h.update(title);
-    h.update(timestamp.to_le_bytes());
-    h.update(b"justpdf");
-    h.finalize().to_vec()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,13 +697,5 @@ mod tests {
         let original = PdfObject::String(b"no encrypt".to_vec());
         let result = encrypt_object(&original, &state, 10, 0).unwrap();
         assert_eq!(result, original); // not encrypted
-    }
-
-    #[test]
-    fn test_generate_file_id() {
-        let id1 = generate_file_id(b"Doc 1", 12345);
-        let id2 = generate_file_id(b"Doc 2", 12345);
-        assert_eq!(id1.len(), 16);
-        assert_ne!(id1, id2);
     }
 }
