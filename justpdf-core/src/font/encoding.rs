@@ -90,15 +90,17 @@ pub(crate) fn winansi_char(code: u8) -> Option<char> {
 /// it is, any other character its WinAnsi code, or `?` when it has none.
 pub fn encode_winansi(text: &str) -> Vec<u8> {
     text.chars()
-        .map(|c| {
-            if c.is_ascii() {
-                return c as u8;
-            }
-            (0x80..=0xFF)
-                .find(|&code| winansi_char(code) == Some(c))
-                .unwrap_or(b'?')
-        })
+        .map(|c| winansi_code(c).unwrap_or(b'?'))
         .collect()
+}
+
+/// The WinAnsi (Windows-1252) code of `c`: ASCII as it is, `None` when `c`
+/// has no code.
+pub(crate) fn winansi_code(c: char) -> Option<u8> {
+    if c.is_ascii() {
+        return Some(c as u8);
+    }
+    (0x80..=0xFF).find(|&code| winansi_char(code) == Some(c))
 }
 
 /// WinAnsi (Windows-1252) decoding.

@@ -25,4 +25,4 @@ Builds the Form XObject of a visible signature: writes the signer, reason and da
 - [Form appearance](form-appearance.md), [Annotation appearance](annotation-appearance.md) — two other generators doing the same job. All three escape strings with `string_syntax`. When fixing the font rules, look at all three together.
 
 ## Known holes / open
-- Tracked: #173 (text beyond WinAnsi)
+- Tracked: #175 (text beyond WinAnsi through caller-supplied appearance fonts)

@@ -33,4 +33,4 @@ The common trait that non-PDF inputs (XPS, EPUB, Office, SVG, CBZ, MOBI, FB2, te
 
 ## Known holes / open
 - Most `to_pdf` tests check only `starts_with(b"%PDF")`.
-- Tracked: #173 (text beyond WinAnsi), #174 (width-based layout)
+- Tracked: #174 (text beyond WinAnsi through caller-supplied fonts, and width-based layout)

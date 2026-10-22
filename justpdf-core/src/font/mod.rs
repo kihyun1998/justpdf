@@ -4,6 +4,7 @@ pub mod cjk;
 pub mod cmap;
 mod encoding;
 mod encoding_cmap;
+mod handle;
 pub mod opentype;
 mod program;
 pub mod recovery;
@@ -13,15 +14,17 @@ pub mod type3;
 
 pub use cmap::ToUnicodeCMap;
 pub use encoding_cmap::{CMapCode, EncodingCMap, type0_encoding_cmap};
-pub use program::{FontProgramData, font_hash};
+pub use handle::{Font, FontEmbedding};
+pub(crate) use handle::{FontEntry, FontRegistry};
+pub use program::{FontProgram, FontProgramData, font_hash};
 mod encoding_tables;
 mod glyph_select;
 #[cfg(test)]
 pub(crate) mod test_font;
-pub(crate) use encoding::winansi_char;
 pub use encoding::{
     Encoding, decode_text, encode_winansi, glyph_name_to_unicode, parse_differences,
 };
+pub(crate) use encoding::{winansi_char, winansi_code};
 pub use glyph_select::{encoding_glyph_name, truetype_glyph_candidates};
 pub use standard14::{is_standard14, standard14_widths};
 

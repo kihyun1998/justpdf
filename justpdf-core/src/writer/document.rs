@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use crate::error::{JustPdfError, Result};
+use crate::font::{Font, FontEmbedding, FontProgram, FontRegistry};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::writer::PdfWriter;
 use crate::writer::encode::make_stream;
@@ -13,9 +14,10 @@ pub struct DocumentBuilder {
     writer: PdfWriter,
     /// Page indirect references in order.
     pages: Vec<IndirectRef>,
-    /// font_name -> (resource_name, font_ref).
+    /// `embed_truetype_font`'s fonts: font_name -> (resource_name, font_ref).
     fonts: HashMap<String, (String, IndirectRef)>,
-    font_counter: u32,
+    /// Fonts registered as `Font` handles.
+    font_registry: FontRegistry,
     /// Document info dictionary entries.
     info: PdfDict,
     /// Pre-allocated Pages object number (for forward reference).
@@ -37,7 +39,7 @@ impl DocumentBuilder {
             writer,
             pages: Vec::new(),
             fonts: HashMap::new(),
-            font_counter: 0,
+            font_registry: FontRegistry::new(),
             info: PdfDict::new(),
             pages_obj_num,
             xmp_ref: None,
@@ -47,28 +49,45 @@ impl DocumentBuilder {
 
     /// Add a standard Type1 font (e.g. "Helvetica", "Times-Roman", "Courier"),
     /// declared `/WinAnsiEncoding` (except `Symbol` and `ZapfDingbats`).
+    /// Adding the same font again returns the same `Font`.
     ///
-    /// Returns the resource name (e.g. "F1") to use when drawing text.
-    pub fn add_standard_font(&mut self, base_font: &str) -> String {
-        // Check if already added
-        if let Some((res_name, _)) = self.fonts.get(base_font) {
-            return res_name.clone();
-        }
+    /// `show_text` writes its text as WinAnsi codes, `?` for a character with
+    /// none, which [`Self::missing_chars`] then reports.
+    pub fn add_standard_font(&mut self, base_font: &str) -> Font {
+        self.font_registry.add_standard(&mut self.writer, base_font)
+    }
 
-        self.font_counter += 1;
-        let resource_name = format!("F{}", self.font_counter);
+    /// Register `program` on this document, subset at `build` to the glyphs
+    /// drawn with it. One `FontProgram` can be registered on several documents.
+    pub fn add_font(&mut self, program: &FontProgram) -> Font {
+        self.add_font_with(program, FontEmbedding::Subset)
+    }
 
-        let font_ref = self
-            .writer
-            .add_object(PdfObject::Dict(standard_font_dict(base_font)));
-        self.fonts
-            .insert(base_font.to_string(), (resource_name.clone(), font_ref));
+    /// Register `program` on this document, embedded as `embedding` says.
+    pub fn add_font_with(&mut self, program: &FontProgram, embedding: FontEmbedding) -> Font {
+        self.font_registry
+            .add_embedded(&mut self.writer, program, embedding)
+    }
 
-        resource_name
+    /// The characters drawn so far with a font of this document that has no
+    /// glyph for them: drawn as `?` in a standard font, or as `.notdef` in an
+    /// embedded one.
+    pub fn missing_chars(&self) -> BTreeSet<char> {
+        self.font_registry.missing_chars()
     }
 
     /// Add a page to the document from a `PageBuilder`.
+    ///
+    /// # Panics
+    ///
+    /// When the page draws with a `Font` registered on a different document.
     pub fn add_page(&mut self, page: PageBuilder) {
+        assert!(
+            page.font_entries()
+                .iter()
+                .all(|entry| self.font_registry.owns(entry)),
+            "the page draws with a font registered on a different document"
+        );
         let pages_ref = IndirectRef {
             obj_num: self.pages_obj_num,
             gen_num: 0,
@@ -121,6 +140,7 @@ impl DocumentBuilder {
     ///
     /// Returns the resource name (e.g. "F1", "F2") for use in page content.
     /// The font is embedded with WinAnsiEncoding and a ToUnicode CMap.
+    #[deprecated(note = "parse a `FontProgram` and register it with `add_font`")]
     pub fn embed_truetype_font(&mut self, font_data: &[u8]) -> Result<String> {
         let face =
             ttf_parser::Face::parse(font_data, 0).map_err(|e| JustPdfError::StreamDecode {
@@ -213,8 +233,7 @@ impl DocumentBuilder {
         });
 
         // Create Font dictionary
-        self.font_counter += 1;
-        let resource_name = format!("F{}", self.font_counter);
+        let resource_name = self.font_registry.next_resource_name();
 
         let mut font_dict = PdfDict::new();
         font_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
@@ -293,6 +312,8 @@ impl DocumentBuilder {
 
     /// Build the document and return the PDF bytes.
     pub fn build(mut self) -> Result<Vec<u8>> {
+        self.font_registry.write(&mut self.writer);
+
         // Create Pages dictionary
         let kids: Vec<PdfObject> = self
             .pages
@@ -685,7 +706,6 @@ mod tests {
         let mut doc = DocumentBuilder::new();
         let res = doc.add_standard_font(font);
         let mut page = crate::writer::page::PageBuilder::new(612.0, 792.0);
-        page.add_font(&res, font);
         page.begin_text();
         page.set_font(&res, 12.0);
         page.move_to(72.0, 720.0);
@@ -722,8 +742,9 @@ mod tests {
     /// The `/Encoding` of the font object `add_standard_font(base_font)` creates.
     fn standard_font_encoding(base_font: &str) -> Option<Vec<u8>> {
         let mut doc = DocumentBuilder::new();
-        doc.add_standard_font(base_font);
-        let (_, font_ref) = doc.fonts.get(base_font).unwrap().clone();
+        let font_ref = doc.add_standard_font(base_font).entries()[0]
+            .font_ref()
+            .clone();
         let reopened = PdfDocument::from_bytes(doc.build().unwrap()).unwrap();
         let PdfObject::Dict(font) = reopened.resolve(&font_ref).unwrap() else {
             panic!("expected a font dictionary")
@@ -746,6 +767,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn embedded_truetype_maps_codes_through_win_ansi() {
         let font_data = std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -763,7 +785,7 @@ mod tests {
         let mut page = crate::writer::page::PageBuilder::new(612.0, 792.0);
         page.add_font_ref(&res, font_ref.clone());
         page.begin_text();
-        page.set_font(&res, 12.0);
+        page.set_font_name(&res, 12.0);
         page.move_to(72.0, 720.0);
         page.show_text("€ — “ok”");
         page.end_text();
@@ -820,7 +842,6 @@ mod tests {
         let font_name = doc.add_standard_font("Helvetica");
 
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font_name, "Helvetica");
         page.begin_text();
         page.set_font(&font_name, 24.0);
         page.move_to(72.0, 720.0);
@@ -882,13 +903,14 @@ mod tests {
         let mut doc = DocumentBuilder::new();
         let name1 = doc.add_standard_font("Helvetica");
         let name2 = doc.add_standard_font("Helvetica");
-        assert_eq!(name1, name2);
+        assert_eq!(name1.resource_name(), name2.resource_name());
 
         let name3 = doc.add_standard_font("Courier");
-        assert_ne!(name1, name3);
+        assert_ne!(name1.resource_name(), name3.resource_name());
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_embed_truetype_invalid_data() {
         let mut doc = DocumentBuilder::new();
         let result = doc.embed_truetype_font(b"not a font");
@@ -1042,10 +1064,11 @@ mod tests {
         // Empty font name should still work (no panic)
         let mut doc = DocumentBuilder::new();
         let name = doc.add_standard_font("");
-        assert!(!name.is_empty()); // returns "F1" regardless
+        assert!(!name.resource_name().is_empty()); // "F1" regardless
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_embed_truetype_invalid_data_returns_error() {
         let mut doc = DocumentBuilder::new();
         let result = doc.embed_truetype_font(b"not a font file");

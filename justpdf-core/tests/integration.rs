@@ -367,7 +367,6 @@ fn create_simple_pdf() -> Vec<u8> {
     let mut doc = DocumentBuilder::new();
     let font = doc.add_standard_font("Helvetica");
     let mut page = PageBuilder::new(612.0, 792.0);
-    page.add_font(&font, "Helvetica");
     page.begin_text();
     page.set_font(&font, 12.0);
     page.move_to(72.0, 720.0);
@@ -969,7 +968,6 @@ fn test_redaction_keeps_content_outside_the_area_unchanged() {
     let mut doc = DocumentBuilder::new();
     let font = doc.add_standard_font("Helvetica");
     let mut page = PageBuilder::new(612.0, 792.0);
-    page.add_font(&font, "Helvetica");
     page.begin_text();
     page.set_font(&font, 12.0);
     page.move_to(72.0, 720.0);
@@ -1027,7 +1025,6 @@ fn test_encrypt_rc4_128_roundtrip() {
     let font_name = builder.add_standard_font("Helvetica");
 
     let mut page = justpdf_core::writer::page::PageBuilder::new(612.0, 792.0);
-    page.add_font(&font_name, "Helvetica");
     page.begin_text();
     page.set_font(&font_name, 24.0);
     page.move_to(72.0, 720.0);
@@ -1075,7 +1072,6 @@ fn test_encrypt_aes128_roundtrip() {
     let font_name = builder.add_standard_font("Courier");
 
     let mut page = justpdf_core::writer::page::PageBuilder::new(612.0, 792.0);
-    page.add_font(&font_name, "Courier");
     page.begin_text();
     page.set_font(&font_name, 12.0);
     page.move_to(72.0, 700.0);
@@ -1107,7 +1103,6 @@ fn test_encrypt_aes256_roundtrip() {
     let font_name = builder.add_standard_font("Helvetica");
 
     let mut page = justpdf_core::writer::page::PageBuilder::new(612.0, 792.0);
-    page.add_font(&font_name, "Helvetica");
     page.begin_text();
     page.set_font(&font_name, 18.0);
     page.move_to(72.0, 700.0);
@@ -2174,7 +2169,6 @@ fn test_written_xref_entries_are_20_bytes() {
     let font = builder.add_standard_font("Helvetica");
     for text in ["one", "two"] {
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
         page.begin_text();
         page.set_font(&font, 12.0);
         page.move_to(72.0, 720.0);

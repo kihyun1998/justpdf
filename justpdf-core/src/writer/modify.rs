@@ -1,10 +1,11 @@
 //! Document modification: load existing PDF, modify, and save.
 //! Also provides page merge/split operations.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use crate::error::Result;
+use crate::font::{Font, FontEmbedding, FontProgram, FontRegistry};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::page::{PageInfo, collect_pages};
 use crate::parser::PdfDocument;
@@ -27,6 +28,8 @@ pub struct DocumentModifier {
     source_encryption: Option<(crate::crypto::SecurityState, Option<PdfDict>)>,
     /// Encryption applied by `build`.
     encryption: Encryption,
+    /// Fonts registered as `Font` handles, written before every output.
+    fonts: FontRegistry,
 }
 
 /// Encryption applied by [`DocumentModifier::build`].
@@ -75,7 +78,38 @@ impl DocumentModifier {
                 .security_state()
                 .map(|state| (state.clone(), source_encrypt_dict(doc))),
             encryption: Encryption::None,
+            fonts: FontRegistry::new(),
         })
+    }
+
+    /// Register `program` on this document, subset to the glyphs drawn with
+    /// it when the document is written.
+    pub fn add_font(&mut self, program: &FontProgram) -> Font {
+        self.add_font_with(program, FontEmbedding::Subset)
+    }
+
+    /// Register `program` on this document, embedded as `embedding` says.
+    pub fn add_font_with(&mut self, program: &FontProgram, embedding: FontEmbedding) -> Font {
+        self.fonts
+            .add_embedded(&mut self.writer, program, embedding)
+    }
+
+    /// Add a standard Type1 font declared `/WinAnsiEncoding` (except `Symbol`
+    /// and `ZapfDingbats`). Adding the same font again returns the same `Font`.
+    pub fn add_standard_font(&mut self, base_font: &str) -> Font {
+        self.fonts.add_standard(&mut self.writer, base_font)
+    }
+
+    /// The characters drawn so far with a font of this document that has no
+    /// glyph for them: drawn as `?` in a standard font, or as `.notdef` in an
+    /// embedded one.
+    pub fn missing_chars(&self) -> BTreeSet<char> {
+        self.fonts.missing_chars()
+    }
+
+    /// Write every registered embedded font from the characters drawn so far.
+    fn write_fonts(&mut self) {
+        self.fonts.write(&mut self.writer);
     }
 
     /// Get a reference to the internal writer for low-level modifications.
@@ -131,8 +165,18 @@ impl DocumentModifier {
         Ok(())
     }
 
-    /// Insert a new page at the given index.
+    /// Insert a new page at the given index. Fails when the page draws with a
+    /// `Font` registered on a different document.
     pub fn insert_page(&mut self, page_index: usize, page: PageBuilder) -> Result<()> {
+        if !page
+            .font_entries()
+            .iter()
+            .all(|entry| self.fonts.owns(entry))
+        {
+            return Err(crate::error::JustPdfError::FontError {
+                detail: "the page draws with a font registered on a different document".into(),
+            });
+        }
         let pages_ref = self.find_pages_ref()?;
         let pages_obj_num = pages_ref.obj_num;
 
@@ -267,6 +311,7 @@ impl DocumentModifier {
     /// Serialize to PDF bytes, encrypted when `set_encryption` or
     /// `preserve_encryption` was called.
     pub fn build(mut self) -> Result<Vec<u8>> {
+        self.write_fonts();
         let config = match std::mem::replace(&mut self.encryption, Encryption::None) {
             Encryption::New(config) => config,
             Encryption::Source if self.source_encryption.is_some() => {
@@ -331,6 +376,7 @@ impl DocumentModifier {
         &mut self,
         max_objects_per_stream: usize,
     ) -> Result<Vec<crate::writer::object_stream::CompressedObjInfo>> {
+        self.write_fonts();
         let catalog_num = self.catalog_num;
         let pages_num = match self.find_object(catalog_num) {
             Some(PdfObject::Dict(catalog)) => catalog.get_ref(b"Pages").map(|r| r.obj_num),
@@ -364,9 +410,10 @@ impl DocumentModifier {
     /// Returns an error when `set_encryption` was called, or
     /// `preserve_encryption` on an encrypted source.
     pub fn build_with_xref_stream(
-        self,
+        mut self,
         compressed: &[crate::writer::object_stream::CompressedObjInfo],
     ) -> Result<Vec<u8>> {
+        self.write_fonts();
         let encrypted = match self.encryption {
             Encryption::None => false,
             Encryption::New(_) => true,
@@ -482,8 +529,10 @@ fn collect_references_inner(obj: &PdfObject, refs: &mut Vec<u32>) {
 /// trailer carries the original trailer's keys ([`incremental_trailer`]). When
 /// `doc` is encrypted, the appended objects are encrypted with its file key, so
 /// `doc` must be authenticated.
-pub fn incremental_save(doc: &PdfDocument, modifier: DocumentModifier) -> Result<Vec<u8>> {
+pub fn incremental_save(doc: &PdfDocument, mut modifier: DocumentModifier) -> Result<Vec<u8>> {
     use std::io::Write;
+
+    modifier.write_fonts();
 
     if matches!(modifier.encryption, Encryption::New(_)) {
         return Err(crate::error::JustPdfError::UnsupportedEncryption {
@@ -806,7 +855,6 @@ mod tests {
 
         for i in 0..num_pages {
             let mut page = PageBuilder::new(612.0, 792.0);
-            page.add_font(&font, "Helvetica");
             page.begin_text();
             page.set_font(&font, 12.0);
             page.move_to(72.0, 720.0);
@@ -910,7 +958,6 @@ mod tests {
         let mut doc = DocumentBuilder::new();
         let font = doc.add_standard_font("Helvetica");
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
         page.begin_text();
         page.set_font(&font, 12.0);
         page.move_to(72.0, 720.0);
@@ -1465,7 +1512,6 @@ mod tests {
         let mut doc = DocumentBuilder::new();
         let font = doc.add_standard_font("Helvetica");
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
         page.begin_text();
         page.set_font(&font, 12.0);
         page.move_to(72.0, 720.0);

@@ -49,6 +49,7 @@ std::fs::write("output.pdf", &compressed)?;
 ## Features
 
 - **PDF parsing & writing** — incremental updates, object streams, cross-reference streams
+- **Unicode text on pages** — caller-supplied TrueType fonts (`.ttf`, `.ttc` faces) embedded as subset Type0 fonts with fallback chains, so Korean, Japanese, Chinese and Cyrillic text draws and extracts back (no shaping or bidi yet)
 - **Text extraction** — Unicode, CJK, ToUnicode CMap support
 - **Compression engine** (the `extreme` preset also removes embedded files — #58) — JPEG re-encoding, image downscaling, font subsetting, stream dedup, Flate re-compression, unused-resource removal, metadata stripping, grayscale conversion, DPI-aware scaling
 - **4 compression presets** — `low`, `medium`, `high`, `extreme` + fully custom options (encrypted input must be decrypted first)

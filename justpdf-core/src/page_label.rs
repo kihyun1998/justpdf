@@ -457,7 +457,6 @@ mod tests {
         let font = doc.add_standard_font("Helvetica");
         for i in 0..num_pages {
             let mut page = PageBuilder::new(612.0, 792.0);
-            page.add_font(&font, "Helvetica");
             page.begin_text();
             page.set_font(&font, 12.0);
             page.move_to(72.0, 720.0);

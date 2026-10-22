@@ -10,7 +10,6 @@ fn create_text_pdf(num_pages: usize, lines_per_page: usize) -> Vec<u8> {
     let font = doc.add_standard_font("Helvetica");
     for i in 0..num_pages {
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
         page.begin_text();
         page.set_font(&font, 12.0);
         for line in 0..lines_per_page {

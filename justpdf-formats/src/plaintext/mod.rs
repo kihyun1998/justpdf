@@ -93,7 +93,6 @@ impl PlainTextDocument {
         let font_name = builder.add_standard_font("Courier");
 
         let mut page = PageBuilder::new(self.page_width, self.page_height);
-        page.add_font(&font_name, "Courier");
         page.begin_text();
         page.set_font(&font_name, self.font_size);
 
@@ -198,7 +197,6 @@ impl FormatDocument for PlainTextDocument {
 
         for page_lines in &self.pages {
             let mut page = PageBuilder::new(self.page_width, self.page_height);
-            page.add_font(&font_name, "Courier");
             page.begin_text();
             page.set_font(&font_name, self.font_size);
 

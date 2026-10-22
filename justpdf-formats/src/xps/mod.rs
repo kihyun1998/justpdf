@@ -380,7 +380,6 @@ impl FormatDocument for XpsDocument {
 
             // If there's text, render it as simple text layout
             if !pg.text.is_empty() {
-                page.add_font(&font_name, "Courier");
                 page.begin_text();
                 page.set_font(&font_name, 10.0);
 
