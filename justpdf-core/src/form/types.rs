@@ -74,8 +74,11 @@ pub struct FormField {
     pub rect: Option<Rect>,
     /// Default appearance string (/DA).
     pub default_appearance: Option<String>,
-    /// Reference to the field object.
+    /// Reference to the field object, which holds `/V`.
     pub field_ref: IndirectRef,
+    /// The field's widget annotations: its kids without `/T`, or the field
+    /// itself when field and widget are one dictionary.
+    pub widgets: Vec<IndirectRef>,
     /// Object number of the page containing the widget.
     pub page_obj_num: Option<u32>,
 }
@@ -147,6 +150,7 @@ mod tests {
                 obj_num: 1,
                 gen_num: 0,
             },
+            widgets: Vec::new(),
             page_obj_num: None,
         };
         assert_eq!(field.value_as_string(), Some("Hello".to_string()));
@@ -168,6 +172,7 @@ mod tests {
                 obj_num: 1,
                 gen_num: 0,
             },
+            widgets: Vec::new(),
             page_obj_num: None,
         };
         assert!(checked.is_checked());
@@ -186,6 +191,7 @@ mod tests {
                 obj_num: 1,
                 gen_num: 0,
             },
+            widgets: Vec::new(),
             page_obj_num: None,
         };
         assert!(!unchecked.is_checked());

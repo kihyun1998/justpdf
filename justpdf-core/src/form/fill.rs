@@ -1,5 +1,5 @@
 use crate::error::{JustPdfError, Result};
-use crate::object::PdfObject;
+use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::writer::modify::DocumentModifier;
 
 use super::types::*;
@@ -12,7 +12,10 @@ pub fn get_field_value(form: &AcroForm, field_name: &str) -> Option<PdfObject> {
         .and_then(|f| f.value.clone())
 }
 
-/// Set a field's value by name.
+/// Set a field's value by name: `/V` on the field, and for a checkbox or
+/// radio button `/AS` on each widget — the value where the widget's `/AP /N`
+/// has that state (or the widget has no `/AP`), `/Off` otherwise. Sets the
+/// AcroForm's `/NeedAppearances` so a viewer draws the new value.
 pub fn set_field_value(
     modifier: &mut DocumentModifier,
     form: &AcroForm,
@@ -33,28 +36,96 @@ pub fn set_field_value(
         });
     }
 
-    // Update the field object's /V entry
-    let field_obj = modifier
-        .find_object_pub(field.field_ref.obj_num)
-        .cloned()
-        .unwrap_or(PdfObject::Null);
-
-    if let PdfObject::Dict(mut field_dict) = field_obj {
-        field_dict.insert(b"V".to_vec(), value.clone());
-
-        // For checkboxes, also update /AS (appearance state)
-        if (field.field_type == FieldType::Checkbox || field.field_type == FieldType::RadioButton)
-            && let Some(name) = value.as_name()
-        {
-            field_dict.insert(b"AS".to_vec(), PdfObject::Name(name.to_vec()));
-        }
-
-        modifier.set_object(field.field_ref.obj_num, PdfObject::Dict(field_dict));
-        Ok(())
-    } else {
-        Err(JustPdfError::FormError {
+    let Some(mut field_dict) = dict_at(modifier, &field.field_ref) else {
+        return Err(JustPdfError::FormError {
             detail: format!("invalid field object for: {field_name}"),
-        })
+        });
+    };
+    field_dict.insert(b"V".to_vec(), value.clone());
+    modifier.set_object(field.field_ref.obj_num, PdfObject::Dict(field_dict));
+
+    if matches!(
+        field.field_type,
+        FieldType::Checkbox | FieldType::RadioButton
+    ) && let Some(state) = value.as_name()
+    {
+        for widget in &field.widgets {
+            let Some(mut widget_dict) = dict_at(modifier, widget) else {
+                continue;
+            };
+            let shown = match appearance_states(&widget_dict, modifier) {
+                Some(states) if !states.iter().any(|s| s == state) => b"Off".to_vec(),
+                _ => state.to_vec(),
+            };
+            widget_dict.insert(b"AS".to_vec(), PdfObject::Name(shown));
+            modifier.set_object(widget.obj_num, PdfObject::Dict(widget_dict));
+        }
+    }
+
+    set_need_appearances(modifier);
+    Ok(())
+}
+
+/// The dictionary object `r` holds in `modifier`.
+fn dict_at(modifier: &DocumentModifier, r: &IndirectRef) -> Option<PdfDict> {
+    match modifier.find_object_pub(r.obj_num)? {
+        PdfObject::Dict(d) => Some(d.clone()),
+        _ => None,
+    }
+}
+
+/// `obj`, resolved in `modifier` when it is a reference.
+fn direct(modifier: &DocumentModifier, obj: &PdfObject) -> Option<PdfObject> {
+    match obj {
+        PdfObject::Reference(r) => modifier.find_object_pub(r.obj_num).cloned(),
+        other => Some(other.clone()),
+    }
+}
+
+/// The appearance state names of a widget: the keys of its `/AP /N`, else of
+/// `/AP /D`. `None` when it has neither.
+fn appearance_states(widget: &PdfDict, modifier: &DocumentModifier) -> Option<Vec<Vec<u8>>> {
+    let ap = direct(modifier, widget.get(b"AP")?)?;
+    let ap = ap.as_dict()?;
+    [b"N".as_slice(), b"D"].iter().find_map(|key| {
+        let states = direct(modifier, ap.get(key)?)?;
+        let states = states.as_dict()?;
+        Some(states.iter().map(|(name, _)| name.clone()).collect())
+    })
+}
+
+/// A checkbox's on-state: the first state of its widgets' appearances that is
+/// not `/Off`, `/Yes` when they have none.
+fn checkbox_on_state(field: &FormField, modifier: &DocumentModifier) -> Vec<u8> {
+    field
+        .widgets
+        .iter()
+        .filter_map(|w| appearance_states(&dict_at(modifier, w)?, modifier))
+        .flatten()
+        .find(|state| state != b"Off")
+        .unwrap_or_else(|| b"Yes".to_vec())
+}
+
+/// Set `/NeedAppearances true` in the catalog's AcroForm, a direct dictionary
+/// or the object a reference points to.
+fn set_need_appearances(modifier: &mut DocumentModifier) {
+    let catalog = modifier.catalog_ref();
+    let Some(mut catalog_dict) = dict_at(modifier, &catalog) else {
+        return;
+    };
+    match catalog_dict.get(b"AcroForm").cloned() {
+        Some(PdfObject::Reference(r)) => {
+            if let Some(mut acroform) = dict_at(modifier, &r) {
+                acroform.insert(b"NeedAppearances".to_vec(), PdfObject::Bool(true));
+                modifier.set_object(r.obj_num, PdfObject::Dict(acroform));
+            }
+        }
+        Some(PdfObject::Dict(mut acroform)) => {
+            acroform.insert(b"NeedAppearances".to_vec(), PdfObject::Bool(true));
+            catalog_dict.insert(b"AcroForm".to_vec(), PdfObject::Dict(acroform));
+            modifier.set_object(catalog.obj_num, PdfObject::Dict(catalog_dict));
+        }
+        _ => {}
     }
 }
 
@@ -81,7 +152,7 @@ pub fn toggle_checkbox(
     let new_value = if field.is_checked() {
         PdfObject::Name(b"Off".to_vec())
     } else {
-        PdfObject::Name(b"Yes".to_vec())
+        PdfObject::Name(checkbox_on_state(field, modifier))
     };
 
     set_field_value(modifier, form, field_name, new_value)
@@ -109,6 +180,7 @@ mod tests {
                         obj_num: 10,
                         gen_num: 0,
                     },
+                    widgets: Vec::new(),
                     page_obj_num: None,
                 },
                 FormField {
@@ -125,6 +197,7 @@ mod tests {
                         obj_num: 11,
                         gen_num: 0,
                     },
+                    widgets: Vec::new(),
                     page_obj_num: None,
                 },
                 FormField {
@@ -141,6 +214,7 @@ mod tests {
                         obj_num: 12,
                         gen_num: 0,
                     },
+                    widgets: Vec::new(),
                     page_obj_num: None,
                 },
             ],

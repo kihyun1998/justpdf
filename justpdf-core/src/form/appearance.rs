@@ -487,6 +487,7 @@ mod tests {
                 obj_num: 1,
                 gen_num: 0,
             },
+            widgets: Vec::new(),
             page_obj_num: None,
         };
         let text = PdfObject::String(b"x".to_vec());
@@ -531,6 +532,7 @@ mod tests {
                 obj_num: 1,
                 gen_num: 0,
             },
+            widgets: Vec::new(),
             page_obj_num: None,
         };
         let content = text_field_appearance(&field, &FieldFont::Default, 200.0, 20.0).unwrap();
@@ -560,6 +562,7 @@ mod tests {
                 obj_num: 1,
                 gen_num: 0,
             },
+            widgets: Vec::new(),
             page_obj_num: None,
         };
         let content = checkbox_appearance(&field, 14.0, 14.0);
@@ -589,6 +592,7 @@ mod tests {
                 obj_num: 1,
                 gen_num: 0,
             },
+            widgets: Vec::new(),
             page_obj_num: None,
         };
         let content = checkbox_appearance(&field, 14.0, 14.0);
@@ -619,6 +623,7 @@ mod tests {
                 obj_num: 1,
                 gen_num: 0,
             },
+            widgets: Vec::new(),
             page_obj_num: None,
         };
         let content = text_field_appearance(&field, &FieldFont::Default, 200.0, 20.0).unwrap();
@@ -651,6 +656,7 @@ mod tests {
                 obj_num: 1,
                 gen_num: 0,
             },
+            widgets: Vec::new(),
             page_obj_num: None,
         }
     }
