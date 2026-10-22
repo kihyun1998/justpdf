@@ -57,3 +57,7 @@ _Avoid_: scrubbed, cleaned, stripped
 **Appearance font**:
 The font, supplied by the caller, that a document's generated appearances draw with wherever justpdf chooses the font — signature, stamp, and form fields without a usable `/DA` font.
 _Avoid_: default font, form font
+
+**Text box**:
+The part of a form field's widget rectangle, inside its border and padding, that its value is laid out in and clipped to.
+_Avoid_: inner box, content rect, padding box
