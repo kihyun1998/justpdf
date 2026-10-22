@@ -1,4 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
+use justpdf_core::font::FontProgram;
 use justpdf_core::page::collect_pages;
 use justpdf_core::parser::PdfDocument;
 use justpdf_core::text::{extract_all_text_string, extract_page_text};
@@ -68,8 +69,38 @@ fn bench_collect_pages(c: &mut Criterion) {
     });
 }
 
+const HANGUL: &[u8] = include_bytes!("../tests/fixtures/JustpdfTestHangul-Regular.ttf");
+const NOTO_SANS: &[u8] = include_bytes!("../tests/fixtures/NotoSans-Regular.ttf");
+
+fn bench_show_text(c: &mut Criterion) {
+    let line = "The quick brown fox jumps over the lazy dog 한글 ".repeat(2);
+    let mut doc = DocumentBuilder::new();
+    let hangul = doc.add_font(&FontProgram::parse(HANGUL, 0).unwrap());
+    let noto = doc.add_font(&FontProgram::parse(NOTO_SANS, 0).unwrap());
+    let embedded = hangul.with_fallback(&noto);
+    let helvetica = doc.add_standard_font("Helvetica");
+    for (name, font) in [
+        ("show_text_embedded_fallback_100lines", &embedded),
+        ("show_text_helvetica_100lines", &helvetica),
+    ] {
+        c.bench_function(name, |b| {
+            b.iter(|| {
+                let mut page = PageBuilder::new(612.0, 792.0);
+                page.begin_text();
+                page.set_font(font, 12.0);
+                for _ in 0..100 {
+                    page.show_text(&line);
+                }
+                page.end_text();
+                page
+            })
+        });
+    }
+}
+
 criterion_group!(
     benches,
+    bench_show_text,
     bench_extract_page_text,
     bench_extract_all_text,
     bench_collect_pages
