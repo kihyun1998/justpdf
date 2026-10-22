@@ -40,8 +40,8 @@ pub fn standard14_widths(name: &[u8]) -> Vec<f64> {
     }
 }
 
-fn strip_subset_prefix(name: &[u8]) -> &[u8] {
-    // Subset prefix is exactly 6 uppercase letters followed by '+'
+/// `name` without its subset tag: six upper-case letters and `+`.
+pub(super) fn strip_subset_prefix(name: &[u8]) -> &[u8] {
     if name.len() > 7 && name[6] == b'+' && name[..6].iter().all(|&b| b.is_ascii_uppercase()) {
         &name[7..]
     } else {

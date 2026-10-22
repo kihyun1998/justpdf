@@ -7,7 +7,7 @@ Sets a value on a field (`/V`; `/AS` for buttons). Refuses read-only fields.
 **None.**
 
 ## Design model
-- **It does not regenerate the appearance and does not set `NeedAppearances`**: after the value changes, a viewer still shows the old appearance (inferred). The appearance generator `generate_field_appearance` has no caller in product code.
+- **It does not regenerate the appearance and does not set `NeedAppearances`**: after the value changes, a viewer still shows the old appearance (inferred). The appearance generator `generate_field_appearance` has no caller in product code; since #178 it draws `/DA` fields in their `/DR` font, so `set_field_value` can call it (#204).
 - The checkbox on-state name is hard-coded as `/Yes` (real files can use a different name).
 
 ## Code
@@ -26,4 +26,4 @@ Sets a value on a field (`/V`; `/AS` for buttons). Refuses read-only fields.
 
 ## Known holes / open
 - A filled value does not show on screen (above, inferred; no test checks it by rendering).
-- Tracked: #204 (form fill; appearance regeneration waits on #178)
+- Tracked: #204 (form fill; appearance regeneration)

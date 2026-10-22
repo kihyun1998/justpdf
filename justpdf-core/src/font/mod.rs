@@ -13,11 +13,13 @@ pub mod subset;
 pub mod type3;
 
 pub use cmap::ToUnicodeCMap;
+pub(crate) use encoder::FontEncoder;
 pub use encoding_cmap::{CMapCode, EncodingCMap, type0_encoding_cmap};
 pub use handle::{Font, FontEmbedding};
 pub(crate) use handle::{FontEntry, FontRegistry};
 pub use program::{FontProgram, FontProgramData, font_hash};
 mod builtin_encoding_tables;
+mod encoder;
 mod encoding_tables;
 mod glyph_select;
 #[cfg(test)]

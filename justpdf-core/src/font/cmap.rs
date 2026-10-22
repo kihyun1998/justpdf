@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 
+/// How many codes [`ToUnicodeCMap::entries`] walks through ranges.
+const MAX_RANGE_CODES: usize = 1 << 20;
+
 /// A parsed ToUnicode CMap: maps character codes to Unicode strings.
 #[derive(Debug, Clone)]
 pub struct ToUnicodeCMap {
@@ -70,6 +73,34 @@ impl ToUnicodeCMap {
         }
 
         None
+    }
+
+    /// Every code with a mapping and the text [`Self::lookup`] gives it,
+    /// sorted by code. Ranges are walked for at most `MAX_RANGE_CODES` codes
+    /// in all.
+    pub(crate) fn entries(&self) -> Vec<(u32, String)> {
+        let mut entries: HashMap<u32, String> = self.mappings.clone();
+        let mut budget = MAX_RANGE_CODES;
+        for &(start, end, start_unicode) in &self.ranges {
+            for code in start..=end {
+                if budget == 0 {
+                    break;
+                }
+                budget -= 1;
+                if entries.contains_key(&code) {
+                    continue;
+                }
+                if let Some(c) = start_unicode
+                    .checked_add(code - start)
+                    .and_then(char::from_u32)
+                {
+                    entries.insert(code, c.to_string());
+                }
+            }
+        }
+        let mut entries: Vec<(u32, String)> = entries.into_iter().collect();
+        entries.sort_unstable_by_key(|&(code, _)| code);
+        entries
     }
 
     /// Number of mappings.
@@ -350,5 +381,26 @@ endbfrange
     fn test_multibyte_unicode() {
         // Two codepoints
         assert_eq!(hex_to_unicode_string("00480069"), "Hi");
+    }
+
+    #[test]
+    fn entries_give_what_lookup_gives_sorted_by_code() {
+        let cmap = ToUnicodeCMap::parse(
+            b"1 beginbfchar\n<0002> <0058>\nendbfchar\n\
+2 beginbfrange\n<0001> <0003> <0041>\n<0003> <0004> <0061>\nendbfrange\n",
+        );
+        let entries = cmap.entries();
+        assert_eq!(
+            entries,
+            vec![
+                (1, "A".to_string()),
+                (2, "X".to_string()),
+                (3, "C".to_string()),
+                (4, "b".to_string()),
+            ]
+        );
+        for (code, text) in &entries {
+            assert_eq!(cmap.lookup(*code).as_ref(), Some(text));
+        }
     }
 }
