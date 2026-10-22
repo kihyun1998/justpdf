@@ -51,6 +51,17 @@ pub(crate) struct FontEntry {
     font_ref: IndirectRef,
     kind: FontKind,
     usage: Mutex<Usage>,
+    /// Embedded fonts: the glyph of each character looked up so far.
+    glyphs: Mutex<HashMap<char, Glyph>>,
+}
+
+/// An embedded font's glyph for one character.
+#[derive(Debug, Clone, Copy)]
+struct Glyph {
+    /// `None` when the font has no glyph for the character.
+    gid: Option<u16>,
+    /// Advance in thousandths of an em: the glyph's, or `.notdef`'s.
+    advance: f64,
 }
 
 #[derive(Debug)]
@@ -167,8 +178,20 @@ impl FontEntry {
     fn has_glyph(&self, ch: char) -> bool {
         match &self.kind {
             FontKind::Standard { .. } => super::winansi_code(ch).is_some(),
-            FontKind::Embedded { program, .. } => program.glyph_id(ch).is_some(),
+            FontKind::Embedded { program, .. } => self.glyph(program, ch).gid.is_some(),
         }
+    }
+
+    /// `ch`'s glyph in `program`, this entry's embedded program.
+    fn glyph(&self, program: &FontProgram, ch: char) -> Glyph {
+        let mut glyphs = self.glyphs.lock().unwrap_or_else(|e| e.into_inner());
+        *glyphs.entry(ch).or_insert_with(|| {
+            let gid = program.glyph_id(ch);
+            Glyph {
+                gid,
+                advance: program.glyph_advance(gid.unwrap_or(0)),
+            }
+        })
     }
 
     /// Advance of `ch` in thousandths of an em: its glyph's, or `.notdef`'s
@@ -179,9 +202,7 @@ impl FontEntry {
                 let code = super::winansi_code(ch).unwrap_or(b'?');
                 super::standard14_widths(base_font.as_bytes())[code as usize]
             }
-            FontKind::Embedded { program, .. } => {
-                program.glyph_advance(program.glyph_id(ch).unwrap_or(0))
-            }
+            FontKind::Embedded { program, .. } => self.glyph(program, ch).advance,
         }
     }
 
@@ -518,6 +539,7 @@ impl FontRegistry {
             font_ref,
             kind,
             usage: Mutex::new(Usage::default()),
+            glyphs: Mutex::new(HashMap::new()),
         });
         self.entries.push(entry.clone());
         Font { chain: vec![entry] }
