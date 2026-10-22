@@ -464,3 +464,55 @@ fn a_type0_font_with_a_predefined_cmap_other_than_identity_gives_no_appearance()
         &field(FieldType::Text, "가", Some("/K 9 Tf")),
     );
 }
+
+/// The last fill-colour operator before the first `Tj` of `content`, with
+/// its operands.
+fn fill_colour_before_tj(content: &[u8]) -> String {
+    let mut last = String::new();
+    for op in justpdf_core::content::parse_content_stream(content).unwrap() {
+        match op.operator.as_slice() {
+            b"Tj" => break,
+            b"g" | b"rg" | b"k" | b"sc" | b"scn" => {
+                let operands: Vec<String> = op
+                    .operands
+                    .iter()
+                    .map(|o| match o {
+                        justpdf_core::content::Operand::Integer(i) => i.to_string(),
+                        justpdf_core::content::Operand::Real(r) => r.to_string(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect();
+                last = format!(
+                    "{} {}",
+                    operands.join(" "),
+                    String::from_utf8_lossy(&op.operator)
+                );
+            }
+            _ => {}
+        }
+    }
+    last
+}
+
+#[test]
+fn every_field_draws_its_text_in_the_colour_da_sets() {
+    let doc = source();
+    for field_type in [
+        FieldType::Text,
+        FieldType::ComboBox,
+        FieldType::ListBox,
+        FieldType::PushButton,
+    ] {
+        for (da, colour) in [("/Helv 12 Tf 1 0 0 rg", "1 0 0 rg"), ("/Helv 12 Tf", "0 g")] {
+            let mut modifier = with_dr(&doc, vec![("Helv", helvetica_win_ansi())]);
+            let ap = generate_field_appearance(&field(field_type, "Hi", Some(da)), &mut modifier)
+                .unwrap();
+            let (content, _) = appearance(&modifier, &ap);
+            assert_eq!(
+                fill_colour_before_tj(&content),
+                colour,
+                "{field_type:?} {da}"
+            );
+        }
+    }
+}
