@@ -103,6 +103,27 @@ pub(crate) fn winansi_code(c: char) -> Option<u8> {
     (0x80..=0xFF).find(|&code| winansi_char(code) == Some(c))
 }
 
+/// The Symbol built-in encoding's code of `c`, `None` when it has none.
+pub(crate) fn symbol_code(c: char) -> Option<u8> {
+    table_code(super::builtin_encoding_tables::SYMBOL_FROM_UNICODE, c)
+}
+
+/// The ZapfDingbats built-in encoding's code of `c`, `None` when it has none.
+pub(crate) fn zapf_dingbats_code(c: char) -> Option<u8> {
+    table_code(
+        super::builtin_encoding_tables::ZAPF_DINGBATS_FROM_UNICODE,
+        c,
+    )
+}
+
+/// `c`'s code in a Unicode-to-code table sorted by Unicode.
+fn table_code(table: &[(char, u8)], c: char) -> Option<u8> {
+    table
+        .binary_search_by_key(&c, |&(u, _)| u)
+        .ok()
+        .map(|i| table[i].1)
+}
+
 /// WinAnsi (Windows-1252) decoding.
 fn decode_winansi(bytes: &[u8]) -> String {
     bytes

@@ -17,6 +17,7 @@ pub use encoding_cmap::{CMapCode, EncodingCMap, type0_encoding_cmap};
 pub use handle::{Font, FontEmbedding};
 pub(crate) use handle::{FontEntry, FontRegistry};
 pub use program::{FontProgram, FontProgramData, font_hash};
+mod builtin_encoding_tables;
 mod encoding_tables;
 mod glyph_select;
 #[cfg(test)]
@@ -24,7 +25,7 @@ pub(crate) mod test_font;
 pub use encoding::{
     Encoding, decode_text, encode_winansi, glyph_name_to_unicode, parse_differences,
 };
-pub(crate) use encoding::{winansi_char, winansi_code};
+pub(crate) use encoding::{symbol_code, winansi_char, winansi_code, zapf_dingbats_code};
 pub use glyph_select::{encoding_glyph_name, truetype_glyph_candidates};
 pub use standard14::{is_standard14, standard14_widths};
 

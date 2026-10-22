@@ -66,14 +66,54 @@ struct Glyph {
 
 #[derive(Debug)]
 enum FontKind {
-    /// A standard Type1 font declared `/WinAnsiEncoding`.
-    Standard { base_font: String },
+    /// A standard Type1 font: declared `/WinAnsiEncoding`, or Symbol and
+    /// ZapfDingbats in their built-in encodings.
+    Standard {
+        base_font: String,
+        encoding: StandardEncoding,
+    },
     /// A TrueType program written as a Type0 font with an Identity-H encoding.
     Embedded {
         program: FontProgram,
         embedding: FontEmbedding,
         objects: EmbeddedObjects,
     },
+}
+
+/// The encoding a standard font's text is written in.
+#[derive(Debug, Clone, Copy)]
+enum StandardEncoding {
+    WinAnsi,
+    Symbol,
+    ZapfDingbats,
+}
+
+impl StandardEncoding {
+    fn of(base_font: &str) -> StandardEncoding {
+        match base_font {
+            "Symbol" => StandardEncoding::Symbol,
+            "ZapfDingbats" => StandardEncoding::ZapfDingbats,
+            _ => StandardEncoding::WinAnsi,
+        }
+    }
+
+    /// `ch`'s code, `None` when the encoding has none.
+    fn code(self, ch: char) -> Option<u8> {
+        match self {
+            StandardEncoding::WinAnsi => super::winansi_code(ch),
+            StandardEncoding::Symbol => super::symbol_code(ch),
+            StandardEncoding::ZapfDingbats => super::zapf_dingbats_code(ch),
+        }
+    }
+
+    /// The code drawn for a character the encoding has none for: `?`, or a
+    /// space in ZapfDingbats, which has no `?`.
+    fn code_or_fallback(self, ch: char) -> u8 {
+        self.code(ch).unwrap_or(match self {
+            StandardEncoding::ZapfDingbats => b' ',
+            _ => b'?',
+        })
+    }
 }
 
 /// Object numbers of the objects an embedded font is written as, besides the
@@ -177,7 +217,7 @@ impl FontEntry {
 
     fn has_glyph(&self, ch: char) -> bool {
         match &self.kind {
-            FontKind::Standard { .. } => super::winansi_code(ch).is_some(),
+            FontKind::Standard { encoding, .. } => encoding.code(ch).is_some(),
             FontKind::Embedded { program, .. } => self.glyph(program, ch).gid.is_some(),
         }
     }
@@ -195,26 +235,30 @@ impl FontEntry {
     }
 
     /// Advance of `ch` in thousandths of an em: its glyph's, or `.notdef`'s
-    /// (`?`'s for a standard font) when the font has none.
+    /// (the fallback code's for a standard font) when the font has none.
     fn advance(&self, ch: char) -> f64 {
         match &self.kind {
-            FontKind::Standard { base_font } => {
-                let code = super::winansi_code(ch).unwrap_or(b'?');
+            FontKind::Standard {
+                base_font,
+                encoding,
+            } => {
+                let code = encoding.code_or_fallback(ch);
                 super::standard14_widths(base_font.as_bytes())[code as usize]
             }
             FontKind::Embedded { program, .. } => self.glyph(program, ch).advance,
         }
     }
 
-    /// Append `ch`'s code to `out`: a WinAnsi byte (`?` when it has none) for
-    /// a standard font, a 2-byte CID for an embedded one.
+    /// Append `ch`'s code to `out`: a byte in its encoding (`?`, or a space in
+    /// ZapfDingbats, when it has none) for a standard font, a 2-byte CID for an
+    /// embedded one.
     fn encode_char(&self, ch: char, out: &mut Vec<u8>) {
         let mut usage = self.usage.lock().unwrap_or_else(|e| e.into_inner());
         if !self.has_glyph(ch) {
             usage.missing.insert(ch);
         }
         match &self.kind {
-            FontKind::Standard { .. } => out.push(super::winansi_code(ch).unwrap_or(b'?')),
+            FontKind::Standard { encoding, .. } => out.push(encoding.code_or_fallback(ch)),
             FontKind::Embedded { .. } => {
                 let cid = match usage.cids.get(&ch) {
                     Some(&cid) => cid,
@@ -246,7 +290,7 @@ impl FontEntry {
         }
         usage.written = true;
         let (program, embedding, objects) = match &self.kind {
-            FontKind::Standard { base_font } => {
+            FontKind::Standard { base_font, .. } => {
                 writer.set_object(
                     self.font_ref.obj_num,
                     PdfObject::Dict(crate::writer::document::standard_font_dict(base_font)),
@@ -500,6 +544,7 @@ impl FontRegistry {
             font_ref,
             FontKind::Standard {
                 base_font: base_font.to_string(),
+                encoding: StandardEncoding::of(base_font),
             },
         );
         self.standard.insert(base_font.to_string(), font.clone());
