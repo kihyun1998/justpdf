@@ -26,10 +26,9 @@ Generates appearance streams for text, choice and button fields: in the AcroForm
 - [Text string encoding](../invariant/text-string-encoding.md) — decoding field values.
 
 ## Blast radius
-- [Form fill](form-fill.md) — the side that should call this generator (it does not today).
+- [Form fill](form-fill.md) — calls this generator for each widget of a text field, combo box or list box it fills (#344).
 - [Form flatten](form-flatten.md) — the side that puts appearances into the page.
 - [Annotation appearance](annotation-appearance.md), [Signature appearance](signature-appearance.md) — the two other generators.
 
 ## Known holes / open
-- There is no caller in product code (only its own tests and `tests/form_da_font.rs`).
 - Tracked: #33 (text string encoding), #175 (text beyond WinAnsi through a caller-supplied appearance font), #325 (layout of variable text)

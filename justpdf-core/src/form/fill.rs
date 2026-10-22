@@ -1,7 +1,9 @@
 use crate::error::{JustPdfError, Result};
 use crate::object::{IndirectRef, PdfDict, PdfObject};
+use crate::page::Rect;
 use crate::writer::modify::DocumentModifier;
 
+use super::appearance::generate_field_appearance;
 use super::types::*;
 
 /// Get a field's value by name from a parsed AcroForm.
@@ -14,7 +16,10 @@ pub fn get_field_value(form: &AcroForm, field_name: &str) -> Option<PdfObject> {
 
 /// Set a field's value by name: `/V` on the field, and for a checkbox or
 /// radio button `/AS` on each widget — the value where the widget's `/AP /N`
-/// has that state (or the widget has no `/AP`), `/Off` otherwise. Sets the
+/// has that state (or the widget has no `/AP`), `/Off` otherwise. For a text
+/// field, combo box or list box, each widget's `/AP` becomes `<< /N … >>`
+/// drawn from the new value in that widget's `/Rect`; a widget
+/// [`generate_field_appearance`] cannot draw keeps its `/AP`. Sets the
 /// AcroForm's `/NeedAppearances` so a viewer draws the new value.
 pub fn set_field_value(
     modifier: &mut DocumentModifier,
@@ -62,8 +67,39 @@ pub fn set_field_value(
         }
     }
 
+    if matches!(
+        field.field_type,
+        FieldType::Text | FieldType::ComboBox | FieldType::ListBox
+    ) {
+        redraw_widgets(modifier, field, &value);
+    }
+
     set_need_appearances(modifier);
     Ok(())
+}
+
+/// Set the `/AP` of each widget of `field` to `<< /N … >>`, drawn from
+/// `value` in the widget's own `/Rect`. A widget the generator cannot draw
+/// keeps its `/AP`.
+fn redraw_widgets(modifier: &mut DocumentModifier, field: &FormField, value: &PdfObject) {
+    let mut drawn = field.clone();
+    drawn.value = Some(value.clone());
+    for widget in &field.widgets {
+        let Some(mut widget_dict) = dict_at(modifier, widget) else {
+            continue;
+        };
+        drawn.rect = widget_dict
+            .get(b"Rect")
+            .and_then(|r| direct(modifier, r))
+            .and_then(|r| Rect::from_pdf_array(r.as_array()?));
+        let Ok(normal) = generate_field_appearance(&drawn, modifier) else {
+            continue;
+        };
+        let mut ap = PdfDict::new();
+        ap.insert(b"N".to_vec(), PdfObject::Reference(normal));
+        widget_dict.insert(b"AP".to_vec(), PdfObject::Dict(ap));
+        modifier.set_object(widget.obj_num, PdfObject::Dict(widget_dict));
+    }
 }
 
 /// The dictionary object `r` holds in `modifier`.
