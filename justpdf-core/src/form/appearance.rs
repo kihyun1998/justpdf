@@ -207,8 +207,7 @@ fn text_field_appearance(
     if let Some(text) = field.value_as_string()
         && !text.is_empty()
     {
-        let _ = write!(buf, "BT\n{}\n", font.select());
-        buf.push_str("0 g\n");
+        let _ = write!(buf, "BT\n0 g\n{}\n", font.select());
         let _ = writeln!(buf, "2 {} Td", Number((h - 10.0) / 2.0));
         let _ = write!(buf, "{} Tj\nET\n", string_syntax(&font.encode(&text)?));
     }
