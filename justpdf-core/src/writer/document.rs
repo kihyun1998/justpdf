@@ -51,8 +51,10 @@ impl DocumentBuilder {
     /// declared `/WinAnsiEncoding` (except `Symbol` and `ZapfDingbats`).
     /// Adding the same font again returns the same `Font`.
     ///
-    /// `show_text` writes its text as WinAnsi codes, `?` for a character with
-    /// none, which [`Self::missing_chars`] then reports.
+    /// `show_text` writes its text as WinAnsi codes, or as `Symbol`'s and
+    /// `ZapfDingbats`' built-in codes for those two, and `?` (a space in
+    /// `ZapfDingbats`) for a character with none, which [`Self::missing_chars`]
+    /// then reports.
     pub fn add_standard_font(&mut self, base_font: &str) -> Font {
         self.font_registry.add_standard(&mut self.writer, base_font)
     }

@@ -97,7 +97,8 @@ impl PageBuilder {
     }
 
     /// Show a text string in the font `set_font` selected: WinAnsi codes for a
-    /// standard font (`?` for a character with none), 2-byte CIDs for an
+    /// standard font (`Symbol` and `ZapfDingbats`: their built-in codes; `?`, a
+    /// space in `ZapfDingbats`, for a character with none), 2-byte CIDs for an
     /// embedded one. Each character goes to the first font of the chain that
     /// has a glyph for it, runs in different fonts separated by `Tf` at the
     /// same size and the selected font restored after; a character no font

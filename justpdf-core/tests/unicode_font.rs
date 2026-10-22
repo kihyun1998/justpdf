@@ -450,6 +450,66 @@ fn a_standard_font_can_close_an_embedded_fonts_chain() {
     );
 }
 
+/// `text` drawn in the standard font `base_font`: (the decoded page content,
+/// `missing_chars()`).
+fn drawn_in_standard(base_font: &str, text: &str) -> (String, Vec<char>) {
+    let mut doc = DocumentBuilder::new();
+    let font = doc.add_standard_font(base_font);
+    one_page(&mut doc, &font, text);
+    let missing = doc.missing_chars().into_iter().collect();
+    let (pdf, pages) = open(doc.build().unwrap());
+    (content(&pdf, &pages[0]), missing)
+}
+
+#[test]
+fn symbol_draws_through_its_built_in_encoding() {
+    // Adobe symbol.txt: U+03B1 alpha is 0x61, U+2200 universal is 0x22.
+    let (content, missing) = drawn_in_standard("Symbol", "α∀");
+    assert!(content.contains("(a\") Tj"), "{content}");
+    assert_eq!(missing, Vec::<char>::new());
+
+    let (content, missing) = drawn_in_standard("Symbol", "a");
+    assert!(content.contains("(?) Tj"), "{content}");
+    assert_eq!(missing, vec!['a']);
+}
+
+#[test]
+fn zapf_dingbats_draws_through_its_built_in_encoding() {
+    // Adobe zdingbat.txt: U+2713 check mark is 0x33 (a19), U+2714 is 0x34 (a20).
+    let (content, missing) = drawn_in_standard("ZapfDingbats", "✓✔");
+    assert!(content.contains("(34) Tj"), "{content}");
+    assert_eq!(missing, Vec::<char>::new());
+
+    // ZapfDingbats has no `?`: an unencodable character draws as a space.
+    let (content, missing) = drawn_in_standard("ZapfDingbats", "?");
+    assert!(content.contains("( ) Tj"), "{content}");
+    assert_eq!(missing, vec!['?']);
+}
+
+#[test]
+fn symbol_in_a_chain_takes_only_the_characters_it_encodes() {
+    let mut doc = DocumentBuilder::new();
+    let hangul = doc.add_font(&program(HANGUL));
+    let symbol = doc.add_standard_font("Symbol");
+    one_page(&mut doc, &hangul.with_fallback(&symbol), "한aα");
+    assert_eq!(
+        doc.missing_chars().into_iter().collect::<Vec<_>>(),
+        vec!['a']
+    );
+    let (pdf, pages) = open(doc.build().unwrap());
+    let content = content(&pdf, &pages[0]);
+    let (h, s) = (hangul.resource_name(), symbol.resource_name());
+    assert!(content.contains("<00010002> Tj"), "{content}");
+    assert!(
+        content.contains(&format!(
+            "/{s} 24 Tf
+(a) Tj"
+        )),
+        "{content}"
+    );
+    assert_eq!(tf_names(&content), [h, s, h].map(|n| format!("/{n}")));
+}
+
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
