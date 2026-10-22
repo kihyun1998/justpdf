@@ -52,8 +52,26 @@ _Avoid_: hidden text, document-level text
 A document from which the chosen categories of unpainted text have been removed whole, independent of any redaction area.
 _Avoid_: scrubbed, cleaned, stripped
 
+### Text extraction
+
+**Writing mode**:
+The direction a font's glyphs advance in, set by its CMap: horizontal (left to right) or vertical (top to bottom).
+_Avoid_: WMode, text direction, orientation
+
+**Advance**:
+The distance one glyph moves the current point along its writing mode.
+_Avoid_: width (for vertical text), height
+
+**Vertical column**:
+A line of vertical-writing text, read top to bottom; columns on a page are read right to left.
+_Avoid_: vertical line, column (alone, which means a horizontal text column)
+
 ### Appearances
 
 **Appearance font**:
 The font, supplied by the caller, that a document's generated appearances draw with wherever justpdf chooses the font — signature, stamp, and form fields without a usable `/DA` font.
 _Avoid_: default font, form font
+
+**Text box**:
+The part of a form field's widget rectangle, inside its border and padding, that its value is laid out in and clipped to.
+_Avoid_: inner box, content rect, padding box
