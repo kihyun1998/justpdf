@@ -1,5 +1,6 @@
-//! Filling form fields: `NeedAppearances`, checkbox on-states from `/AP`, and
-//! `/AS` on each widget (#204).
+//! Filling form fields: `NeedAppearances`, checkbox on-states from `/AP`,
+//! `/AS` on each widget (#204), and each widget's normal appearance drawn
+//! from the new value (#344).
 
 use justpdf_core::form::{parse_acroform, set_field_value, toggle_checkbox};
 use justpdf_core::writer::{DocumentBuilder, DocumentModifier, PageBuilder};
@@ -46,18 +47,30 @@ fn form_document(
     indirect: bool,
     fields: impl FnOnce(&mut DocumentModifier) -> Vec<IndirectRef>,
 ) -> PdfDocument {
+    form_document_with(indirect, Vec::new(), fields)
+}
+
+/// [`form_document`] whose AcroForm also holds `entries`.
+fn form_document_with(
+    indirect: bool,
+    entries: Vec<(&str, PdfObject)>,
+    fields: impl FnOnce(&mut DocumentModifier) -> Vec<IndirectRef>,
+) -> PdfDocument {
     let mut builder = DocumentBuilder::new();
     builder.add_page(PageBuilder::new(200.0, 100.0));
     let source = PdfDocument::from_bytes(builder.build().unwrap()).unwrap();
     let mut modifier = DocumentModifier::from_document(&source).unwrap();
     let refs = fields(&mut modifier);
-    let acroform = dict(vec![
+    let mut acroform = dict(vec![
         (
             "Fields",
             PdfObject::Array(refs.into_iter().map(PdfObject::Reference).collect()),
         ),
         ("DA", string("/Helv 0 Tf 0 g")),
     ]);
+    for (k, v) in entries {
+        acroform.insert(k.as_bytes().to_vec(), v);
+    }
     let acroform = if indirect {
         PdfObject::Reference(modifier.add_object(PdfObject::Dict(acroform)))
     } else {
@@ -283,4 +296,301 @@ fn a_checkbox_with_only_a_down_appearance_takes_its_state_from_it() {
         object(&out, &widget.unwrap()).get(b"AS"),
         Some(&name("Check"))
     );
+}
+
+/// An AcroForm `/DR` whose `/Helv` is a WinAnsi Helvetica.
+fn dr() -> (&'static str, PdfObject) {
+    let helv = PdfObject::Dict(dict(vec![
+        ("Type", name("Font")),
+        ("Subtype", name("Type1")),
+        ("BaseFont", name("Helvetica")),
+        ("Encoding", name("WinAnsiEncoding")),
+    ]));
+    let fonts = PdfObject::Dict(dict(vec![("Helv", helv)]));
+    ("DR", PdfObject::Dict(dict(vec![("Font", fonts)])))
+}
+
+fn rect_of(w: i64, h: i64) -> PdfObject {
+    PdfObject::Array([0, 0, w, h].into_iter().map(PdfObject::Integer).collect())
+}
+
+/// An `/AP` with an empty `/N`, `/D` and `/R` stream each, added to
+/// `modifier`.
+fn old_ap(modifier: &mut DocumentModifier) -> PdfObject {
+    let mut entries = PdfDict::new();
+    for key in ["N", "D", "R"] {
+        let r = modifier.add_object(PdfObject::Stream {
+            dict: dict(vec![("Length", PdfObject::Integer(0))]),
+            data: Vec::new(),
+        });
+        entries.insert(key.as_bytes().to_vec(), PdfObject::Reference(r));
+    }
+    PdfObject::Dict(entries)
+}
+
+/// A widget dictionary with `entries`, an old `/AP` and `/Rect` `rect`
+/// (none when `rect` is `None`).
+fn widget(
+    modifier: &mut DocumentModifier,
+    entries: Vec<(&str, PdfObject)>,
+    rect: Option<PdfObject>,
+) -> PdfDict {
+    let ap = old_ap(modifier);
+    let mut d = dict(vec![
+        ("Type", name("Annot")),
+        ("Subtype", name("Widget")),
+        ("AP", ap),
+    ]);
+    if let Some(rect) = rect {
+        d.insert(b"Rect".to_vec(), rect);
+    }
+    for (k, v) in entries {
+        d.insert(k.as_bytes().to_vec(), v);
+    }
+    d
+}
+
+/// A text field `name`, `/V (old)`, `/DA (/Helv 12 Tf 0 g)`, that is its own
+/// widget with `/Rect` `rect`, in a document whose AcroForm has [`dr`].
+fn dr_text_field(rect: Option<PdfObject>) -> (PdfDocument, IndirectRef) {
+    let mut refs = None;
+    let doc = form_document_with(false, vec![dr()], |modifier| {
+        let d = widget(
+            modifier,
+            vec![
+                ("FT", name("Tx")),
+                ("T", string("name")),
+                ("V", string("old")),
+                ("DA", string("/Helv 12 Tf 0 g")),
+            ],
+            rect,
+        );
+        let r = modifier.add_object(PdfObject::Dict(d));
+        refs = Some(r.clone());
+        vec![r]
+    });
+    (doc, refs.unwrap())
+}
+
+/// The `/AP` of `widget` in `doc`, resolved.
+fn ap_of(doc: &PdfDocument, widget: &IndirectRef) -> PdfDict {
+    match object(doc, widget).get(b"AP").cloned() {
+        Some(PdfObject::Reference(r)) => object(doc, &r),
+        Some(PdfObject::Dict(d)) => d,
+        other => panic!("expected an /AP, got {other:?}"),
+    }
+}
+
+/// The normal appearance of `widget` in `doc`: (the strings it shows with
+/// `Tj`, its `/BBox`).
+fn normal_appearance(doc: &PdfDocument, widget: &IndirectRef) -> (Vec<Vec<u8>>, PdfObject) {
+    let (content, bbox) = normal_content(doc, widget);
+    let shown = justpdf_core::content::parse_content_stream(&content)
+        .unwrap()
+        .into_iter()
+        .filter(|op| op.operator == b"Tj")
+        .flat_map(|op| op.operands)
+        .filter_map(|o| match o {
+            justpdf_core::content::Operand::String(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    (shown, bbox)
+}
+
+/// The normal appearance of `widget` in `doc`: (its decoded content, its
+/// `/BBox`).
+fn normal_content(doc: &PdfDocument, widget: &IndirectRef) -> (Vec<u8>, PdfObject) {
+    let n = ap_of(doc, widget).get(b"N").cloned().unwrap();
+    let PdfObject::Reference(n) = n else {
+        panic!("expected /N to be a reference, got {n:?}")
+    };
+    let PdfObject::Stream { dict, data } = doc.resolve(&n).unwrap() else {
+        panic!("expected /N to be a stream")
+    };
+    let content = justpdf_core::stream::decode_stream(&data, &dict).unwrap();
+    (content, dict.get(b"BBox").cloned().unwrap())
+}
+
+fn bbox(w: f64, h: f64) -> PdfObject {
+    PdfObject::Array([0.0, 0.0, w, h].into_iter().map(PdfObject::Real).collect())
+}
+
+#[test]
+fn filling_a_text_field_draws_its_new_value_as_the_only_appearance() {
+    let (doc, widget) = dr_text_field(Some(rect_of(100, 20)));
+    let old = ap_of(&doc, &widget);
+
+    let out = filled(&doc, |modifier, form| {
+        set_field_value(modifier, form, "name", string("new")).unwrap();
+    });
+    let ap = ap_of(&out, &widget);
+    assert_ne!(ap.get(b"N"), old.get(b"N"));
+    assert_eq!(ap.get(b"D"), None);
+    assert_eq!(ap.get(b"R"), None);
+    assert_eq!(normal_appearance(&out, &widget).0, vec![b"new".to_vec()]);
+    assert!(parse_acroform(&out).unwrap().unwrap().need_appearances);
+}
+
+#[test]
+fn each_widget_of_a_field_is_drawn_in_its_own_rect() {
+    let mut refs = Vec::new();
+    let doc = form_document_with(false, vec![dr()], |modifier| {
+        let parent = modifier.add_object(PdfObject::Null);
+        for (w, h) in [(100, 20), (60, 30)] {
+            let d = widget(
+                modifier,
+                vec![("Parent", PdfObject::Reference(parent.clone()))],
+                Some(rect_of(w, h)),
+            );
+            refs.push(modifier.add_object(PdfObject::Dict(d)));
+        }
+        modifier.set_object(
+            parent.obj_num,
+            PdfObject::Dict(dict(vec![
+                ("FT", name("Tx")),
+                ("T", string("name")),
+                ("V", string("old")),
+                ("DA", string("/Helv 12 Tf 0 g")),
+                (
+                    "Kids",
+                    PdfObject::Array(refs.iter().cloned().map(PdfObject::Reference).collect()),
+                ),
+            ])),
+        );
+        vec![parent]
+    });
+
+    let out = filled(&doc, |modifier, form| {
+        set_field_value(modifier, form, "name", string("new")).unwrap();
+    });
+    for (widget, (w, h)) in refs.iter().zip([(100.0, 20.0), (60.0, 30.0)]) {
+        let (shown, b) = normal_appearance(&out, widget);
+        assert_eq!(shown, vec![b"new".to_vec()]);
+        assert_eq!(b, bbox(w, h));
+    }
+}
+
+const COMBO: i64 = 1 << 17;
+
+#[test]
+fn combo_and_list_boxes_are_drawn_from_their_new_value() {
+    for ff in [0, COMBO] {
+        let mut refs = None;
+        let doc = form_document_with(false, vec![dr()], |modifier| {
+            let d = widget(
+                modifier,
+                vec![
+                    ("FT", name("Ch")),
+                    ("Ff", PdfObject::Integer(ff)),
+                    ("T", string("pick")),
+                    ("V", string("a")),
+                    ("Opt", PdfObject::Array(vec![string("a"), string("b")])),
+                    ("DA", string("/Helv 12 Tf 0 g")),
+                ],
+                Some(rect_of(100, 40)),
+            );
+            let r = modifier.add_object(PdfObject::Dict(d));
+            refs = Some(r.clone());
+            vec![r]
+        });
+        let widget = refs.unwrap();
+        let old = ap_of(&doc, &widget);
+
+        let out = filled(&doc, |modifier, form| {
+            set_field_value(modifier, form, "pick", string("b")).unwrap();
+        });
+        let ap = ap_of(&out, &widget);
+        assert_ne!(ap.get(b"N"), old.get(b"N"), "Ff {ff}");
+        assert_eq!(ap.get(b"D"), None, "Ff {ff}");
+        let shown = normal_appearance(&out, &widget).0;
+        let expected: Vec<Vec<u8>> = if ff == COMBO {
+            vec![b"b".to_vec()]
+        } else {
+            vec![b"a".to_vec(), b"b".to_vec()]
+        };
+        assert_eq!(shown, expected, "Ff {ff}");
+        if ff == 0 {
+            // The second of 12 pt rows in a 40 pt box is highlighted.
+            let content = String::from_utf8(normal_content(&out, &widget).0).unwrap();
+            assert!(content.contains("rg\n1 16 98 12 re"), "{content}");
+        }
+    }
+}
+
+#[test]
+fn a_widget_that_cannot_be_drawn_keeps_its_appearance() {
+    // `한글` is not in WinAnsi Helvetica; a widget with no `/Rect` has no area.
+    for (value, rect) in [("한글", Some(rect_of(100, 20))), ("new", None)] {
+        let (doc, widget) = dr_text_field(rect);
+        let old = ap_of(&doc, &widget);
+
+        let out = filled(&doc, |modifier, form| {
+            set_field_value(modifier, form, "name", string(value)).unwrap();
+        });
+        assert_eq!(ap_of(&out, &widget), old, "{value}");
+        assert!(parse_acroform(&out).unwrap().unwrap().need_appearances);
+    }
+}
+
+#[test]
+fn an_indirect_appearance_dictionary_is_left_for_the_widgets_sharing_it() {
+    let mut refs = None;
+    let doc = form_document_with(false, vec![dr()], |modifier| {
+        let ap = old_ap(modifier);
+        let shared = modifier.add_object(ap);
+        let mut d = widget(
+            modifier,
+            vec![
+                ("FT", name("Tx")),
+                ("T", string("name")),
+                ("V", string("old")),
+                ("DA", string("/Helv 12 Tf 0 g")),
+            ],
+            Some(rect_of(100, 20)),
+        );
+        d.insert(b"AP".to_vec(), PdfObject::Reference(shared.clone()));
+        let r = modifier.add_object(PdfObject::Dict(d));
+        refs = Some((r.clone(), shared));
+        vec![r]
+    });
+    let (widget, shared) = refs.unwrap();
+    let old = object(&doc, &shared);
+
+    let out = filled(&doc, |modifier, form| {
+        set_field_value(modifier, form, "name", string("new")).unwrap();
+    });
+    assert_eq!(object(&out, &shared), old);
+    assert_eq!(normal_appearance(&out, &widget).0, vec![b"new".to_vec()]);
+    assert_eq!(ap_of(&out, &widget).get(b"D"), None);
+}
+
+#[test]
+fn filling_a_button_keeps_its_appearances() {
+    for ff in [0, RADIO] {
+        let mut refs = None;
+        let doc = form_document_with(false, vec![dr()], |modifier| {
+            let ap = ap(modifier, &["On", "Off"]);
+            let r = modifier.add_object(PdfObject::Dict(dict(vec![
+                ("Type", name("Annot")),
+                ("Subtype", name("Widget")),
+                ("FT", name("Btn")),
+                ("Ff", PdfObject::Integer(ff)),
+                ("T", string("agree")),
+                ("V", name("Off")),
+                ("AS", name("Off")),
+                ("AP", ap),
+                ("Rect", rect()),
+            ])));
+            refs = Some(r.clone());
+            vec![r]
+        });
+        let widget = refs.unwrap();
+        let old = ap_of(&doc, &widget);
+
+        let out = filled(&doc, |modifier, form| {
+            set_field_value(modifier, form, "agree", name("On")).unwrap();
+        });
+        assert_eq!(ap_of(&out, &widget), old, "Ff {ff}");
+    }
 }
