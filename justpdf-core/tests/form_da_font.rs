@@ -88,6 +88,7 @@ fn field(field_type: FieldType, value: &str, da: Option<&str>) -> FormField {
             obj_num: 1,
             gen_num: 0,
         },
+        widgets: Vec::new(),
         page_obj_num: None,
     }
 }

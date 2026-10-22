@@ -149,7 +149,10 @@ fn walk_field_tree(
         .map(|b| String::from_utf8_lossy(b).into_owned());
     let da_ref = da.as_deref().or(inherited.da);
 
-    // Check for /Kids — if present, recurse
+    // Kids with `/T` or `/Kids` are fields, walked in turn; the others are
+    // this field's widgets.
+    let mut widgets = Vec::new();
+    let mut widget_rect = None;
     if let Some(kids) = dict.get_array(b"Kids") {
         if !ancestors.insert(field_ref.clone()) {
             return Err(JustPdfError::CircularReference {
@@ -159,20 +162,40 @@ fn walk_field_tree(
         }
         let kids: Vec<PdfObject> = kids.to_vec();
         for kid in &kids {
-            if let Some(kid_ref) = kid.as_reference() {
-                walk_field_tree(
-                    doc,
-                    kid_ref,
-                    &full_name,
-                    InheritedField { ft, ff, da: da_ref },
-                    ancestors,
-                    budget,
-                    fields,
-                )?;
+            let Some(kid_ref) = kid.as_reference() else {
+                continue;
+            };
+            let kid_obj = doc.resolve(kid_ref)?;
+            let is_widget = kid_obj
+                .as_dict()
+                .is_some_and(|k| k.get(b"T").is_none() && k.get(b"Kids").is_none());
+            if is_widget {
+                budget.enter(kid_ref, || Ok(kid_obj.clone()))?;
+                if widget_rect.is_none() {
+                    widget_rect = kid_obj
+                        .as_dict()
+                        .and_then(|k| k.get_array(b"Rect"))
+                        .and_then(Rect::from_pdf_array);
+                }
+                widgets.push(kid_ref.clone());
+                continue;
             }
+            walk_field_tree(
+                doc,
+                kid_ref,
+                &full_name,
+                InheritedField { ft, ff, da: da_ref },
+                ancestors,
+                budget,
+                fields,
+            )?;
         }
         ancestors.remove(field_ref);
-        return Ok(());
+        if widgets.is_empty() {
+            return Ok(());
+        }
+    } else {
+        widgets.push(field_ref.clone());
     }
 
     // Leaf field (terminal node) — determine type and extract value
@@ -220,7 +243,10 @@ fn walk_field_tree(
         })
         .unwrap_or_default();
 
-    let rect = dict.get_array(b"Rect").and_then(Rect::from_pdf_array);
+    let rect = dict
+        .get_array(b"Rect")
+        .and_then(Rect::from_pdf_array)
+        .or(widget_rect);
 
     fields.push(FormField {
         name: full_name,
@@ -233,6 +259,7 @@ fn walk_field_tree(
         rect,
         default_appearance: da_ref.map(|s| s.to_string()),
         field_ref: field_ref.clone(),
+        widgets,
         page_obj_num: None,
     });
 
