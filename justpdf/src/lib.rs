@@ -41,6 +41,7 @@ pub use justpdf_core::error::JustPdfError;
 pub use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 
 // Re-export the builder API
+pub use justpdf_core::font::{Font, FontEmbedding, FontProgram};
 pub use justpdf_core::writer::{DocumentBuilder, DocumentModifier, PageBuilder};
 pub use justpdf_core::writer::{embed_jpeg, embed_png, embed_rgb, merge_documents};
 
@@ -678,7 +679,6 @@ mod tests {
         let mut doc = DocumentBuilder::new();
         let font = doc.add_standard_font("Helvetica");
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
         page.begin_text();
         page.set_font(&font, 24.0);
         page.move_to(72.0, 720.0);
@@ -835,7 +835,6 @@ mod tests {
         let mut builder = DocumentBuilder::new();
         let font = builder.add_standard_font("Courier");
         let mut p = PageBuilder::new(200.0, 200.0);
-        p.add_font(&font, "Courier");
         p.begin_text();
         p.set_font(&font, 12.0);
         p.move_to(10.0, 180.0);
@@ -970,7 +969,6 @@ mod tests {
         let font = builder.add_standard_font("Helvetica");
         for i in 0..2 {
             let mut page = PageBuilder::new(612.0, 792.0);
-            page.add_font(&font, "Helvetica");
             page.begin_text();
             page.set_font(&font, 12.0);
             page.move_to(72.0, 720.0);

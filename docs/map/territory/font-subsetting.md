@@ -1,7 +1,7 @@
 # Font subsetting
 
 ## What it is
-Keeps only the glyphs the document actually uses from an embedded TrueType font (FontFile2) and reassembles the tables. Core's `subset_font` handles the font binary; on the compress side, `subset_embedded_fonts` collects the codes used in the document, decides which GIDs to keep, and replaces only the FontFile2 stream. The font dictionary (`/Widths`, `/CIDToGIDMap`, `/W`, `/Encoding`) is not touched. Compress is the only consumer.
+Keeps only the glyphs the document actually uses from an embedded TrueType font (FontFile2) and reassembles the tables. Core's `subset_font` handles the font binary; on the compress side, `subset_embedded_fonts` collects the codes used in the document, decides which GIDs to keep, and replaces only the FontFile2 stream. The font dictionary (`/Widths`, `/CIDToGIDMap`, `/W`, `/Encoding`) is not touched. Since #173 the Type0 fonts `DocumentBuilder`/`DocumentModifier` write also subset through `subset_font` at output ([CJK font embedding](cjk-font-embedding.md)); their `/CIDToGIDMap` relies on glyph IDs being kept.
 
 ## Governing decisions
 **None.**
@@ -65,6 +65,7 @@ Keeps only the glyphs the document actually uses from an embedded TrueType font 
 - [Glyph rendering](glyph-rendering.md) — draws the first of the candidates subsetting keeps, through the `cmap` subsetting rewrote.
 - [Text extraction](text-extraction.md) — the judge of the compress tests.
 - [Compress pipeline](compress-pipeline.md), [Compress presets](compress-presets.md) — the `font_subsetting` knob.
+- [CJK font embedding](cjk-font-embedding.md) — subsets its Type0 fonts at output and keeps their `/CIDToGIDMap` valid only because glyph IDs are kept.
 
 ## Known holes / open
 - Collection of used codes looks only at `Tj`/`'`/`TJ` in page content (XObjects, annotations, inherited `/Resources` and `"` are blocked by the safety guard above keeping the font whole). That many fonts go unsubsetted. Decided in #68: collection moves onto the shared content interpreter (#207) with Form recursion (each form against its own `/Resources`), inherited `/Resources`, annotation/widget `/AP` appearances and `"`'s third operand; the guard then covers only objects the walk did not visit, and #138's fail-safe stays. Blocked by #207. Tracked: #68.

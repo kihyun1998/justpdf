@@ -1,13 +1,9 @@
-//! CJK (Chinese, Japanese, Korean) text writing support using CID fonts.
-//!
-//! This module provides the data structures and functions needed to create
-//! Type0 (composite) fonts for embedding CJK text in PDF documents.
+//! CID font material for writing: CID system info and orderings, ToUnicode
+//! CMaps and `/W` arrays, used by the Type0 fonts embedded fonts are written as.
 
 use std::fmt::Write as FmtWrite;
 
-use crate::object::{IndirectRef, PdfDict, PdfObject};
-use crate::writer::PdfWriter;
-use crate::writer::encode::make_stream;
+use crate::object::{PdfDict, PdfObject};
 
 /// CID font system info (Registry-Ordering-Supplement).
 #[derive(Debug, Clone)]
@@ -208,7 +204,7 @@ pub fn generate_to_unicode_cmap(mappings: &[(u16, char)]) -> Vec<u8> {
 ///
 /// Uses the `[cid [w1 w2 ...]]` format for consecutive GIDs and the
 /// `[cid1 cid2 w]` format for ranges of identical widths.
-fn build_w_array(mut glyph_widths: Vec<(u16, u16)>) -> Vec<PdfObject> {
+pub(crate) fn build_w_array(mut glyph_widths: Vec<(u16, u16)>) -> Vec<PdfObject> {
     if glyph_widths.is_empty() {
         return Vec::new();
     }
@@ -239,149 +235,6 @@ fn build_w_array(mut glyph_widths: Vec<(u16, u16)>) -> Vec<PdfObject> {
     }
 
     w_array
-}
-
-/// Build a Type0 (composite) font for CJK text and add it to the writer.
-///
-/// Returns the indirect reference to the Type0 font dictionary, or `None`
-/// if `used_chars` is empty.
-///
-/// # Parameters
-///
-/// - `writer`: the `PdfWriter` to add objects to
-/// - `base_font_name`: the PostScript name of the font (e.g. "NotoSansCJKsc-Regular")
-/// - `font_data`: raw TTF/OTF font file bytes
-/// - `used_chars`: slice of (unicode_char, glyph_id) pairs for all characters used
-///
-/// # Created objects
-///
-/// 1. Font file stream (embedded font data, compressed)
-/// 2. Font descriptor dictionary
-/// 3. CIDSystemInfo dictionary (inline in CIDFont)
-/// 4. CIDFont dictionary (CIDFontType2 for TrueType)
-/// 5. ToUnicode CMap stream
-/// 6. Type0 font dictionary (the returned reference)
-pub fn build_cid_font(
-    writer: &mut PdfWriter,
-    base_font_name: &str,
-    font_data: &[u8],
-    used_chars: &[(char, u16)], // (unicode_char, glyph_id)
-) -> Option<IndirectRef> {
-    if used_chars.is_empty() {
-        return None;
-    }
-
-    let base_font_bytes = base_font_name.as_bytes().to_vec();
-
-    // 1. Embed the font file as a compressed stream.
-    let (mut font_stream_dict, compressed_font_data) = make_stream(font_data, true);
-    font_stream_dict.insert(
-        b"Length1".to_vec(),
-        PdfObject::Integer(font_data.len() as i64),
-    );
-    let font_file_ref = writer.add_object(PdfObject::Stream {
-        dict: font_stream_dict,
-        data: compressed_font_data,
-    });
-
-    // 2. Create the font descriptor.
-    let mut desc_dict = PdfDict::new();
-    desc_dict.insert(
-        b"Type".to_vec(),
-        PdfObject::Name(b"FontDescriptor".to_vec()),
-    );
-    desc_dict.insert(
-        b"FontName".to_vec(),
-        PdfObject::Name(base_font_bytes.clone()),
-    );
-    desc_dict.insert(
-        b"Flags".to_vec(),
-        PdfObject::Integer(i64::from(super::FontDescriptor::SYMBOLIC)),
-    );
-    desc_dict.insert(
-        b"FontBBox".to_vec(),
-        PdfObject::Array(vec![
-            PdfObject::Integer(0),
-            PdfObject::Integer(-200),
-            PdfObject::Integer(1000),
-            PdfObject::Integer(800),
-        ]),
-    );
-    desc_dict.insert(b"ItalicAngle".to_vec(), PdfObject::Integer(0));
-    desc_dict.insert(b"Ascent".to_vec(), PdfObject::Integer(800));
-    desc_dict.insert(b"Descent".to_vec(), PdfObject::Integer(-200));
-    desc_dict.insert(b"StemV".to_vec(), PdfObject::Integer(80));
-    desc_dict.insert(b"CapHeight".to_vec(), PdfObject::Integer(700));
-    desc_dict.insert(
-        b"FontFile2".to_vec(),
-        PdfObject::Reference(font_file_ref.clone()),
-    );
-
-    let desc_ref = writer.add_object(PdfObject::Dict(desc_dict));
-
-    // 3. Build the /W array (glyph widths).
-    // For now, use a default width of 1000 for all glyphs.
-    // In a full implementation, widths would be read from the font's hmtx table.
-    let glyph_widths: Vec<(u16, u16)> = used_chars
-        .iter()
-        .map(|&(_ch, gid)| (gid, 1000u16))
-        .collect();
-    let w_array = build_w_array(glyph_widths);
-
-    // 4. Create the CIDFont dictionary.
-    let sys_info = CJKOrdering::Identity.system_info();
-    let mut cid_font_dict = PdfDict::new();
-    cid_font_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
-    cid_font_dict.insert(
-        b"Subtype".to_vec(),
-        PdfObject::Name(b"CIDFontType2".to_vec()),
-    );
-    cid_font_dict.insert(
-        b"BaseFont".to_vec(),
-        PdfObject::Name(base_font_bytes.clone()),
-    );
-    cid_font_dict.insert(
-        b"CIDSystemInfo".to_vec(),
-        PdfObject::Dict(sys_info.to_pdf_dict()),
-    );
-    cid_font_dict.insert(b"FontDescriptor".to_vec(), PdfObject::Reference(desc_ref));
-    if !w_array.is_empty() {
-        cid_font_dict.insert(b"W".to_vec(), PdfObject::Array(w_array));
-    }
-    cid_font_dict.insert(b"DW".to_vec(), PdfObject::Integer(1000));
-    cid_font_dict.insert(
-        b"CIDToGIDMap".to_vec(),
-        PdfObject::Name(b"Identity".to_vec()),
-    );
-
-    let cid_font_ref = writer.add_object(PdfObject::Dict(cid_font_dict));
-
-    // 5. Generate the ToUnicode CMap.
-    let to_unicode_mappings: Vec<(u16, char)> =
-        used_chars.iter().map(|&(ch, gid)| (gid, ch)).collect();
-    let cmap_data = generate_to_unicode_cmap(&to_unicode_mappings);
-    let (cmap_dict, cmap_encoded) = make_stream(&cmap_data, true);
-    let to_unicode_ref = writer.add_object(PdfObject::Stream {
-        dict: cmap_dict,
-        data: cmap_encoded,
-    });
-
-    // 6. Create the Type0 font dictionary.
-    let mut type0_dict = PdfDict::new();
-    type0_dict.insert(b"Type".to_vec(), PdfObject::Name(b"Font".to_vec()));
-    type0_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Type0".to_vec()));
-    type0_dict.insert(b"BaseFont".to_vec(), PdfObject::Name(base_font_bytes));
-    type0_dict.insert(
-        b"Encoding".to_vec(),
-        PdfObject::Name(b"Identity-H".to_vec()),
-    );
-    type0_dict.insert(
-        b"DescendantFonts".to_vec(),
-        PdfObject::Array(vec![PdfObject::Reference(cid_font_ref)]),
-    );
-    type0_dict.insert(b"ToUnicode".to_vec(), PdfObject::Reference(to_unicode_ref));
-
-    Some(writer.add_object(PdfObject::Dict(type0_dict)))
 }
 
 #[cfg(test)]
@@ -681,71 +534,5 @@ mod tests {
         // After dedup: (1, 500), (2, 700) -> [1 [500 700]]
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], PdfObject::Integer(1));
-    }
-
-    // --- build_cid_font tests ---
-
-    #[test]
-    fn test_build_cid_font_empty_used_chars() {
-        let mut writer = PdfWriter::new();
-        let result = build_cid_font(&mut writer, "TestFont", b"fake font data", &[]);
-        assert!(result.is_none());
-        assert!(writer.objects.is_empty());
-    }
-
-    #[test]
-    fn test_build_cid_font_creates_objects() {
-        let mut writer = PdfWriter::new();
-        let used_chars = vec![('A', 1u16), ('B', 2), ('\u{4E00}', 100)];
-        let result = build_cid_font(&mut writer, "TestCJKFont", b"fake font data", &used_chars);
-
-        assert!(result.is_some());
-        let font_ref = result.unwrap();
-
-        // Should have created 5 objects:
-        // 1. Font file stream
-        // 2. Font descriptor
-        // 3. CIDFont dict
-        // 4. ToUnicode CMap stream
-        // 5. Type0 font dict
-        assert_eq!(writer.objects.len(), 5);
-
-        // The returned reference should be the last object (Type0 font)
-        assert_eq!(font_ref.obj_num, 5);
-        assert_eq!(font_ref.gen_num, 0);
-
-        // Verify the Type0 font dict
-        let type0_obj = &writer.objects[4].1;
-        if let PdfObject::Dict(dict) = type0_obj {
-            assert_eq!(dict.get_name(b"Type"), Some(b"Font".as_slice()));
-            assert_eq!(dict.get_name(b"Subtype"), Some(b"Type0".as_slice()));
-            assert_eq!(dict.get_name(b"BaseFont"), Some(b"TestCJKFont".as_slice()));
-            assert_eq!(dict.get_name(b"Encoding"), Some(b"Identity-H".as_slice()));
-            assert!(dict.get(b"DescendantFonts").is_some());
-            assert!(dict.get(b"ToUnicode").is_some());
-        } else {
-            panic!("Expected Type0 font to be a Dict");
-        }
-
-        // Verify the CIDFont dict
-        let cid_font_obj = &writer.objects[2].1;
-        if let PdfObject::Dict(dict) = cid_font_obj {
-            assert_eq!(dict.get_name(b"Subtype"), Some(b"CIDFontType2".as_slice()));
-            assert_eq!(dict.get_name(b"CIDToGIDMap"), Some(b"Identity".as_slice()));
-            assert!(dict.get(b"W").is_some());
-            assert_eq!(dict.get_i64(b"DW"), Some(1000));
-        } else {
-            panic!("Expected CIDFont to be a Dict");
-        }
-
-        // Verify the font descriptor
-        let desc_obj = &writer.objects[1].1;
-        if let PdfObject::Dict(dict) = desc_obj {
-            assert_eq!(dict.get_name(b"Type"), Some(b"FontDescriptor".as_slice()));
-            assert_eq!(dict.get_name(b"FontName"), Some(b"TestCJKFont".as_slice()));
-            assert!(dict.get(b"FontFile2").is_some());
-        } else {
-            panic!("Expected FontDescriptor to be a Dict");
-        }
     }
 }

@@ -187,7 +187,6 @@ impl MobiDocument {
         let font_name = builder.add_standard_font("Courier");
 
         let mut page = PageBuilder::new(page_width, page_height);
-        page.add_font(&font_name, "Courier");
         page.begin_text();
         page.set_font(&font_name, font_size);
 
@@ -476,7 +475,6 @@ impl FormatDocument for MobiDocument {
 
         for page_lines in &self.pages {
             let mut page = PageBuilder::new(page_width, page_height);
-            page.add_font(&font_name, "Courier");
             page.begin_text();
             page.set_font(&font_name, font_size);
 

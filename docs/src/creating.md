@@ -23,6 +23,32 @@ std::fs::write("output.pdf", &pdf_bytes)?;
 
 Standard fonts are not embedded. `show_text` encodes text as WinAnsi (Windows-1252), so Western European characters such as `é`, `€` and `—` work; any other character is drawn as `?`.
 
+## Text beyond WinAnsi
+
+For Korean, Japanese, Chinese, Cyrillic and other scripts, register a TrueType font you supply. It is embedded subset to the glyphs you draw:
+
+```rust
+use justpdf::{DocumentBuilder, FontProgram, PageBuilder};
+
+let mut builder = DocumentBuilder::new();
+let korean = builder.add_font(&FontProgram::parse(std::fs::read("NanumGothic.ttf")?, 0)?);
+let latin = builder.add_font(&FontProgram::parse(std::fs::read("NotoSans-Regular.ttf")?, 0)?);
+let font = korean.with_fallback(&latin); // each character in the first font that has it
+
+let mut page = PageBuilder::new(612.0, 792.0);
+page.begin_text();
+page.set_font(&font, 12.0);
+page.move_to(72.0, 720.0);
+page.show_text("안녕하세요, café");
+page.end_text();
+builder.add_page(page);
+
+// Characters no font in the chain has are drawn as .notdef and listed here.
+assert!(builder.missing_chars().is_empty());
+```
+
+`FontProgram::parse(bytes, face_index)` takes a `.ttf`, or one face of a `.ttc`. CFF-flavoured OpenType fonts (`.otf` with `OTTO`) are not supported yet. Characters map one-to-one to glyphs: there is no shaping, bidi or vertical writing, so Arabic, Hebrew and Indic scripts do not draw correctly.
+
 ## Adding Images
 
 ```rust

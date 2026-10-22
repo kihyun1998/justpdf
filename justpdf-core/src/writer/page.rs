@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use crate::font::{Font, FontEntry};
 use crate::object::{ByteSink, IndirectRef, Number, PdfDict, PdfObject, name_syntax, write_string};
 use crate::writer::PdfWriter;
 use crate::writer::encode::make_stream;
@@ -14,6 +17,10 @@ pub struct PageBuilder {
     /// Registered font references: (resource_name like "F1", font_ref).
     /// Used for embedded fonts (TrueType etc.) that are indirect objects.
     font_refs: Vec<(String, IndirectRef)>,
+    /// Font handles this page draws with, declared in its resources.
+    fonts: Vec<Arc<FontEntry>>,
+    /// The font `set_font` selected and its size; `None` after `set_font_name`.
+    current_font: Option<(Font, f64)>,
 }
 
 impl PageBuilder {
@@ -27,11 +34,37 @@ impl PageBuilder {
             font_names: Vec::new(),
             image_names: Vec::new(),
             font_refs: Vec::new(),
+            fonts: Vec::new(),
+            current_font: None,
         }
     }
 
-    /// Set the current font and size: `/{name} {size} Tf`, the name escaped.
-    pub fn set_font(&mut self, resource_name: &str, size: f64) {
+    /// Select `font` at `size` for `show_text`, `/{name} {size} Tf`, and
+    /// declare it in this page's resources.
+    pub fn set_font(&mut self, font: &Font, size: f64) {
+        let primary = font.entries()[0].clone();
+        self.write_tf(&primary, size);
+        self.current_font = Some((font.clone(), size));
+    }
+
+    /// Set the current font by resource name and size: `/{name} {size} Tf`,
+    /// the name escaped. `show_text` then writes WinAnsi codes.
+    #[deprecated(
+        note = "register a `Font` with `add_font` or `add_standard_font` and use `set_font`"
+    )]
+    pub fn set_font_name(&mut self, resource_name: &str, size: f64) {
+        self.write_tf_name(resource_name, size);
+        self.current_font = None;
+    }
+
+    fn write_tf(&mut self, entry: &Arc<FontEntry>, size: f64) {
+        if !self.fonts.iter().any(|e| Arc::ptr_eq(e, entry)) {
+            self.fonts.push(entry.clone());
+        }
+        self.write_tf_name(entry.resource_name(), size);
+    }
+
+    fn write_tf_name(&mut self, resource_name: &str, size: f64) {
         use std::io::Write;
         writeln!(
             self.content,
@@ -40,6 +73,11 @@ impl PageBuilder {
             Number(size)
         )
         .unwrap();
+    }
+
+    /// The font handles this page draws with.
+    pub(crate) fn font_entries(&self) -> &[Arc<FontEntry>] {
+        &self.fonts
     }
 
     /// Begin a text object: `BT`.
@@ -58,15 +96,38 @@ impl PageBuilder {
         writeln!(self.content, "{} {} Td", Number(x), Number(y)).unwrap();
     }
 
-    /// Show a text string, encoded as WinAnsi (Windows-1252): a character with
-    /// no WinAnsi code becomes `?`. Written as `(text) Tj`, or `<hex> Tj` when
-    /// the bytes are not all printable ASCII. The font should be WinAnsi-encoded,
-    /// as `add_font` and `DocumentBuilder::add_standard_font` declare it.
+    /// Show a text string in the font `set_font` selected: WinAnsi codes for a
+    /// standard font (`?` for a character with none), 2-byte CIDs for an
+    /// embedded one. Each character goes to the first font of the chain that
+    /// has a glyph for it, runs in different fonts separated by `Tf` at the
+    /// same size and the selected font restored after; a character no font
+    /// has is drawn as the primary font's `.notdef` (`?`). Each run is written
+    /// as `(codes) Tj`, or `<hex> Tj` when the bytes are not all printable
+    /// ASCII.
+    ///
+    /// After `set_font_name`, or with no font selected, the text is written as
+    /// WinAnsi codes.
     pub fn show_text(&mut self, text: &str) {
-        let _ = write_string(
-            &mut ByteSink(&mut self.content),
-            &crate::font::encode_winansi(text),
-        );
+        let Some((font, size)) = self.current_font.clone() else {
+            self.write_tj(&crate::font::encode_winansi(text));
+            return;
+        };
+        let primary = &font.entries()[0];
+        let mut active = primary.clone();
+        for (entry, codes) in font.encode(text) {
+            if !Arc::ptr_eq(&entry, &active) {
+                self.write_tf(&entry, size);
+                active = entry;
+            }
+            self.write_tj(&codes);
+        }
+        if !Arc::ptr_eq(&active, primary) {
+            self.write_tf(primary, size);
+        }
+    }
+
+    fn write_tj(&mut self, codes: &[u8]) {
+        let _ = write_string(&mut ByteSink(&mut self.content), codes);
         self.content.extend_from_slice(b" Tj\n");
     }
 
@@ -169,6 +230,7 @@ impl PageBuilder {
 
     /// Register a standard Type1 font resource for this page, declared
     /// `/WinAnsiEncoding` (except `Symbol` and `ZapfDingbats`).
+    #[deprecated(note = "register a `Font` with `add_standard_font`; `set_font` declares it")]
     pub fn add_font(&mut self, resource_name: &str, font_name: &str) {
         self.font_names
             .push((resource_name.to_string(), font_name.to_string()));
@@ -202,7 +264,7 @@ impl PageBuilder {
         let mut resources = PdfDict::new();
 
         // Font resources
-        if !self.font_names.is_empty() || !self.font_refs.is_empty() {
+        if !self.font_names.is_empty() || !self.font_refs.is_empty() || !self.fonts.is_empty() {
             let mut font_dict = PdfDict::new();
             for (res_name, base_font) in &self.font_names {
                 // For standard fonts, we create inline font dicts.
@@ -214,6 +276,12 @@ impl PageBuilder {
                 font_dict.insert(
                     res_name.as_bytes().to_vec(),
                     PdfObject::Reference(font_ref.clone()),
+                );
+            }
+            for entry in &self.fonts {
+                font_dict.insert(
+                    entry.resource_name().as_bytes().to_vec(),
+                    PdfObject::Reference(entry.font_ref().clone()),
                 );
             }
             resources.insert(b"Font".to_vec(), PdfObject::Dict(font_dict));
@@ -263,6 +331,7 @@ mod tests {
     use crate::content::{Operand, parse_content_stream};
 
     /// The `/Encoding` of the inline font dictionary `add_font(_, base_font)` emits.
+    #[allow(deprecated)]
     fn inline_font_encoding(base_font: &str) -> Option<Vec<u8>> {
         let mut writer = PdfWriter::new();
         let pages_ref = writer.alloc_object_num();
@@ -316,12 +385,13 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_numbers_read_back_as_integers_or_finite_reals() {
         let mut page = PageBuilder::new(612.0, 792.0);
         page.set_fill_rgb(f64::NAN, 0.0, 1.0);
         page.set_stroke_rgb(0.25, f64::INFINITY, 1.0);
         page.begin_text();
-        page.set_font("F1", 1e20);
+        page.set_font_name("F1", 1e20);
         page.move_to(f64::NAN, f64::NEG_INFINITY);
         page.end_text();
         page.draw_line(-0.0, 612.0, 0.5, 2147483648.0);
@@ -374,10 +444,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_written_names_and_text_read_back_unchanged() {
         let mut page = PageBuilder::new(612.0, 792.0);
         page.begin_text();
-        page.set_font("F 1#", 12.0);
+        page.set_font_name("F 1#", 12.0);
         page.show_text("1) a\\b\r\n(c");
         page.end_text();
         page.draw_image("Im/1", 0.0, 0.0, 10.0, 10.0);
@@ -405,10 +476,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_page_builder_content() {
         let mut page = PageBuilder::new(612.0, 792.0);
         page.begin_text();
-        page.set_font("F1", 12.0);
+        page.set_font_name("F1", 12.0);
         page.move_to(72.0, 720.0);
         page.show_text("Hello");
         page.end_text();
@@ -457,6 +529,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_page_builder_build() {
         let mut writer = PdfWriter::new();
         let pages_ref = IndirectRef {
@@ -467,7 +540,7 @@ mod tests {
         let mut page = PageBuilder::new(612.0, 792.0);
         page.add_font("F1", "Helvetica");
         page.begin_text();
-        page.set_font("F1", 12.0);
+        page.set_font_name("F1", 12.0);
         page.move_to(72.0, 720.0);
         page.show_text("Test");
         page.end_text();
@@ -491,6 +564,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_page_builder_font_ref() {
         let mut writer = PdfWriter::new();
         let pages_ref = IndirectRef {
@@ -506,7 +580,7 @@ mod tests {
         let mut page = PageBuilder::new(612.0, 792.0);
         page.add_font_ref("F1", font_ref);
         page.begin_text();
-        page.set_font("F1", 12.0);
+        page.set_font_name("F1", 12.0);
         page.show_text("Hello");
         page.end_text();
 

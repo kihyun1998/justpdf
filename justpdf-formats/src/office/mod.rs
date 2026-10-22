@@ -553,7 +553,6 @@ impl FormatDocument for OfficeDocument {
 
         for page_text in &self.pages {
             let mut page = PageBuilder::new(page_width, page_height);
-            page.add_font(&font_name, "Courier");
             page.begin_text();
             page.set_font(&font_name, font_size);
 

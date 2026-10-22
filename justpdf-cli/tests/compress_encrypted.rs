@@ -25,7 +25,6 @@ fn encrypted_fixture(dir: &Path) -> PathBuf {
     let mut builder = DocumentBuilder::new();
     let font = builder.add_standard_font("Helvetica");
     let mut page = PageBuilder::new(612.0, 792.0);
-    page.add_font(&font, "Helvetica");
     page.begin_text();
     page.set_font(&font, 24.0);
     page.move_to(72.0, 720.0);

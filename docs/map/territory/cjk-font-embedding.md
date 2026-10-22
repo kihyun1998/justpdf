@@ -1,29 +1,53 @@
 # CJK font embedding (writing)
 
 ## What it is
-The writing-side code that wraps a TrueType font as a CID font (Type0 + CIDFontType2) and embeds it in a document. It includes language ordering detection, `/W` array generation and ToUnicode CMap generation.
+The writing side of text beyond WinAnsi. A caller parses a TrueType program into a `FontProgram` and registers it on one document as a `Font` handle, then draws with it through `PageBuilder`. At output the document writes each embedded `Font` as a Type0 font (`Identity-H`, `CIDFontType2`) with a `/CIDToGIDMap` stream, a ToUnicode CMap, `/W` widths and a font descriptor, the program subset to the glyphs drawn. Standard fonts are `Font`s of the WinAnsi kind on the same path. `cjk.rs` holds the CID system info, the ToUnicode CMap generator and the `/W` array builder the writer uses.
 
 ## Governing decisions
-**None.**
+No decision record (ADR). The design was settled with the maintainer in #173's grilling (2026-10-02): fonts come only from callers (nothing bundled, no system lookup); a per-document `Font` handle encodes inside `show_text`; subsetting happens at build; `/W` comes from `hmtx`; fallbacks are an ordered chain; characters map one-to-one with no shaping (#177), no bidi and no vertical writing; CFF fonts are refused (#176). It replaced #65's options (a)/(b)/(c).
+
+- **Maintainer decision (2026-10-22, #173)**: `PageBuilder::set_font(&Font, f64)` is the new signature, and the string form is renamed `set_font_name(&str, f64)` and deprecated. Shown: the brief asked for both a `&Font` `set_font` and a deprecated string `set_font`, which Rust cannot overload. Alternatives: keep `set_font(&str)` deprecated and add `select_font(&Font)`; one generic `set_font(impl Into<…>)`, which cannot warn on the string path. This decision did not cover any other name.
 
 ## Design model
-- Writes `/CIDToGIDMap /Identity`.
-- Writes a default width of 1000 for every glyph ("For now, use a default width of 1000 for all glyphs").
-- Splits bfchar sections into chunks of 100 (code comment: "PDF spec limit").
+- **`FontProgram::parse(bytes, face_index)`** holds one standalone TrueType font in shared bytes (`Arc<[u8]>`). A `.ttc` face is rewritten as a standalone font (`collection_face`: its offset table, then each of its tables copied and 4-byte aligned), because `/FontFile2` holds one TrueType font and `subset_font` reads the offset table at byte 0 (inferred). So `FontEmbedding::Whole` for a collection face embeds that face's bytes, not the collection. `OTTO` (at the start or as the face's version) is refused with `FontError` naming CFF, and so is a program with no `glyf` table.
+  - Trap: a face's table records can all point at the whole file, so copying them is a memory bomb — 65,535 records over a 1 MiB collection would copy about 64 GiB (inferred). The tables of one real face do not overlap, so a face whose tables add up to more than the collection is refused (measured: without the guard, 4,096 records over a 65 KiB file copied 268 MB in 0.21 s; `a_collection_face_whose_tables_repeat_the_whole_file_is_refused`).
+- **A `Font` is a chain of registered entries**, the primary first. `with_fallback` appends the fallback's own chain, without duplicates, and panics for a font of another document. Each entry belongs to one document (a process-wide counter in `FontRegistry::new`), has a resource name (`F1`, `F2`, … shared with `embed_truetype_font`), an object number reserved at registration, and its usage behind a `Mutex`, so `PageBuilder` stays `Send` (technical decision: `PageBuilder` encodes on `show_text` without the document, so the handle carries the document's state).
+- **Choosing the font for a character**: the first entry that has a glyph for it — an embedded font through its `cmap` (glyph 0 counts as none), a standard font when WinAnsi has a code for it. A character no entry has goes to the primary: `.notdef` (GID 0) in an embedded font, `?` in a standard one, and it is recorded as missing. `missing_chars()` is the union over the document's entries.
+- **Usage is recorded when `show_text` runs, not when the page is added**: a `PageBuilder` drawn and then dropped still adds its characters to the CIDs, the subset and `missing_chars()` (measured by #173's review probe). **Maintainer decision (2026-10-22, #173)**: kept and documented. Shown: the probe; alternative: record at `add_page`, which needs the content encoded late.
+- **CIDs** are assigned per entry in order of first use from 1, one per distinct character, missing characters included. CID 0 is never assigned; past 65,535 distinct characters a character gets CID 0 and is reported missing. The `/CIDToGIDMap` stream maps CID 0 to 0 and each CID to its character's glyph (0 when missing), so ToUnicode can give every CID, `.notdef` ones included, its exact character (measured: two different missing emoji on one page extract back distinctly).
+- **`show_text`** splits the text into runs per entry, writes `/Fn size Tf` before a run in another entry than the active one and the selected font's `Tf` again after the last run if it switched, so the content stream's font after `show_text` is what `set_font` selected whatever `q`/`Q` the caller wraps around it (technical decision). Each run is `(…) Tj` or `<hex> Tj` through `write_string`. Every entry a page draws with is declared in its `/Resources /Font`.
+- **What an embedded entry writes** (`FontEntry::write`): Type0 `/Encoding /Identity-H`, `CIDSystemInfo` Adobe/Identity/0, `/DW` the `.notdef` advance and `/W` per CID, both `hmtx` × 1000 / unitsPerEm rounded to integers (measured on a 2048-unit fixture: `A` 1489 → 727). The descriptor's `FontBBox` comes from `head`, `Ascent`/`Descent` from ttf-parser's `ascender`/`descender` — `OS/2` typo metrics when `USE_TYPO_METRICS` is set, `hhea` otherwise (measured: the fixture sets it, 1753/−295 → 856/−144 where `hhea` gives 844/−156) —, `CapHeight` from `OS/2` (the ascent without it), `ItalicAngle` from `post`, `Flags` Nonsymbolic plus FixedPitch and Italic from the tables, `StemV` 80.
+  - Flags Nonsymbolic for a CID font follows MuPDF (Reference behaviour); ISO 32000-2 §9.8.2's Symbolic meaning was not checked against the spec text.
+- **Subsetting at output**: `subset_font` with the GIDs drawn plus 0. It keeps glyph IDs ([Font subsetting](font-subsetting.md)), so the `/CIDToGIDMap` stays valid. The name gets a six-letter tag from `font_hash` of the kept GIDs (`ABCDEF+PostScriptName`) in `/BaseFont` of both dictionaries and the descriptor's `/FontName`. If `subset_font` refuses, the whole program is embedded untagged. Measured: Noto Sans for "Hello" embeds 41,236 bytes of 431,364 (decompressed); most of it is `loca` and `hmtx`, full length because GIDs are kept. `the_embedded_program_is_a_tagged_subset_of_the_used_glyphs` bounds it at 45,000.
+- **When objects are written**: every entry's numbers are reserved at registration and its objects written at them by `FontRegistry::write` (a standard entry's dictionary, an embedded entry's six objects), which `DocumentBuilder::build` calls, and `DocumentModifier` before `build`, `pack_object_streams`, `build_with_xref_stream` and `incremental_save`. An entry is rewritten only when it drew a new character since its last write, so `build_with_xref_stream` after `pack_object_streams` does not put a second copy beside the packed one (technical decision). Until #173's review a standard entry was written at registration, and a `garbage_collect` before the page using it was inserted removed it, leaving the page's resource pointing at nothing (measured, `a_standard_font_registered_before_garbage_collect_is_still_written`).
+- **Measuring**: `FontProgram::advance` (thousandths of an em, unrounded) and `Font::advance(text, size)` through the chain; a standard font measures with `standard14_widths` at its WinAnsi code. Measuring records nothing.
+- `cjk.rs` `generate_to_unicode_cmap` splits bfchar sections into chunks of 100 (code comment: "PDF spec limit") and writes characters outside the BMP as surrogate pairs. `detect_ordering` and the Adobe orderings have no writing caller: every embedded font is Identity.
+- `build_cid_font` (whole program, `/CIDToGIDMap /Identity`, every width 1000, constant descriptor metrics, no product caller) was removed in #173; the compress tests that needed a whole-program Type0 font build it through `FontRegistry` with `FontEmbedding::Whole`.
 
 ## Code
-- `justpdf-core/src/font/cjk.rs` — `build_cid_font`, `detect_ordering`, `CJKOrdering`, `generate_to_unicode_cmap`, `build_w_array`
+- `justpdf-core/src/font/program.rs` — `FontProgram`, `parse`, `collection_face`, `glyph_id`, `advance`, `glyph_advance`, `postscript_name`
+- `justpdf-core/src/font/handle.rs` — `Font`, `FontEmbedding`, `FontEntry`, `FontKind`, `EmbeddedObjects`, `Usage`, `with_fallback`, `advance`, `encode`, `encode_char`, `write`, `descriptor`, `subset_tag`, `FontRegistry`, `add_standard`, `add_embedded`, `missing_chars`
+- `justpdf-core/src/font/cjk.rs` — `detect_ordering`, `CJKOrdering`, `CIDSystemInfo`, `generate_to_unicode_cmap`, `build_w_array`
+- `justpdf-core/tests/unicode_font.rs` — `hangul_with_latin_fallback_extracts_exactly_and_reports_the_emoji`, `two_different_missing_characters_extract_back_distinctly`, `fallback_switches_fonts_only_where_the_primary_lacks_a_glyph`, `the_embedded_program_is_a_tagged_subset_of_the_used_glyphs`, `widths_and_descriptor_metrics_come_from_the_font_tables`, `a_collection_face_is_selected_by_index`, `a_collection_face_whose_tables_repeat_the_whole_file_is_refused`, `a_modifier_draws_with_an_embedded_font_on_an_existing_document`, `a_standard_font_registered_before_garbage_collect_is_still_written`
+- `justpdf-render/tests/render_embedded_font.rs` — `hangul_renders_as_glyphs_not_blank_and_not_notdef`
 
 ## Reference behaviour
-**None.**
+2026-10-22, read from the raw source (`ArtifexSoftware/mupdf` master, `source/pdf/pdf-font-add.c`, #173):
+- **MuPDF** `pdf_add_font_descriptor` — used for its CID fonts too — writes `Flags` `PDF_FD_NONSYMBOLIC`, `ItalicAngle` 0 and `StemV` 80, and `Ascent`/`Descent` from FreeType's face ascender/descender × 1000 / units per em. justpdf writes the `post` italic angle instead of 0, and the same `StemV`.
 
 ## Cross-cutting invariants
-- [Content text encoding](../invariant/content-text-encoding.md) — the only material for writing non-ASCII text correctly is here, but it is not connected.
+- [Content text encoding](../invariant/content-text-encoding.md) — the path for text beyond WinAnsi.
+- [Object syntax roundtrip](../invariant/object-syntax-roundtrip.md) — resource names and CID strings go through `name_syntax` and `write_string`.
 
 ## Blast radius
-- [CID fonts](cid-fonts.md), [ToUnicode](tounicode.md) — the side that reads the fonts made here.
-- [Document builder](document-builder.md) — the side this should be connected to (`show_text` assumes standard fonts only).
+- [Document builder](document-builder.md), [Document modifier](document-modifier.md) — they own a `FontRegistry` and write it before output. A new output path on either must call it.
+- [Font subsetting](font-subsetting.md) — `subset_font` now also runs at build; a change to whether it keeps glyph IDs breaks the `/CIDToGIDMap` written here.
+- [CID fonts](cid-fonts.md), [ToUnicode](tounicode.md), [Glyph rendering](glyph-rendering.md) — the readers of these fonts (text extraction and both renderers).
+- #174 (converters), #175 (appearances; the signature path writes its own incremental update and needs this write path without a modifier), #178 — built on `Font`.
 
 ## Known holes / open
-- Nothing outside `cjk.rs` calls it. Every path that writes non-ASCII text, formats and OCR among them, uses a standard Type1 font instead of this module.
-- Tracked: #34 (non-ASCII content text)
+- No shaping, bidi or vertical writing: Arabic, Hebrew, Indic scripts and conjoining Hangul jamo draw wrongly. Tracked: #177.
+- CFF-flavoured OpenType fonts are refused. Tracked: #176.
+- `FontEntry::write` is crate-internal and needs a `FontRegistry`; `sign_pdf` writes its incremental update by hand and cannot reach it yet. Tracked: #175.
+- After an output has written the fonts (`pack_object_streams`), a `garbage_collect` removes a font no page reaches yet, and a later page drawn with it is not given it again: the entry counts as written (inferred).
+- A page built for one document and added to another panics in `DocumentBuilder::add_page` and is an error in `DocumentModifier::insert_page`; a page drawing only with by-name fonts is not checked.

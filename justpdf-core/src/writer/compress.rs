@@ -2129,7 +2129,6 @@ mod tests {
 
         for i in 0..num_pages {
             let mut page = PageBuilder::new(612.0, 792.0);
-            page.add_font(&font, "Helvetica");
             page.begin_text();
             page.set_font(&font, 12.0);
             page.move_to(72.0, 720.0);
@@ -2170,7 +2169,6 @@ mod tests {
             crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
 
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
         page.add_image("Im1", img_ref);
         page.begin_text();
         page.set_font(&font, 12.0);
@@ -2380,7 +2378,6 @@ mod tests {
         let font = doc.add_standard_font("Helvetica");
         for i in 0..num_pages {
             let mut page = PageBuilder::new(612.0, 792.0);
-            page.add_font(&font, "Helvetica");
             page.begin_text();
             page.set_font(&font, 12.0);
             page.move_to(72.0, 720.0);
@@ -2559,7 +2556,6 @@ mod tests {
         let (_name2, img_ref2) = crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
 
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
         page.add_image("Im1", img_ref1);
         page.add_image("Im2", img_ref2);
         page.begin_text();
@@ -2780,7 +2776,8 @@ mod tests {
         let (_, ref2) = crate::writer::document::embed_jpeg(&mut doc, &jpeg2).unwrap();
 
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
+        #[allow(deprecated)]
+        page.add_font(font.resource_name(), "Helvetica");
         page.add_image("Im1", ref1);
         page.add_image("Im2", ref2);
         page.draw_image("Im1", 72.0, 400.0, 100.0, 100.0);
@@ -2868,6 +2865,7 @@ mod tests {
 
     /// Create a one-page PDF that draws `text` with `ttf_bytes` embedded as a
     /// simple TrueType font.
+    #[allow(deprecated)]
     fn create_pdf_with_truetype_font(ttf_bytes: &[u8], text: &str) -> Vec<u8> {
         let mut doc = DocumentBuilder::new();
         let font = doc.embed_truetype_font(ttf_bytes).unwrap();
@@ -2876,7 +2874,7 @@ mod tests {
         let mut page = PageBuilder::new(612.0, 792.0);
         page.add_font_ref(&font, font_ref);
         page.begin_text();
-        page.set_font(&font, 24.0);
+        page.set_font_name(&font, 24.0);
         page.move_to(72.0, 720.0);
         page.show_text(text);
         page.end_text();
@@ -3536,6 +3534,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_subset_font_restored_by_grestore_keeps_glyphs() {
         let mut doc = DocumentBuilder::new();
         let f1 = doc.embed_truetype_font(NOTO_SANS_REGULAR).unwrap();
@@ -3615,10 +3614,11 @@ mod tests {
         assert_char_outline_kept(NOTO_SANS_REGULAR, &program(&f2), 'o');
     }
 
-    /// Create a one-page PDF that draws the glyphs of `text` with Noto Sans
-    /// embedded as an Identity-H CIDFontType2 font; `edit_cid_font` may change
-    /// the descendant CIDFont dictionary, and `content_cids` maps each glyph ID
-    /// to the CID written in the content stream.
+    /// Create a one-page PDF that draws the glyphs of `text` with the whole of
+    /// Noto Sans embedded as an Identity-H CIDFontType2 font, its CIDs in order
+    /// of first use and a `/CIDToGIDMap` stream; `edit_cid_font` may change the
+    /// descendant CIDFont dictionary, and `content_cids` maps each glyph ID to
+    /// the CID written in the content stream.
     fn create_pdf_with_cid_font(
         text: &str,
         content_cids: impl Fn(u16) -> u16,
@@ -3633,9 +3633,12 @@ mod tests {
 
         let mut writer = crate::writer::PdfWriter::new();
         let pages_num = writer.alloc_object_num();
-        let font_ref =
-            crate::font::cjk::build_cid_font(&mut writer, "NotoSans", NOTO_SANS_REGULAR, &used)
-                .unwrap();
+        let program = crate::font::FontProgram::parse(NOTO_SANS_REGULAR.to_vec(), 0).unwrap();
+        let mut fonts = crate::font::FontRegistry::new();
+        let font = fonts.add_embedded(&mut writer, &program, crate::font::FontEmbedding::Whole);
+        font.encode(text);
+        fonts.write(&mut writer);
+        let font_ref = font.entries()[0].font_ref().clone();
 
         let type0 = writer
             .objects
@@ -3736,7 +3739,17 @@ mod tests {
 
     #[test]
     fn test_subset_cid_identity_keeps_glyph_outlines() {
-        let pdf = create_pdf_with_cid_font("Hello", |gid| gid, |_, _| {}, b"Identity-H");
+        let pdf = create_pdf_with_cid_font(
+            "Hello",
+            |gid| gid,
+            |cid_font, _| {
+                cid_font.insert(
+                    b"CIDToGIDMap".to_vec(),
+                    PdfObject::Name(b"Identity".to_vec()),
+                );
+            },
+            b"Identity-H",
+        );
 
         let (stats, original, subset) = compress_and_fonts(&pdf);
         assert_eq!(stats.fonts_subsetted, 1);
@@ -3752,24 +3765,7 @@ mod tests {
             .map(|c| face.glyph_index(c).unwrap().0)
             .collect();
         let cid_of = move |gid: u16| gids.iter().position(|&g| g == gid).unwrap() as u16 + 1;
-        let face_gids: Vec<u16> = "Helo"
-            .chars()
-            .map(|c| face.glyph_index(c).unwrap().0)
-            .collect();
-        let pdf = create_pdf_with_cid_font(
-            "Hello",
-            cid_of,
-            move |cid_font, writer| {
-                let mut map = vec![0u8; 2 * (face_gids.len() + 1)];
-                for (i, gid) in face_gids.iter().enumerate() {
-                    map[2 * (i + 1)..2 * (i + 2)].copy_from_slice(&gid.to_be_bytes());
-                }
-                let (dict, data) = crate::writer::encode::make_stream(&map, true);
-                let map_ref = writer.add_object(PdfObject::Stream { dict, data });
-                cid_font.insert(b"CIDToGIDMap".to_vec(), PdfObject::Reference(map_ref));
-            },
-            b"Identity-H",
-        );
+        let pdf = create_pdf_with_cid_font("Hello", cid_of, |_, _| {}, b"Identity-H");
 
         let (stats, original, subset) = compress_and_fonts(&pdf);
         assert_eq!(stats.fonts_subsetted, 1);
@@ -4099,7 +4095,6 @@ mod tests {
         let mut doc = DocumentBuilder::new();
         let font = doc.add_standard_font("Helvetica");
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
         page.set_fill_rgb(1.0, 0.0, 0.0);
         page.begin_text();
         page.set_font(&font, 12.0);
@@ -4614,7 +4609,8 @@ mod tests {
         let (_img_name, img_ref) =
             crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
+        #[allow(deprecated)]
+        page.add_font(font.resource_name(), "Helvetica");
         page.add_image("Im1", img_ref);
         page.draw_image("Im1", 72.0, 400.0, draw_w_pt, draw_h_pt);
         doc.add_page(page);
@@ -4668,7 +4664,8 @@ mod tests {
         let (_img_name, img_ref) =
             crate::writer::document::embed_jpeg(&mut doc, &jpeg_data).unwrap();
         let mut page = PageBuilder::new(612.0, 792.0);
-        page.add_font(&font, "Helvetica");
+        #[allow(deprecated)]
+        page.add_font(font.resource_name(), "Helvetica");
         page.add_image("Im1", img_ref);
         page.draw_image("Im1", 72.0, 400.0, image_w as f64, image_h as f64);
         doc.add_page(page);

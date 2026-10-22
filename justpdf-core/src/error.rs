@@ -75,6 +75,9 @@ pub enum JustPdfError {
 
     #[error("repair error: {detail}")]
     RepairError { detail: String },
+
+    #[error("font error: {detail}")]
+    FontError { detail: String },
 }
 
 pub type Result<T> = std::result::Result<T, JustPdfError>;
@@ -148,6 +151,9 @@ impl JustPdfError {
                 detail: detail.clone(),
             },
             RepairError { detail } => RepairError {
+                detail: detail.clone(),
+            },
+            FontError { detail } => FontError {
                 detail: detail.clone(),
             },
         })

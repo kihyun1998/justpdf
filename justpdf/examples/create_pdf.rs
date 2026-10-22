@@ -16,7 +16,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Page 1
     let mut page1 = PageBuilder::new(612.0, 792.0);
-    page1.add_font(&font, "Helvetica");
     page1.begin_text();
     page1.set_font(&font, 36.0);
     page1.move_to(72.0, 700.0);
@@ -37,7 +36,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Page 2
     let mut page2 = PageBuilder::new(612.0, 792.0);
-    page2.add_font(&font, "Helvetica");
     page2.begin_text();
     page2.set_font(&font, 24.0);
     page2.move_to(72.0, 700.0);

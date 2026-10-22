@@ -12,7 +12,7 @@ A pure Rust PDF engine for reading, rendering, text extraction, creation, modifi
 - **Read** - Parse PDF 1.0-2.0, cross-reference tables/streams, incremental updates, object streams
 - **Render** - Rasterize pages to PNG/JPEG/raw RGBA with tiny-skia, or export SVG; parallel rendering (feature `parallel`)
 - **Text extraction** - Unicode-aware text extraction with positions, reading-order analysis, search
-- **Create** - Build PDFs from scratch with the page builder API
+- **Create** - Build PDFs from scratch with the page builder API, drawing Unicode text through TrueType fonts you supply
 - **Modify** - Merge, split, reorder, delete pages, edit metadata
 - **Compress** - Image re-encoding/downscaling, font subsetting, stream dedup and recompression (4 presets)
 - **Security** - Decrypt/encrypt (RC4, AES-128/256), signature detection and verification (RSA)

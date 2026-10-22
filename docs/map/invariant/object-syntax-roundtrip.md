@@ -21,6 +21,7 @@ Sites that write syntax by calling the shared functions (moved in #29):
 - [Signing](../territory/signing.md) — `/Name`, `/Reason` and `/Location` through `string_syntax`, `/Rect` through `real_syntax`, the appearance stream dictionary through `serialize_dict`.
 - [Signature appearance](../territory/signature-appearance.md), [Form appearance](../territory/form-appearance.md), [Annotation appearance](../territory/annotation-appearance.md) — `Tj` strings through `string_syntax`.
 - [Document builder](../territory/document-builder.md) — names in `PageBuilder`'s `set_font`, `draw_image` and `draw_inline_image` through `name_syntax`, `show_text` through `write_string`.
+- [CJK font embedding](../territory/cjk-font-embedding.md) — the `Tf` resource names of fallback runs through `name_syntax`, CID strings through `write_string`, and the subset tag and PostScript name in `/BaseFont`/`/FontName` as `PdfObject::Name`.
 - [Embedded files](../territory/embedded-files.md) — sets the MIME type as `Name(b"application/pdf")` and leaves it to the serializer.
 
 Generator reals — appearance generators (form, annotation and signature appearances), `PageBuilder`'s coordinates, colors and font sizes, redaction's cover rectangles and colors — are written as `Number` (#90): an integer value within the 32-bit range is an integer (`612`), anything else goes through `write_real` (with a decimal point), NaN → `0`, ±Inf → ±`f32::MAX`. Normal output is the same as when it was written with `{}` — only NaN, inf, `-0` and integer values beyond 32 bits change.

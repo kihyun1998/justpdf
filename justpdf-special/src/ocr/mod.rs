@@ -166,7 +166,6 @@ pub fn make_searchable_pdf(
 
         // Build page with image + invisible text overlay
         let mut page = PageBuilder::new(w, h);
-        page.add_font(&font_name, "Helvetica");
 
         // Draw the scanned image as background, scaled to the page
         let img = image::load_from_memory(&png_data).map_err(|e| SpecialError::Feature {

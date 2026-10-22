@@ -448,7 +448,6 @@ impl FormatDocument for EpubDocument {
             // Paginate chapter text
             for chunk in lines.chunks(lines_per_page.max(1)) {
                 let mut page = PageBuilder::new(page_width, page_height);
-                page.add_font(&font_name, "Courier");
                 page.begin_text();
                 page.set_font(&font_name, font_size);
 
