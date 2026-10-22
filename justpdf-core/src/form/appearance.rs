@@ -1,6 +1,7 @@
 use std::fmt::Write;
 
-use crate::font::encode_winansi;
+use crate::content::Operand;
+use crate::font::{FontEncoder, encode_winansi};
 use crate::object::{IndirectRef, Number, PdfDict, PdfObject, string_syntax};
 use crate::writer::document::standard_font_dict;
 use crate::writer::encode::make_stream;
@@ -8,38 +9,57 @@ use crate::writer::modify::DocumentModifier;
 
 use super::types::*;
 
-/// Generate an appearance stream for a form field widget.
-/// Returns the indirect reference to the Form XObject.
+/// Why [`generate_field_appearance`] made no appearance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AppearanceError {
+    /// The widget has no `/Rect`, or one with no area.
+    #[error("the widget has no area to draw in")]
+    NoRect,
+    /// A signature field, whose appearance comes with its signature.
+    #[error("a signature field has its own appearance")]
+    Signature,
+    /// The field's `/DA` names no font, or a font the AcroForm `/DR` does not
+    /// hold, or one that cannot encode every character of the text shown.
+    #[error("the field's /DA font cannot show its text")]
+    NotEncodable,
+}
+
+/// Generate an appearance stream for a form field widget and add it to
+/// `modifier`. Returns the indirect reference to the Form XObject.
+///
+/// A text field, combo box, list box or push button with `/DA` draws in the
+/// font `/DA` names, looked up in the AcroForm `/DR` of `modifier`'s document
+/// and declared under the same name in the appearance's `/Resources`, its text
+/// in that font's codes. Without `/DA` it draws in a WinAnsi `/Helvetica`.
+/// Nothing is added when it returns an error.
 pub fn generate_field_appearance(
     field: &FormField,
     modifier: &mut DocumentModifier,
-) -> Option<IndirectRef> {
-    let rect = field.rect?;
+) -> Result<IndirectRef, AppearanceError> {
+    let rect = field.rect.ok_or(AppearanceError::NoRect)?;
     let w = rect.width();
     let h = rect.height();
     if w <= 0.0 || h <= 0.0 {
-        return None;
+        return Err(AppearanceError::NoRect);
     }
 
+    let font = FieldFont::of(field, modifier)?;
     let content = match field.field_type {
-        FieldType::Text => text_field_appearance(field, w, h),
+        FieldType::Text => text_field_appearance(field, &font, w, h)?,
         FieldType::Checkbox => checkbox_appearance(field, w, h),
         FieldType::RadioButton => radio_appearance(field, w, h),
-        FieldType::ComboBox => combo_appearance(field, w, h),
-        FieldType::ListBox => list_appearance(field, w, h),
-        FieldType::PushButton => button_appearance(field, w, h),
-        FieldType::Signature => return None, // Signatures have their own appearance
+        FieldType::ComboBox => combo_appearance(field, &font, w, h)?,
+        FieldType::ListBox => list_appearance(field, &font, w, h)?,
+        FieldType::PushButton => button_appearance(field, &font, w, h)?,
+        FieldType::Signature => return Err(AppearanceError::Signature),
     };
 
     let (stream_dict, stream_data) = make_stream(content.as_bytes(), true);
     let mut form_dict = stream_dict;
     form_dict.insert(b"Type".to_vec(), PdfObject::Name(b"XObject".to_vec()));
     form_dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Form".to_vec()));
-    if uses_default_font(field) {
-        form_dict.insert(
-            b"Resources".to_vec(),
-            PdfObject::Dict(default_font_resources()),
-        );
+    if shows_text(field) {
+        form_dict.insert(b"Resources".to_vec(), PdfObject::Dict(font.resources()));
     }
     form_dict.insert(
         b"BBox".to_vec(),
@@ -55,32 +75,121 @@ pub fn generate_field_appearance(
         dict: form_dict,
         data: stream_data,
     };
-    Some(modifier.add_object(form_xobj))
+    Ok(modifier.add_object(form_xobj))
 }
 
-/// Whether the appearance of `field` selects justpdf's default font, `/Helvetica`:
-/// a text field without `/DA`, and every combo box, list box and push button.
-fn uses_default_font(field: &FormField) -> bool {
-    match field.field_type {
-        FieldType::Text => field.default_appearance.is_none(),
-        FieldType::ComboBox | FieldType::ListBox | FieldType::PushButton => true,
-        _ => false,
+/// Whether the appearance of `field` shows text: a text field, combo box,
+/// list box or push button.
+fn shows_text(field: &FormField) -> bool {
+    matches!(
+        field.field_type,
+        FieldType::Text | FieldType::ComboBox | FieldType::ListBox | FieldType::PushButton
+    )
+}
+
+/// The font a field's text is drawn in.
+enum FieldFont {
+    /// justpdf's WinAnsi `/Helvetica`, for a field without `/DA`.
+    Default,
+    /// The AcroForm `/DR` font `/DA` names.
+    Dr {
+        /// The `/DA` string, which selects the font.
+        da: String,
+        /// The font's name in `/DR` and `/DA`.
+        name: Vec<u8>,
+        /// The `/DR` entry: a reference to the font, or the font dictionary.
+        font: PdfObject,
+        encoder: FontEncoder,
+    },
+}
+
+impl FieldFont {
+    fn of(field: &FormField, modifier: &DocumentModifier) -> Result<FieldFont, AppearanceError> {
+        match &field.default_appearance {
+            Some(da) if shows_text(field) => {
+                dr_font(da, modifier).ok_or(AppearanceError::NotEncodable)
+            }
+            _ => Ok(FieldFont::Default),
+        }
+    }
+
+    /// The operators that select the font, for after `BT`.
+    fn select(&self) -> &str {
+        match self {
+            FieldFont::Default => "/Helvetica 10 Tf",
+            FieldFont::Dr { da, .. } => da,
+        }
+    }
+
+    /// `text` in the font's codes.
+    fn encode(&self, text: &str) -> Result<Vec<u8>, AppearanceError> {
+        match self {
+            FieldFont::Default => Ok(encode_winansi(text)),
+            FieldFont::Dr { encoder, .. } => {
+                encoder.encode(text).ok_or(AppearanceError::NotEncodable)
+            }
+        }
+    }
+
+    /// `/Resources` declaring the font.
+    fn resources(&self) -> PdfDict {
+        let mut fonts = PdfDict::new();
+        match self {
+            FieldFont::Default => fonts.insert(
+                b"Helvetica".to_vec(),
+                PdfObject::Dict(standard_font_dict("Helvetica")),
+            ),
+            FieldFont::Dr { name, font, .. } => fonts.insert(name.clone(), font.clone()),
+        };
+        let mut resources = PdfDict::new();
+        resources.insert(b"Font".to_vec(), PdfObject::Dict(fonts));
+        resources
     }
 }
 
-/// `/Resources` declaring the default font as `/Helvetica`, WinAnsi-encoded.
-fn default_font_resources() -> PdfDict {
-    let mut fonts = PdfDict::new();
-    fonts.insert(
-        b"Helvetica".to_vec(),
-        PdfObject::Dict(standard_font_dict("Helvetica")),
-    );
-    let mut resources = PdfDict::new();
-    resources.insert(b"Font".to_vec(), PdfObject::Dict(fonts));
-    resources
+/// The font the last `Tf` of `da` names, from the AcroForm `/DR` of
+/// `modifier`'s document. `None` when there is no such font or it can encode
+/// nothing.
+fn dr_font(da: &str, modifier: &DocumentModifier) -> Option<FieldFont> {
+    let name = crate::content::parse_content_stream(da.as_bytes())
+        .ok()?
+        .into_iter()
+        .rev()
+        .find(|op| op.operator == b"Tf")
+        .and_then(|op| match op.operands.into_iter().next() {
+            Some(Operand::Name(n)) => Some(n),
+            _ => None,
+        })?;
+    let resolve = |r: &IndirectRef| modifier.find_object_pub(r.obj_num).cloned();
+    let direct = |o: &PdfObject| match o {
+        PdfObject::Reference(r) => resolve(r),
+        other => Some(other.clone()),
+    };
+    let catalog = resolve(&modifier.catalog_ref())?;
+    let acroform = direct(catalog.as_dict()?.get(b"AcroForm")?)?;
+    let dr = direct(acroform.as_dict()?.get(b"DR")?)?;
+    let fonts = direct(dr.as_dict()?.get(b"Font")?)?;
+    let font = fonts.as_dict()?.get(&name)?.clone();
+    let PdfObject::Dict(font_dict) = direct(&font)? else {
+        return None;
+    };
+    let encoder = FontEncoder::new(&font_dict, resolve, |dict, data| {
+        crate::stream::decode_stream(data, dict).ok()
+    })?;
+    Some(FieldFont::Dr {
+        da: da.to_string(),
+        name,
+        font,
+        encoder,
+    })
 }
 
-fn text_field_appearance(field: &FormField, w: f64, h: f64) -> String {
+fn text_field_appearance(
+    field: &FormField,
+    font: &FieldFont,
+    w: f64,
+    h: f64,
+) -> Result<String, AppearanceError> {
     let mut buf = String::new();
 
     // Border
@@ -98,22 +207,12 @@ fn text_field_appearance(field: &FormField, w: f64, h: f64) -> String {
     if let Some(text) = field.value_as_string()
         && !text.is_empty()
     {
-        // Use DA if present, otherwise default
-        if let Some(da) = &field.default_appearance {
-            let _ = write!(buf, "BT\n{da}\n");
-        } else {
-            buf.push_str("BT\n/Helvetica 10 Tf\n");
-        }
+        let _ = write!(buf, "BT\n{}\n", font.select());
         buf.push_str("0 g\n");
         let _ = writeln!(buf, "2 {} Td", Number((h - 10.0) / 2.0));
-        let bytes = if field.default_appearance.is_some() {
-            text.as_bytes().to_vec()
-        } else {
-            encode_winansi(&text)
-        };
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&bytes));
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&font.encode(&text)?));
     }
-    buf
+    Ok(buf)
 }
 
 fn checkbox_appearance(field: &FormField, w: f64, h: f64) -> String {
@@ -172,7 +271,12 @@ fn radio_appearance(field: &FormField, w: f64, h: f64) -> String {
     buf
 }
 
-fn combo_appearance(field: &FormField, w: f64, h: f64) -> String {
+fn combo_appearance(
+    field: &FormField,
+    font: &FieldFont,
+    w: f64,
+    h: f64,
+) -> Result<String, AppearanceError> {
     let mut buf = String::new();
 
     // Background + border
@@ -214,14 +318,19 @@ fn combo_appearance(field: &FormField, w: f64, h: f64) -> String {
     if let Some(text) = field.value_as_string()
         && !text.is_empty()
     {
-        buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
+        let _ = write!(buf, "BT\n0 g\n{}\n", font.select());
         let _ = writeln!(buf, "2 {} Td", Number((h - 10.0) / 2.0));
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&encode_winansi(&text)));
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&font.encode(&text)?));
     }
-    buf
+    Ok(buf)
 }
 
-fn list_appearance(field: &FormField, w: f64, h: f64) -> String {
+fn list_appearance(
+    field: &FormField,
+    font: &FieldFont,
+    w: f64,
+    h: f64,
+) -> Result<String, AppearanceError> {
     let mut buf = String::new();
 
     // Background + border
@@ -254,15 +363,20 @@ fn list_appearance(field: &FormField, w: f64, h: f64) -> String {
                 Number(line_height)
             );
         }
-        buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
+        let _ = write!(buf, "BT\n0 g\n{}\n", font.select());
         let _ = writeln!(buf, "3 {} Td", Number(y + 2.0));
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&encode_winansi(opt)));
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&font.encode(opt)?));
         y -= line_height;
     }
-    buf
+    Ok(buf)
 }
 
-fn button_appearance(field: &FormField, w: f64, h: f64) -> String {
+fn button_appearance(
+    field: &FormField,
+    font: &FieldFont,
+    w: f64,
+    h: f64,
+) -> Result<String, AppearanceError> {
     let mut buf = String::new();
 
     // 3D button look
@@ -289,11 +403,11 @@ fn button_appearance(field: &FormField, w: f64, h: f64) -> String {
     if let Some(text) = field.value_as_string()
         && !text.is_empty()
     {
-        buf.push_str("BT\n0 g\n/Helvetica 10 Tf\n");
+        let _ = write!(buf, "BT\n0 g\n{}\n", font.select());
         let _ = writeln!(buf, "4 {} Td", Number((h - 10.0) / 2.0));
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&encode_winansi(&text)));
+        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&font.encode(&text)?));
     }
-    buf
+    Ok(buf)
 }
 
 fn append_circle(buf: &mut String, cx: f64, cy: f64, r: f64, k: f64) {
@@ -379,13 +493,14 @@ mod tests {
         let text = PdfObject::String(b"x".to_vec());
         let yes = PdfObject::Name(b"Yes".to_vec());
         let (w, h) = (f64::NAN, f64::INFINITY);
+        let d = FieldFont::Default;
         let contents = [
-            text_field_appearance(&field(FieldType::Text, text.clone()), w, h),
+            text_field_appearance(&field(FieldType::Text, text.clone()), &d, w, h).unwrap(),
             checkbox_appearance(&field(FieldType::Checkbox, yes.clone()), w, h),
             radio_appearance(&field(FieldType::RadioButton, yes), w, h),
-            combo_appearance(&field(FieldType::ComboBox, text.clone()), w, h),
-            list_appearance(&field(FieldType::ListBox, text.clone()), w, h),
-            button_appearance(&field(FieldType::PushButton, text), w, h),
+            combo_appearance(&field(FieldType::ComboBox, text.clone()), &d, w, h).unwrap(),
+            list_appearance(&field(FieldType::ListBox, text.clone()), &d, w, h).unwrap(),
+            button_appearance(&field(FieldType::PushButton, text), &d, w, h).unwrap(),
         ];
         for (i, content) in contents.iter().enumerate() {
             assert_eq!(
@@ -419,7 +534,7 @@ mod tests {
             },
             page_obj_num: None,
         };
-        let content = text_field_appearance(&field, 200.0, 20.0);
+        let content = text_field_appearance(&field, &FieldFont::Default, 200.0, 20.0).unwrap();
         assert!(content.contains("re"));
         assert!(content.contains("(Hello)"));
         assert!(content.contains("Tj"));
@@ -507,7 +622,7 @@ mod tests {
             },
             page_obj_num: None,
         };
-        let content = text_field_appearance(&field, 200.0, 20.0);
+        let content = text_field_appearance(&field, &FieldFont::Default, 200.0, 20.0).unwrap();
 
         let ops = crate::content::parse_content_stream(content.as_bytes()).unwrap();
         let tj = ops.iter().find(|op| op.operator == b"Tj").unwrap();
@@ -598,13 +713,5 @@ mod tests {
                 "{field_type:?}"
             );
         }
-    }
-
-    #[test]
-    fn text_field_with_da_is_left_alone() {
-        let (content, dict) =
-            appearance(&field(FieldType::Text, "Müller", Some("/Helv 12 Tf 0 g")));
-        assert_eq!(shown_strings(&content), vec!["Müller".as_bytes().to_vec()]);
-        assert_eq!(helvetica_encoding(&dict), None);
     }
 }

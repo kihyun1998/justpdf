@@ -194,6 +194,11 @@ impl EncodingCMap {
         }
     }
 
+    /// Whether `bytes` is exactly one character code of a codespace range.
+    pub(crate) fn is_whole_code(&self, bytes: &[u8]) -> bool {
+        self.codespace.iter().any(|c| c.matches(bytes)) && self.next_code(bytes).len == bytes.len()
+    }
+
     /// Every character code of `bytes`, in order.
     pub fn decode(&self, bytes: &[u8]) -> Vec<CMapCode> {
         let mut codes = Vec::new();
