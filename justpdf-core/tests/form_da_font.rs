@@ -431,7 +431,15 @@ fn a_simple_font_with_to_unicode_encodes_through_it() {
 }
 
 #[test]
-fn a_subset_font_whose_program_is_not_truetype_gives_no_appearance() {
+fn a_subset_type1_font_gives_no_appearance() {
+    for key in ["FontFile", "FontFile3"] {
+        // A Type1 program (`/FontFile`) is never checked; a `/FontFile3` that
+        // does not parse as CFF cannot be.
+        a_subset_font_with_an_unchecked_program_gives_no_appearance(key);
+    }
+}
+
+fn a_subset_font_with_an_unchecked_program_gives_no_appearance(key: &str) {
     let doc = source();
     let mut modifier = DocumentModifier::from_document(&doc).unwrap();
     let file = modifier.add_object(stream(b"not read"));
@@ -439,7 +447,7 @@ fn a_subset_font_whose_program_is_not_truetype_gives_no_appearance() {
         ("Type", name("FontDescriptor")),
         ("FontName", name("ABCDEF+Minion")),
         ("Flags", PdfObject::Integer(32)),
-        ("FontFile3", PdfObject::Reference(file)),
+        (key, PdfObject::Reference(file)),
     ]);
     let font = modifier.add_object(PdfObject::Dict(dict(vec![
         ("Type", name("Font")),
@@ -519,4 +527,118 @@ fn every_field_draws_its_text_in_the_colour_da_sets() {
             );
         }
     }
+}
+
+/// URW NimbusSans Regular, a name-keyed bare CFF (SIL OFL 1.1,
+/// `fixtures/OFL-URW.txt`): it has `/A` and no `/uni0410`.
+const NIMBUS_SANS: &[u8] = include_bytes!("fixtures/NimbusSans-Regular.cff");
+/// A CID-keyed bare CFF made from it by `scripts/make-cid-cff-fixture.py`:
+/// CID 300 is `H`, CID 301 is `E`, and it has no CID 302.
+const CID_TEST: &[u8] = include_bytes!("fixtures/cid-test.cff");
+
+/// A `/FontFile3` stream of `subtype` holding `program`.
+fn font_file3(modifier: &mut DocumentModifier, subtype: &str, program: &[u8]) -> PdfObject {
+    PdfObject::Reference(modifier.add_object(PdfObject::Stream {
+        dict: dict(vec![
+            ("Length", PdfObject::Integer(program.len() as i64)),
+            ("Subtype", name(subtype)),
+        ]),
+        data: program.to_vec(),
+    }))
+}
+
+#[test]
+fn a_type1c_subset_encodes_only_the_glyphs_its_program_has() {
+    let doc = source();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+    let file = font_file3(&mut modifier, "Type1C", NIMBUS_SANS);
+    let descriptor = dict(vec![
+        ("Type", name("FontDescriptor")),
+        ("FontName", name("ABCDEF+NimbusSans-Regular")),
+        ("Flags", PdfObject::Integer(32)),
+        ("FontFile3", file),
+    ]);
+    let encoding = dict(vec![
+        ("Type", name("Encoding")),
+        ("BaseEncoding", name("WinAnsiEncoding")),
+        (
+            "Differences",
+            PdfObject::Array(vec![PdfObject::Integer(66), name("uni0410")]),
+        ),
+    ]);
+    let font = modifier.add_object(PdfObject::Dict(dict(vec![
+        ("Type", name("Font")),
+        ("Subtype", name("Type1")),
+        ("BaseFont", name("ABCDEF+NimbusSans-Regular")),
+        ("Encoding", PdfObject::Dict(encoding)),
+        ("FontDescriptor", PdfObject::Dict(descriptor)),
+    ])));
+    set_dr(&mut modifier, dict(vec![("N", PdfObject::Reference(font))]));
+
+    let ap =
+        generate_field_appearance(&field(FieldType::Text, "A", Some("/N 9 Tf")), &mut modifier)
+            .unwrap();
+    let (content, _) = appearance(&modifier, &ap);
+    assert_eq!(shown_strings(&content), vec![b"A".to_vec()]);
+    // `/uni0410` (code 66) decodes to U+0410, which the program lacks.
+    assert_not_encodable(
+        &mut modifier,
+        &field(FieldType::Text, "\u{0410}", Some("/N 9 Tf")),
+    );
+}
+
+#[test]
+fn a_cid_keyed_cff_subset_encodes_only_the_cids_its_charset_has() {
+    let doc = source();
+    let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+    let file = font_file3(&mut modifier, "CIDFontType0C", CID_TEST);
+    let to_unicode = modifier.add_object(stream(
+        b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n\
+          1 begincodespacerange <0000> <FFFF> endcodespacerange\n\
+          4 beginbfchar <0000> <005A> <012C> <0048> <012D> <0045> <012E> <0058> endbfchar\n\
+          endcmap CMapName currentdict /CMap defineresource pop end end",
+    ));
+    let descriptor = dict(vec![
+        ("Type", name("FontDescriptor")),
+        ("FontName", name("ABCDEF+CIDTest")),
+        ("Flags", PdfObject::Integer(4)),
+        ("FontFile3", file),
+    ]);
+    let descendant = dict(vec![
+        ("Type", name("Font")),
+        ("Subtype", name("CIDFontType0")),
+        ("BaseFont", name("ABCDEF+CIDTest")),
+        (
+            "CIDSystemInfo",
+            PdfObject::Dict(dict(vec![
+                ("Registry", PdfObject::String(b"Adobe".to_vec())),
+                ("Ordering", PdfObject::String(b"Identity".to_vec())),
+                ("Supplement", PdfObject::Integer(0)),
+            ])),
+        ),
+        ("FontDescriptor", PdfObject::Dict(descriptor)),
+    ]);
+    let font = modifier.add_object(PdfObject::Dict(dict(vec![
+        ("Type", name("Font")),
+        ("Subtype", name("Type0")),
+        ("BaseFont", name("ABCDEF+CIDTest")),
+        ("Encoding", name("Identity-H")),
+        (
+            "DescendantFonts",
+            PdfObject::Array(vec![PdfObject::Dict(descendant)]),
+        ),
+        ("ToUnicode", PdfObject::Reference(to_unicode)),
+    ])));
+    set_dr(&mut modifier, dict(vec![("C", PdfObject::Reference(font))]));
+
+    let ap = generate_field_appearance(
+        &field(FieldType::Text, "HE", Some("/C 9 Tf")),
+        &mut modifier,
+    )
+    .unwrap();
+    let (content, _) = appearance(&modifier, &ap);
+    assert_eq!(shown_strings(&content), vec![vec![0x01, 0x2C, 0x01, 0x2D]]);
+    assert_not_encodable(&mut modifier, &field(FieldType::Text, "X", Some("/C 9 Tf")));
+    // CID 0 is .notdef (GID 0): mapped, but not a glyph the text can use.
+    assert_not_encodable(&mut modifier, &field(FieldType::Text, "Z", Some("/C 9 Tf")));
 }

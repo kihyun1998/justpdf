@@ -321,11 +321,7 @@ impl<'a> RenderInterpreter<'a> {
         let fd = &resolve_font_entries(fd, |r| doc.resolve(r).ok());
         let mut info = parse_font_info(fd);
         let encoding = fd.get(b"Encoding").map(|_| info.encoding);
-        let explicit_base = match fd.get(b"Encoding") {
-            Some(PdfObject::Name(name)) => Some(Encoding::from_name(name)),
-            Some(PdfObject::Dict(d)) => d.get_name(b"BaseEncoding").map(Encoding::from_name),
-            _ => None,
-        };
+        let explicit_base = justpdf_core::font::explicit_base_encoding(fd);
         let symbolic = self
             .get_font_descriptor(fd)
             .and_then(|d| d.get_i64(b"Flags"))
