@@ -810,14 +810,14 @@ fn list_appearance(
 
     // List items
     let line_height = 12.0;
-    let selected = field.value_as_string().unwrap_or_default();
+    let selected = field.selected_values();
     let mut y = h - line_height;
     for opt in &field.options {
         if y < 0.0 {
             break;
         }
         // Highlight selected
-        if *opt == selected {
+        if selected.contains(&opt.export_value) {
             buf.push_str("0.6 0.75 1 rg\n");
             let _ = write!(
                 buf,
@@ -829,7 +829,11 @@ fn list_appearance(
         }
         let _ = write!(buf, "BT\n0 g\n{}\n", font.select());
         let _ = writeln!(buf, "3 {} Td", Number(y + 2.0));
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&font.encode(opt)?));
+        let _ = write!(
+            buf,
+            "{} Tj\nET\n",
+            string_syntax(&font.encode(&opt.display_value)?)
+        );
         y -= line_height;
     }
     Ok(buf)
@@ -937,7 +941,8 @@ mod tests {
             value: Some(value),
             default_value: None,
             flags: FieldFlags::default(),
-            options: vec!["one".to_string()],
+            options: vec!["one".into()],
+            indices: Vec::new(),
             rect: None,
             default_appearance: None,
             quadding: 0,
@@ -984,6 +989,7 @@ mod tests {
             default_value: None,
             flags: FieldFlags::default(),
             options: Vec::new(),
+            indices: Vec::new(),
             rect: Some(Rect {
                 llx: 0.0,
                 lly: 0.0,
@@ -1017,6 +1023,7 @@ mod tests {
             default_value: None,
             flags: FieldFlags::default(),
             options: Vec::new(),
+            indices: Vec::new(),
             rect: Some(Rect {
                 llx: 0.0,
                 lly: 0.0,
@@ -1049,6 +1056,7 @@ mod tests {
             default_value: None,
             flags: FieldFlags::default(),
             options: Vec::new(),
+            indices: Vec::new(),
             rect: Some(Rect {
                 llx: 0.0,
                 lly: 0.0,
@@ -1082,6 +1090,7 @@ mod tests {
             default_value: None,
             flags: FieldFlags::default(),
             options: Vec::new(),
+            indices: Vec::new(),
             rect: Some(Rect {
                 llx: 0.0,
                 lly: 0.0,
@@ -1117,7 +1126,8 @@ mod tests {
             value: Some(PdfObject::String(value.as_bytes().to_vec())),
             default_value: None,
             flags: FieldFlags::default(),
-            options: vec![value.to_string()],
+            options: vec![value.into()],
+            indices: Vec::new(),
             rect: Some(Rect {
                 llx: 0.0,
                 lly: 0.0,

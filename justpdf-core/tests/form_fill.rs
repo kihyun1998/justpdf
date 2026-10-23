@@ -661,3 +661,105 @@ fn a_widget_whose_own_da_font_is_not_in_dr_keeps_its_appearance() {
         vec![b"new".to_vec()]
     );
 }
+
+const MULTI_SELECT: i64 = 1 << 21;
+
+/// A list box `pick` (100 × 40, `/DA (/Helv 12 Tf 0 g)`) with `/Opt` `opt`
+/// and the extra `entries`, in a document whose AcroForm has [`dr`].
+fn list_box(opt: PdfObject, entries: Vec<(&str, PdfObject)>) -> (PdfDocument, IndirectRef) {
+    let mut refs = None;
+    let doc = form_document_with(false, vec![dr()], |modifier| {
+        let mut all = vec![
+            ("FT", name("Ch")),
+            ("T", string("pick")),
+            ("Opt", opt),
+            ("DA", string("/Helv 12 Tf 0 g")),
+        ];
+        all.extend(entries);
+        let d = widget(modifier, all, Some(rect_of(100, 40)));
+        let r = modifier.add_object(PdfObject::Dict(d));
+        refs = Some(r.clone());
+        vec![r]
+    });
+    (doc, refs.unwrap())
+}
+
+fn strings(values: &[&str]) -> PdfObject {
+    PdfObject::Array(values.iter().map(|v| string(v)).collect())
+}
+
+/// The highlight rectangle of row `row` (from the top) in a 100 × 40 list box.
+fn highlight(row: i64) -> String {
+    format!("1 {} 98 12 re", 40 - 12 * (row + 1))
+}
+
+#[test]
+fn a_multiple_selection_highlights_every_selected_row() {
+    let (doc, widget) = list_box(
+        strings(&["a", "b", "c"]),
+        vec![("Ff", PdfObject::Integer(MULTI_SELECT))],
+    );
+    let out = filled(&doc, |modifier, form| {
+        set_field_value(modifier, form, "pick", strings(&["a", "c"])).unwrap();
+    });
+    let content = String::from_utf8(normal_content(&out, &widget).0).unwrap();
+    assert!(content.contains(&highlight(0)), "{content}");
+    assert!(!content.contains(&highlight(1)), "{content}");
+    assert!(content.contains(&highlight(2)), "{content}");
+}
+
+#[test]
+fn an_export_value_selects_its_option_and_the_display_text_is_drawn() {
+    let opt = PdfObject::Array(vec![strings(&["x", "Ex"]), strings(&["y", "Why"])]);
+    let (doc, widget) = list_box(opt, Vec::new());
+    let out = filled(&doc, |modifier, form| {
+        set_field_value(modifier, form, "pick", string("y")).unwrap();
+    });
+    let (shown, _) = normal_appearance(&out, &widget);
+    assert_eq!(shown, vec![b"Ex".to_vec(), b"Why".to_vec()]);
+    let content = String::from_utf8(normal_content(&out, &widget).0).unwrap();
+    assert!(content.contains(&highlight(1)), "{content}");
+    assert!(!content.contains(&highlight(0)), "{content}");
+}
+
+#[test]
+fn filling_rewrites_an_existing_i_and_adds_none() {
+    let indices = |v: &[i64]| PdfObject::Array(v.iter().map(|&i| PdfObject::Integer(i)).collect());
+    let (doc, widget) = list_box(
+        strings(&["a", "b", "c"]),
+        vec![
+            ("Ff", PdfObject::Integer(MULTI_SELECT)),
+            ("I", indices(&[0])),
+        ],
+    );
+    let out = filled(&doc, |modifier, form| {
+        set_field_value(modifier, form, "pick", strings(&["b", "c"])).unwrap();
+    });
+    assert_eq!(object(&out, &widget).get(b"I"), Some(&indices(&[1, 2])));
+
+    let (doc, widget) = list_box(strings(&["a", "b", "c"]), Vec::new());
+    let out = filled(&doc, |modifier, form| {
+        set_field_value(modifier, form, "pick", string("b")).unwrap();
+    });
+    assert_eq!(object(&out, &widget).get(b"I"), None);
+}
+
+#[test]
+fn i_selects_before_v() {
+    let (doc, _) = list_box(
+        strings(&["a", "b", "c"]),
+        vec![("I", PdfObject::Array(vec![PdfObject::Integer(2)]))],
+    );
+    let form = parse_acroform(&doc).unwrap().unwrap();
+    assert_eq!(form.fields[0].selected_values(), ["c"]);
+
+    let (doc, _) = list_box(
+        strings(&["a", "b", "c"]),
+        vec![
+            ("V", string("a")),
+            ("I", PdfObject::Array(vec![PdfObject::Integer(2)])),
+        ],
+    );
+    let form = parse_acroform(&doc).unwrap().unwrap();
+    assert_eq!(form.fields[0].selected_values(), ["c"]);
+}

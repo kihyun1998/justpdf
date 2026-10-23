@@ -13,6 +13,24 @@ pub enum FieldType {
     Signature,
 }
 
+/// One `/Opt` entry of a choice field: the value `/V` holds when it is
+/// selected, and the text shown for it. A string entry is both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChoiceOption {
+    pub export_value: String,
+    pub display_value: String,
+}
+
+impl From<&str> for ChoiceOption {
+    /// An option whose export value and display text are both `text`.
+    fn from(text: &str) -> Self {
+        ChoiceOption {
+            export_value: text.to_string(),
+            display_value: text.to_string(),
+        }
+    }
+}
+
 /// Field flags (from /Ff entry).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FieldFlags(pub u32);
@@ -69,7 +87,9 @@ pub struct FormField {
     /// Field flags (/Ff).
     pub flags: FieldFlags,
     /// Options for choice fields (/Opt).
-    pub options: Vec<String>,
+    pub options: Vec<ChoiceOption>,
+    /// The selected option indices of a choice field (`/I`).
+    pub indices: Vec<usize>,
     /// Widget rectangle.
     pub rect: Option<Rect>,
     /// Default appearance string (/DA).
@@ -96,6 +116,31 @@ impl FormField {
             Some(PdfObject::String(s)) => Some(String::from_utf8_lossy(s).into_owned()),
             Some(PdfObject::Name(n)) => Some(String::from_utf8_lossy(n).into_owned()),
             _ => None,
+        }
+    }
+
+    /// The export values of a choice field's selected options: the options
+    /// at `indices` (those in range) when it is not empty, else `/V` — a
+    /// string as one value, an array as its strings.
+    pub fn selected_values(&self) -> Vec<String> {
+        if !self.indices.is_empty() {
+            return self
+                .indices
+                .iter()
+                .filter_map(|&i| self.options.get(i))
+                .map(|o| o.export_value.clone())
+                .collect();
+        }
+        let text = |o: &PdfObject| match o {
+            PdfObject::String(s) | PdfObject::Name(s) => {
+                Some(String::from_utf8_lossy(s).into_owned())
+            }
+            _ => None,
+        };
+        match &self.value {
+            Some(PdfObject::Array(values)) => values.iter().filter_map(text).collect(),
+            Some(v) => text(v).into_iter().collect(),
+            None => Vec::new(),
         }
     }
 
@@ -150,6 +195,7 @@ mod tests {
             default_value: None,
             flags: FieldFlags::default(),
             options: Vec::new(),
+            indices: Vec::new(),
             rect: None,
             default_appearance: None,
             quadding: 0,
@@ -174,6 +220,7 @@ mod tests {
             default_value: None,
             flags: FieldFlags::default(),
             options: Vec::new(),
+            indices: Vec::new(),
             rect: None,
             default_appearance: None,
             quadding: 0,
@@ -195,6 +242,7 @@ mod tests {
             default_value: None,
             flags: FieldFlags::default(),
             options: Vec::new(),
+            indices: Vec::new(),
             rect: None,
             default_appearance: None,
             quadding: 0,

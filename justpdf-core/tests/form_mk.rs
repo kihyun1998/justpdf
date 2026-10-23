@@ -70,7 +70,8 @@ fn field(
         value: Some(value),
         default_value: None,
         flags: FieldFlags::default(),
-        options: vec!["a".to_string()],
+        options: vec!["a".into()],
+        indices: Vec::new(),
         rect: Some(Rect {
             llx: 0.0,
             lly: 0.0,

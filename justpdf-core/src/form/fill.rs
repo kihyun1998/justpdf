@@ -19,7 +19,9 @@ pub fn get_field_value(form: &AcroForm, field_name: &str) -> Option<PdfObject> {
 /// has that state (or the widget has no `/AP`), `/Off` otherwise. For a text
 /// field, combo box or list box, each widget's `/AP` becomes `<< /N … >>`
 /// drawn from the new value in that widget's `/Rect`; a widget
-/// [`generate_field_appearance`] cannot draw keeps its `/AP`. Sets the
+/// [`generate_field_appearance`] cannot draw keeps its `/AP`. A choice field
+/// that has `/I` gets `/I` rewritten to the indices of the options whose
+/// export value is in the new value. Sets the
 /// AcroForm's `/NeedAppearances` so a viewer draws the new value.
 pub fn set_field_value(
     modifier: &mut DocumentModifier,
@@ -47,6 +49,27 @@ pub fn set_field_value(
         });
     };
     field_dict.insert(b"V".to_vec(), value.clone());
+    let mut filled = field.clone();
+    filled.value = Some(value.clone());
+    filled.indices = Vec::new();
+    if matches!(field.field_type, FieldType::ComboBox | FieldType::ListBox)
+        && field_dict.get(b"I").is_some()
+    {
+        let selected = filled.selected_values();
+        filled.indices = field
+            .options
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| selected.contains(&o.export_value))
+            .map(|(i, _)| i)
+            .collect();
+        let indices = filled
+            .indices
+            .iter()
+            .map(|&i| PdfObject::Integer(i as i64))
+            .collect();
+        field_dict.insert(b"I".to_vec(), PdfObject::Array(indices));
+    }
     modifier.set_object(field.field_ref.obj_num, PdfObject::Dict(field_dict));
 
     if matches!(
@@ -71,20 +94,19 @@ pub fn set_field_value(
         field.field_type,
         FieldType::Text | FieldType::ComboBox | FieldType::ListBox
     ) {
-        redraw_widgets(modifier, field, &value);
+        redraw_widgets(modifier, &filled);
     }
 
     set_need_appearances(modifier);
     Ok(())
 }
 
-/// Set the `/AP` of each widget of `field` to `<< /N … >>`, drawn from
-/// `value` in the widget's own `/Rect`, with the widget's own `/DA` where it
+/// Set the `/AP` of each widget of `field` to `<< /N … >>`, drawn from its
+/// value in the widget's own `/Rect`, with the widget's own `/DA` where it
 /// has one and the field's otherwise. A widget the generator cannot draw
 /// keeps its `/AP`.
-fn redraw_widgets(modifier: &mut DocumentModifier, field: &FormField, value: &PdfObject) {
+fn redraw_widgets(modifier: &mut DocumentModifier, field: &FormField) {
     let mut drawn = field.clone();
-    drawn.value = Some(value.clone());
     for widget in &field.widgets {
         let Some(mut widget_dict) = dict_at(modifier, widget) else {
             continue;
@@ -217,6 +239,7 @@ mod tests {
                     default_value: None,
                     flags: FieldFlags::default(),
                     options: Vec::new(),
+                    indices: Vec::new(),
                     rect: None,
                     default_appearance: None,
                     quadding: 0,
@@ -236,6 +259,7 @@ mod tests {
                     default_value: None,
                     flags: FieldFlags(FieldFlags::READ_ONLY),
                     options: Vec::new(),
+                    indices: Vec::new(),
                     rect: None,
                     default_appearance: None,
                     quadding: 0,
@@ -255,6 +279,7 @@ mod tests {
                     default_value: None,
                     flags: FieldFlags::default(),
                     options: Vec::new(),
+                    indices: Vec::new(),
                     rect: None,
                     default_appearance: None,
                     quadding: 0,

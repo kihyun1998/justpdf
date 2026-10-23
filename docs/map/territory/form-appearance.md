@@ -28,6 +28,7 @@ Generates appearance streams for text, choice and button fields: in the AcroForm
   - The `b/2` inset and the width fallback are derivations from MuPDF.
   - Until #333 every type drew a fixed look: a text field `0.75 g` with a black 0.5 pt border, other fields `1 g`, a push button a `0.85 g` bevel. It ignored `/MK` (measured).
   - What stays per type, drawn after the background and border: the checkmark, the radio dot, the combo box's arrow area, the list box's highlight and text.
+- **A list box highlights every option whose export value is in `FormField::selected_values()` and draws each option's display text** (#346, pdf.js `ChoiceWidgetAnnotation._getAppearance`). A combo box still draws its value as it is.
   - `WidgetLook::width` is the border width the text box is computed from (#325).
 - **A text field or combo box lays its value out on one line** (`single_line`, #325). The constants and formulas follow pdf.js `TextWidgetAnnotation` (`_getAppearance`, `_computeFontSize`, `_renderText`; `LINE_FACTOR` 1.35 and `LINE_DESCENT_FACTOR` 0.35 from `src/shared/util.js`), read from raw source on 2026-10-23.
   - **Text box** (GLOSSARY): the widget rectangle inset by the border width `b`, `[b, b, w − 2b, h − 2b]`. A combo box also leaves out its arrow area, `h.min(20)` wide. The value is clipped to it, as MuPDF clips (`pdf_write_tx_widget_appearance`); pdf.js does not clip.
