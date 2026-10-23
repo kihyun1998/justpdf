@@ -23,17 +23,31 @@ impl Rect {
         (self.ury - self.lly).abs()
     }
 
-    /// Parse a Rect from a PDF array [llx, lly, urx, ury].
+    /// Parse a Rect from a PDF array of two opposite corners, normalised:
+    /// `llx ≤ urx` and `lly ≤ ury` whichever corners the array gives.
     pub fn from_pdf_array(arr: &[PdfObject]) -> Option<Self> {
         if arr.len() < 4 {
             return None;
         }
-        Some(Self {
-            llx: arr[0].as_f64()?,
-            lly: arr[1].as_f64()?,
-            urx: arr[2].as_f64()?,
-            ury: arr[3].as_f64()?,
-        })
+        Some(
+            Self {
+                llx: arr[0].as_f64()?,
+                lly: arr[1].as_f64()?,
+                urx: arr[2].as_f64()?,
+                ury: arr[3].as_f64()?,
+            }
+            .normalized(),
+        )
+    }
+
+    /// The same rectangle with `llx ≤ urx` and `lly ≤ ury`.
+    pub fn normalized(self) -> Self {
+        Self {
+            llx: self.llx.min(self.urx),
+            lly: self.lly.min(self.ury),
+            urx: self.llx.max(self.urx),
+            ury: self.lly.max(self.ury),
+        }
     }
 }
 
@@ -463,6 +477,20 @@ mod tests {
         let rect = Rect::from_pdf_array(&arr).unwrap();
         assert_eq!(rect.llx, 10.5);
         assert_eq!(rect.width(), 584.5);
+    }
+
+    #[test]
+    fn a_rect_written_upper_right_first_is_normalised() {
+        let arr = [100, 120, 0, 100].map(PdfObject::Integer).to_vec();
+        assert_eq!(
+            Rect::from_pdf_array(&arr),
+            Some(Rect {
+                llx: 0.0,
+                lly: 100.0,
+                urx: 100.0,
+                ury: 120.0,
+            })
+        );
     }
 
     #[test]

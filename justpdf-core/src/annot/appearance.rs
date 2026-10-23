@@ -465,6 +465,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_reversed_rect_gives_the_same_appearance() {
+        let mut builder = crate::writer::document::DocumentBuilder::new();
+        builder.add_page(crate::writer::page::PageBuilder::new(200.0, 200.0));
+        let doc = crate::parser::PdfDocument::from_bytes(builder.build().unwrap()).unwrap();
+        let mut modifier = DocumentModifier::from_document(&doc).unwrap();
+        let mut drawn = |corners: [i64; 4]| {
+            let mut dict = PdfDict::new();
+            dict.insert(b"Subtype".to_vec(), PdfObject::Name(b"Square".to_vec()));
+            dict.insert(
+                b"Rect".to_vec(),
+                PdfObject::Array(corners.map(PdfObject::Integer).to_vec()),
+            );
+            let ap = generate_appearance(&dict, &mut modifier).unwrap().unwrap();
+            match modifier.find_object_pub(ap.obj_num) {
+                Some(PdfObject::Stream { dict, data }) => (dict.clone(), data.clone()),
+                other => panic!("expected a stream, got {other:?}"),
+            }
+        };
+        assert_eq!(drawn([100, 120, 0, 100]), drawn([0, 100, 100, 120]));
+    }
+
+    #[test]
     fn stamp_writes_win_ansi_and_declares_its_font() {
         let mut builder = crate::writer::document::DocumentBuilder::new();
         builder.add_page(crate::writer::page::PageBuilder::new(100.0, 100.0));
