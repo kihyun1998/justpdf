@@ -18,6 +18,7 @@ Draws the field widgets' appearances into the page content and removes `/AcroFor
   - the effective resources (its own, else the inherited ones, an indirect object copied rather than modified) are written as a direct page `/Resources`
   - until #40 `/Fm{n}` was written and never registered (measured)
 - **Isolation:** the existing content is wrapped in `q … Q` (a stream holding `q`, then the existing streams, then `Q` and the drawn content), so a leftover `cm` cannot move the appearances (measured: `an_unbalanced_cm_in_the_page_content_does_not_move_the_appearance`).
+- **Only an indirect appearance stream is drawn**: it is named in `/XObject` by its reference. A direct one is removed without being drawn, deliberately (maintainer decision, #366 wontfix, 2026-10-23). It cannot come from a file: the parser builds a `PdfObject::Stream` only at the top level of an indirect object (`object/mod.rs`, *inferred*), and justpdf's own appearance writers (`annot/builder.rs`, `form/fill.rs`) insert references. Only a caller that puts a direct stream into a widget through `set_object` reaches it, and the serializer would write that object as an invalid file anyway (*inferred*).
 - **Every `/Widget` is removed** from `/Annots` on every page, drawn or not. Hidden and NoView widgets are removed without being drawn. Other annotations stay. Until #40 a page whose widgets had no usable appearance kept them (measured).
 
 ## Code
@@ -38,4 +39,3 @@ ISO 32000-2 §12.5.5 (clause not re-read for #40; the #40 and #206 briefs' state
 
 ## Known holes / open
 - The Print flag, NoZoom and NoRotate are not looked at.
-- A widget whose appearance stream is direct (not an indirect object) cannot be named in `/XObject` and is removed without being drawn.
