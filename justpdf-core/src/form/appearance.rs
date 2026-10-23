@@ -172,15 +172,18 @@ impl FieldFont {
         }
     }
 
-    /// The font's ascent and descent magnitude in em: its own, else pdf.js's
-    /// fallback.
-    fn ascent_descent(&self) -> (f64, f64) {
+    /// The font's ascent and descent magnitude in em, when known.
+    fn metrics(&self) -> Option<(f64, f64)> {
         let known = match self {
             FieldFont::Default => standard14_ascent_descent(b"Helvetica"),
             FieldFont::Dr { encoder, .. } => encoder.ascent_descent(),
         };
-        known
-            .map(|(a, d)| (a / 1000.0, d / 1000.0))
+        known.map(|(a, d)| (a / 1000.0, d / 1000.0))
+    }
+
+    /// [`Self::metrics`], else pdf.js's fallback.
+    fn ascent_descent(&self) -> (f64, f64) {
+        self.metrics()
             .unwrap_or((LINE_FACTOR - LINE_DESCENT_FACTOR, LINE_DESCENT_FACTOR))
     }
 
@@ -391,6 +394,8 @@ const V_PADDING: f64 = 1.0;
 /// `LINE_DESCENT_FACTOR`).
 const LINE_FACTOR: f64 = 1.35;
 const LINE_DESCENT_FACTOR: f64 = 0.35;
+/// pdf.js's `BASELINE_FACTOR`: the descent per unit line height.
+const BASELINE_FACTOR: f64 = LINE_DESCENT_FACTOR / LINE_FACTOR;
 
 /// A single-line field's appearance: `/Tx BMC q`, `decoration` (background,
 /// border), then the value laid out in `text_box` (`[x, y, width, height]`)
@@ -408,47 +413,306 @@ fn single_line(
         .value_as_string()
         .filter(|t| !t.is_empty() && !field.flags.has(FieldFlags::PASSWORD));
     if let Some(text) = value {
-        let codes = font.encode(&text)?;
-        let em = font.width(&text)?;
-        let [x0, y0, bw, bh] = text_box;
-        let size = match font.size() {
-            s if s > 0.0 => Some(s),
-            _ if bw <= 2.0 * H_PADDING || bh <= 2.0 * V_PADDING => None,
-            _ => {
-                let by_height = (bh - 2.0 * V_PADDING) / LINE_FACTOR;
-                let by_width = if em > 0.0 {
-                    (bw - 2.0 * H_PADDING) / em
-                } else {
-                    f64::INFINITY
-                };
-                Some((by_height.min(by_width) * 100.0).floor() / 100.0)
-            }
+        let quadding = look.quadding.unwrap_or(field.quadding);
+        let flags = field.flags;
+        let shown = if field.field_type == FieldType::Text && flags.has(FieldFlags::MULTILINE) {
+            multiline_text(&text, font, quadding, text_box)?
+        } else if field.field_type == FieldType::Text
+            && flags.has(FieldFlags::COMB)
+            && !flags.has(FieldFlags::PASSWORD)
+            && !flags.has(FieldFlags::FILE_SELECT)
+            && field.max_len > 0
+        {
+            comb_text(&text, font, quadding, field.max_len, text_box)?
+        } else {
+            line_text(&text, font, quadding, text_box)?
         };
-        if let Some(size) = size {
-            let width = em * size;
-            let x = match look.quadding.unwrap_or(field.quadding) {
-                1 => x0 + (bw - width) / 2.0,
-                2 => x0 + bw - width - H_PADDING,
-                _ => x0 + H_PADDING,
-            };
-            let (ascent, descent) = font.ascent_descent();
-            let y = y0 + (bh - (ascent + descent) * size) / 2.0 + descent * size;
+        if let Some((size, shown)) = shown {
+            let [x0, y0, bw, bh] = text_box;
             let _ = write!(
                 buf,
-                "{} {} {} {} re\nW\nn\nBT\n0 g\n{}\n{} {} Td\n{} Tj\nET\n",
+                "{} {} {} {} re\nW\nn\nBT\n0 g\n{}\n{shown}ET\n",
                 Number(x0),
                 Number(y0),
                 Number(bw),
                 Number(bh),
                 font.select_at(size),
-                Number(x),
-                Number(y),
-                string_syntax(&codes)
             );
         }
     }
     buf.push_str("Q\nEMC\n");
     Ok(buf)
+}
+
+/// The single-line auto size of `text` in `text_box` (pdf.js
+/// `_computeFontSize` with `lineCount == -1`), or the `/DA` size; `None`
+/// when an auto size has no room.
+fn line_size(
+    text: &str,
+    font: &FieldFont,
+    text_box: [f64; 4],
+) -> Result<Option<f64>, AppearanceError> {
+    let [_, _, bw, bh] = text_box;
+    Ok(match font.size() {
+        s if s > 0.0 => Some(s),
+        _ if bw <= 2.0 * H_PADDING || bh <= 2.0 * V_PADDING => None,
+        _ => {
+            let em = font.width(text)?;
+            let by_height = (bh - 2.0 * V_PADDING) / LINE_FACTOR;
+            let by_width = if em > 0.0 {
+                (bw - 2.0 * H_PADDING) / em
+            } else {
+                f64::INFINITY
+            };
+            Some(floor2(by_height.min(by_width)))
+        }
+    })
+}
+
+/// `v` rounded down to two decimals.
+fn floor2(v: f64) -> f64 {
+    (v * 100.0).floor() / 100.0
+}
+
+/// The baseline offset above the text box bottom that centres a line's
+/// ascent to descent at `size` (pdf.js `vShift`).
+fn baseline(font: &FieldFont, size: f64, bh: f64) -> f64 {
+    let (ascent, descent) = font.ascent_descent();
+    (bh - (ascent + descent) * size) / 2.0 + descent * size
+}
+
+/// One line: `(size, "x y Td (…) Tj")`.
+fn line_text(
+    text: &str,
+    font: &FieldFont,
+    quadding: u8,
+    text_box: [f64; 4],
+) -> Result<Option<(f64, String)>, AppearanceError> {
+    let codes = font.encode(text)?;
+    let Some(size) = line_size(text, font, text_box)? else {
+        return Ok(None);
+    };
+    let [x0, y0, bw, bh] = text_box;
+    let width = font.width(text)? * size;
+    let x = match quadding {
+        1 => x0 + (bw - width) / 2.0,
+        2 => x0 + bw - width - H_PADDING,
+        _ => x0 + H_PADDING,
+    };
+    let y = y0 + baseline(font, size, bh);
+    let shown = format!(
+        "{} {} Td\n{} Tj\n",
+        Number(x),
+        Number(y),
+        string_syntax(&codes)
+    );
+    Ok(Some((size, shown)))
+}
+
+/// A comb: each character centred in one of `max_len` cells across the text
+/// box (pdf.js `_getCombAppearance`).
+fn comb_text(
+    text: &str,
+    font: &FieldFont,
+    quadding: u8,
+    max_len: u32,
+    text_box: [f64; 4],
+) -> Result<Option<(f64, String)>, AppearanceError> {
+    font.encode(text)?;
+    let Some(size) = line_size(text, font, text_box)? else {
+        return Ok(None);
+    };
+    let [x0, y0, bw, bh] = text_box;
+    let cell = bw / f64::from(max_len);
+    let chars: Vec<String> = text.chars().map(String::from).collect();
+    let run = cell * chars.len() as f64;
+    let shift = match quadding {
+        1 => ((bw - run) / (2.0 * cell)).floor() * cell,
+        2 => bw - run,
+        _ => 0.0,
+    };
+    let mut shown = format!(
+        "{} {} Td\n",
+        Number(x0 + shift),
+        Number(y0 + baseline(font, size, bh))
+    );
+    let mut previous = 0.0;
+    for (i, c) in chars.iter().enumerate() {
+        let width = font.width(c)? * size;
+        let dx = if i == 0 {
+            (cell - width) / 2.0
+        } else {
+            cell + (previous - width) / 2.0
+        };
+        let _ = write!(
+            shown,
+            "{} 0 Td\n{} Tj\n",
+            Number(dx),
+            string_syntax(&font.encode(c)?)
+        );
+        previous = width;
+    }
+    Ok(Some((size, shown)))
+}
+
+/// Several lines: the value split at line breaks, each wrapped to the text
+/// box and placed top down (pdf.js `_getMultilineAppearance`).
+fn multiline_text(
+    text: &str,
+    font: &FieldFont,
+    quadding: u8,
+    text_box: [f64; 4],
+) -> Result<Option<(f64, String)>, AppearanceError> {
+    let [x0, y0, bw, bh] = text_box;
+    let lines: Vec<&str> = text
+        .split("\r\n")
+        .flat_map(|l| l.split(['\r', '\n']))
+        .collect();
+    for line in &lines {
+        font.encode(line)?;
+    }
+    let height = bh - 2.0 * V_PADDING;
+    let width = bw - 2.0 * H_PADDING;
+    let max_width = bw - H_PADDING;
+    let (size, line_height) = match font.size() {
+        s if s > 0.0 => {
+            let lines_fitting = (height / (s * LINE_FACTOR)).round().max(1.0);
+            (s, height / lines_fitting)
+        }
+        _ if bw <= 2.0 * H_PADDING || bh <= 2.0 * V_PADDING => return Ok(None),
+        _ => {
+            let size_for = |n: f64| floor2(height / n / LINE_FACTOR);
+            let too_big = |size: f64| -> Result<bool, AppearanceError> {
+                let mut total = 0.0;
+                for line in &lines {
+                    total += split_line(line, font, size, width, max_width)?.len() as f64 * size;
+                    if total > height {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            };
+            let mut n = (height / (12.0 * LINE_FACTOR))
+                .round()
+                .max(lines.len() as f64)
+                .max(1.0);
+            if height > 0.0 && too_big(size_for(n))? {
+                let (mut low, mut high) = (n, 2.0 * n);
+                while too_big(size_for(high))? {
+                    low = high;
+                    high *= 2.0;
+                }
+                while high - low > 1.0 {
+                    let mid = ((low + high) / 2.0).floor();
+                    if too_big(size_for(mid))? {
+                        low = mid;
+                    } else {
+                        high = mid;
+                    }
+                }
+                n = high;
+            }
+            (size_for(n), height / n)
+        }
+    };
+
+    let v_padding = ((bh - size) / 2.0).floor().min(V_PADDING);
+    let descent = match font.metrics() {
+        Some((_, d)) => (BASELINE_FACTOR * line_height).max(d * size),
+        None => BASELINE_FACTOR * line_height,
+    };
+    let mut shown = format!("{} {} Td\n", Number(x0), Number(y0 + bh));
+    let mut previous_shift = 0.0;
+    let mut first = true;
+    for line in &lines {
+        let chunks = split_line(line, font, size, width, max_width)?;
+        let padding = if chunks.len() == 1 && font.width(line)? * size > width {
+            H_PADDING / 2.0
+        } else {
+            H_PADDING
+        };
+        for chunk in chunks {
+            let chunk_width = font.width(&chunk)? * size;
+            let shift = match quadding {
+                1 => (bw - chunk_width) / 2.0,
+                2 => bw - chunk_width - padding,
+                _ => padding,
+            };
+            let dy = if first {
+                -v_padding - (line_height - descent)
+            } else {
+                -line_height
+            };
+            first = false;
+            let _ = write!(
+                shown,
+                "{} {} Td\n{} Tj\n",
+                Number(shift - previous_shift),
+                Number(dy),
+                string_syntax(&font.encode(&chunk)?)
+            );
+            previous_shift = shift;
+        }
+    }
+    Ok(Some((size, shown)))
+}
+
+/// `line` broken into chunks no wider than `width` at `size` (pdf.js
+/// `_splitLine`): after the last space before the overflow, else before the
+/// overflowing character. A line within `max_width` stays whole.
+fn split_line(
+    line: &str,
+    font: &FieldFont,
+    size: f64,
+    width: f64,
+    max_width: f64,
+) -> Result<Vec<String>, AppearanceError> {
+    let chars: Vec<char> = line.chars().collect();
+    if chars.len() <= 1 || font.width(line)? * size <= max_width {
+        return Ok(vec![line.to_string()]);
+    }
+    let widths = chars
+        .iter()
+        .map(|c| Ok(font.width(&c.to_string())? * size))
+        .collect::<Result<Vec<f64>, AppearanceError>>()?;
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut current = 0.0;
+    let mut last_space: Option<usize> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        let glyph = widths[i];
+        if chars[i] == ' ' {
+            if current + glyph > width {
+                chunks.push(chars[start..i].iter().collect());
+                start = i;
+                current = glyph;
+                last_space = None;
+            } else {
+                current += glyph;
+                last_space = Some(i);
+            }
+        } else if current + glyph > width {
+            if let Some(space) = last_space {
+                chunks.push(chars[start..=space].iter().collect());
+                start = space + 1;
+                i = space + 1;
+                last_space = None;
+                current = 0.0;
+            } else {
+                chunks.push(chars[start..i].iter().collect());
+                start = i;
+                current = glyph;
+            }
+        } else {
+            current += glyph;
+        }
+        i += 1;
+    }
+    if start < chars.len() {
+        chunks.push(chars[start..].iter().collect());
+    }
+    Ok(chunks)
 }
 
 fn checkbox_appearance(field: &FormField, look: &WidgetLook, w: f64, h: f64) -> String {
@@ -677,6 +941,7 @@ mod tests {
             rect: None,
             default_appearance: None,
             quadding: 0,
+            max_len: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -727,6 +992,7 @@ mod tests {
             }),
             default_appearance: None,
             quadding: 0,
+            max_len: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -759,6 +1025,7 @@ mod tests {
             }),
             default_appearance: None,
             quadding: 0,
+            max_len: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -790,6 +1057,7 @@ mod tests {
             }),
             default_appearance: None,
             quadding: 0,
+            max_len: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -822,6 +1090,7 @@ mod tests {
             }),
             default_appearance: None,
             quadding: 0,
+            max_len: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -857,6 +1126,7 @@ mod tests {
             }),
             default_appearance: da.map(str::to_string),
             quadding: 0,
+            max_len: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,

@@ -89,6 +89,7 @@ fn field(
         }),
         default_appearance: Some(da.to_string()),
         quadding: 0,
+        max_len: 0,
         field_ref: widget.clone(),
         widgets: vec![widget],
         page_obj_num: None,
@@ -371,4 +372,202 @@ fn font_descriptor_metrics_come_before_the_fallback() {
             "{asc} {desc}: {td:?}, expected {expected}"
         );
     }
+}
+
+// Multiline and comb fields (#332): pdf.js `_getMultilineAppearance`,
+// `_splitLine`, `_computeFontSize` (multiline branch), `_getCombAppearance`.
+// Helvetica widths: a 556, b 556, space 278, digits 556.
+
+/// The strings `content` shows, in order.
+fn shown(content: &[u8]) -> Vec<String> {
+    parse_content_stream(content)
+        .unwrap()
+        .into_iter()
+        .filter(|op| op.operator == b"Tj")
+        .flat_map(|op| op.operands)
+        .filter_map(|o| match o {
+            Operand::String(s) => Some(String::from_utf8(s).unwrap()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The operands of every `Td` in `content`.
+fn tds(content: &[u8]) -> Vec<[f64; 2]> {
+    parse_content_stream(content)
+        .unwrap()
+        .into_iter()
+        .filter(|op| op.operator == b"Td")
+        .map(|op| [number(&op.operands[0]), number(&op.operands[1])])
+        .collect()
+}
+
+/// `f` resized to `w` × `h`.
+fn sized(mut f: FormField, w: f64, h: f64) -> FormField {
+    f.rect = Some(Rect {
+        llx: 0.0,
+        lly: 0.0,
+        urx: w,
+        ury: h,
+    });
+    f
+}
+
+fn multiline(f: FormField) -> FormField {
+    FormField {
+        flags: FieldFlags(f.flags.0 | FieldFlags::MULTILINE),
+        ..f
+    }
+}
+
+#[test]
+fn a_multiline_value_is_drawn_one_line_per_line_break() {
+    let mut m = modifier(vec![("Helv", helvetica())], Vec::new());
+    let f = field(
+        &mut m,
+        FieldType::Text,
+        "one\ntwo",
+        "/Helv 12 Tf 0 g",
+        Vec::new(),
+    );
+    let f = multiline(sized(f, 100.0, 60.0));
+    let c = content(&mut m, &f);
+    assert_eq!(shown(&c), ["one", "two"]);
+    // Text box 58 high, less 2 × 1 padding: 56; round(56 / (12 × 1.35)) = 3
+    // lines, so the line height is 56 / 3.
+    let td = tds(&c);
+    assert!(close(td.last().unwrap()[1], -56.0 / 3.0), "{td:?}");
+}
+
+#[test]
+fn a_multiline_value_wraps_at_the_last_space_or_before_the_overflowing_character() {
+    let mut m = modifier(vec![("Helv", helvetica())], Vec::new());
+    // Text box 38 wide: lines wrap past 38 − 4 = 34.
+    for (value, lines) in [
+        ("aaa bbb", vec!["aaa ", "bbb"]),
+        ("aaaaaaaa", vec!["aaaaa", "aaa"]),
+    ] {
+        let f = field(
+            &mut m,
+            FieldType::Text,
+            value,
+            "/Helv 12 Tf 0 g",
+            Vec::new(),
+        );
+        let f = multiline(sized(f, 40.0, 60.0));
+        assert_eq!(shown(&content(&mut m, &f)), lines, "{value}");
+    }
+}
+
+#[test]
+fn an_auto_sized_multiline_value_fits_its_wrapped_lines_in_the_height() {
+    let mut m = modifier(vec![("Helv", helvetica())], Vec::new());
+    // round(56 / (12 × 1.35)) = 3 ≥ 2 lines: floor₂(56 / 3 / 1.35) = 13.82,
+    // and both lines fit at that size.
+    let f = field(
+        &mut m,
+        FieldType::Text,
+        "one\ntwo",
+        "/Helv 0 Tf 0 g",
+        Vec::new(),
+    );
+    let f = multiline(sized(f, 100.0, 60.0));
+    assert_eq!(operands(&content(&mut m, &f), "Tf"), [13.82]);
+
+    // A value that wraps into more lines than 3 gets a smaller size whose
+    // wrapped lines still fit the 56 pt height.
+    let long = "word ".repeat(40);
+    let f = field(&mut m, FieldType::Text, &long, "/Helv 0 Tf 0 g", Vec::new());
+    let f = multiline(sized(f, 100.0, 60.0));
+    let c = content(&mut m, &f);
+    let size = operands(&c, "Tf")[0];
+    assert!(size < 13.82, "{size}");
+    assert!(
+        shown(&c).len() as f64 * size <= 56.0 + 1e-9,
+        "{size} × {}",
+        shown(&c).len()
+    );
+}
+
+#[test]
+fn a_comb_field_centres_one_character_in_each_cell() {
+    let mut m = modifier(vec![("Helv", helvetica())], Vec::new());
+    let mut f = field(
+        &mut m,
+        FieldType::Text,
+        "12345",
+        "/Helv 12 Tf 0 g",
+        Vec::new(),
+    );
+    f.flags = FieldFlags(FieldFlags::COMB);
+    f.max_len = 5;
+    let c = content(&mut m, &f);
+    assert_eq!(shown(&c), ["1", "2", "3", "4", "5"]);
+    // Cells are 98 / 5 = 19.6 wide; a digit is 0.556 × 12 = 6.672 wide.
+    let td = tds(&c);
+    let steps: Vec<f64> = td[1..].iter().map(|t| t[0]).collect();
+    let first = (19.6 - 6.672) / 2.0;
+    assert!(close(steps[0], first), "{td:?}");
+    for step in &steps[1..] {
+        assert!(close(*step, 19.6), "{td:?}");
+    }
+    assert!(close(td[0][0], BOX[0]), "{td:?}");
+}
+
+#[test]
+fn a_comb_needs_a_max_len_and_no_multiline() {
+    let mut m = modifier(vec![("Helv", helvetica())], Vec::new());
+    let mut f = field(
+        &mut m,
+        FieldType::Text,
+        "12345",
+        "/Helv 12 Tf 0 g",
+        Vec::new(),
+    );
+    f.flags = FieldFlags(FieldFlags::COMB);
+    assert_eq!(shown(&content(&mut m, &f)), ["12345"]);
+
+    f.max_len = 5;
+    f.flags = FieldFlags(FieldFlags::COMB | FieldFlags::MULTILINE);
+    assert_eq!(shown(&content(&mut m, &f)), ["12345"]);
+}
+
+#[test]
+fn max_len_is_inherited_from_a_parent_field() {
+    let mut m = modifier(vec![("Helv", helvetica())], Vec::new());
+    let parent = m.add_object(PdfObject::Null);
+    let kid = m.add_object(PdfObject::Dict(dict(vec![
+        ("T", text("kid")),
+        ("Parent", PdfObject::Reference(parent.clone())),
+        (
+            "Rect",
+            PdfObject::Array([0, 0, 100, 20].map(PdfObject::Integer).to_vec()),
+        ),
+    ])));
+    m.set_object(
+        parent.obj_num,
+        PdfObject::Dict(dict(vec![
+            ("FT", name("Tx")),
+            ("T", text("p")),
+            ("MaxLen", PdfObject::Integer(7)),
+            ("Kids", PdfObject::Array(vec![PdfObject::Reference(kid)])),
+        ])),
+    );
+    let catalog = m.catalog_ref();
+    let Some(PdfObject::Dict(mut c)) = m.find_object_pub(catalog.obj_num).cloned() else {
+        panic!("catalog")
+    };
+    let Some(PdfObject::Dict(mut acroform)) = c.get(b"AcroForm").cloned() else {
+        panic!("acroform")
+    };
+    acroform.insert(
+        b"Fields".to_vec(),
+        PdfObject::Array(vec![PdfObject::Reference(parent)]),
+    );
+    c.insert(b"AcroForm".to_vec(), PdfObject::Dict(acroform));
+    m.set_object(catalog.obj_num, PdfObject::Dict(c));
+    let doc = PdfDocument::from_bytes(m.build().unwrap()).unwrap();
+    let form = parse_acroform(&doc).unwrap().unwrap();
+    assert_eq!(form.fields[0].name, "p.kid");
+    assert_eq!(form.fields[0].max_len, 7);
 }

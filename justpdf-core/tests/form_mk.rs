@@ -79,6 +79,7 @@ fn field(
         }),
         default_appearance: None,
         quadding: 0,
+        max_len: 0,
         field_ref: widget.clone(),
         widgets: vec![widget],
         page_obj_num: None,

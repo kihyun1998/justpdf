@@ -220,6 +220,7 @@ mod tests {
                     rect: None,
                     default_appearance: None,
                     quadding: 0,
+                    max_len: 0,
                     field_ref: IndirectRef {
                         obj_num: 10,
                         gen_num: 0,
@@ -238,6 +239,7 @@ mod tests {
                     rect: None,
                     default_appearance: None,
                     quadding: 0,
+                    max_len: 0,
                     field_ref: IndirectRef {
                         obj_num: 11,
                         gen_num: 0,
@@ -256,6 +258,7 @@ mod tests {
                     rect: None,
                     default_appearance: None,
                     quadding: 0,
+                    max_len: 0,
                     field_ref: IndirectRef {
                         obj_num: 12,
                         gen_num: 0,

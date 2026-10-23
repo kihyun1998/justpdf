@@ -85,6 +85,7 @@ fn field(field_type: FieldType, value: &str, da: Option<&str>) -> FormField {
         }),
         default_appearance: da.map(str::to_string),
         quadding: 0,
+        max_len: 0,
         field_ref: IndirectRef {
             obj_num: 1,
             gen_num: 0,
