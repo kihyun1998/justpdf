@@ -8,6 +8,7 @@ Walks Catalog → `/Pages` → `/Kids` to build the `PageInfo` list, passing dow
 
 ## Design model
 Rules read from the code.
+- **A rectangle read from an array is normalised** (`Rect::from_pdf_array` → `Rect::normalized`, #345): `llx = min(a, c)`, `lly = min(b, d)`, `urx = max(a, c)`, `ury = max(b, d)`, so page boxes and annotation and widget `/Rect`s read the same whichever two opposite corners the file gives (ISO 32000-2 §7.9.5, not re-read). This is what MuPDF `pdf_to_rect` (`source/pdf/pdf-parse.c`) and pdf.js `Util.normalizeRect` / `lookupNormalRect` do (raw source, read 2026-10-23, #345 triage); a derivation, not a judgement. A `Rect` built in code is not normalised, so `width`/`height` keep their `.abs()`. Until #345 the corners were kept in file order, so an annotation appearance for `/Rect [100 120 0 100]` differed from the one for `[0 100 100 120]` (measured: `a_reversed_rect_gives_the_same_appearance` failed on master; its `/Matrix` offset `-llx -lly` used the upper-right corner, inferred from `annot/appearance.rs`).
 - Only MediaBox, CropBox, Rotate and Resources are inherited. Bleed/Trim/Art are not.
 - With no MediaBox, 612×792.
 - A node is taken as a page if it is `/Type /Page` or has a MediaBox (inherited included).

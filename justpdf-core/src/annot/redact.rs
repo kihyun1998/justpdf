@@ -280,7 +280,8 @@ fn filter_content_ops(ops: &[ContentOp], redact_rects: &[RedactInfo]) -> Vec<Con
                 lly: ctm_f,
                 urx: ctm_e + ctm_a,
                 ury: ctm_f + ctm_d,
-            };
+            }
+            .normalized();
             let in_redact = redact_rects
                 .iter()
                 .any(|info| rects_overlap(&img_rect, &info.rect));
@@ -303,31 +304,14 @@ fn operand_f64(op: &Operand) -> f64 {
     }
 }
 
+/// Whether (`x`, `y`) is in the normalised `rect`, edges included.
 fn point_in_rect(x: f64, y: f64, rect: &Rect) -> bool {
-    let (min_x, max_x) = if rect.llx <= rect.urx {
-        (rect.llx, rect.urx)
-    } else {
-        (rect.urx, rect.llx)
-    };
-    let (min_y, max_y) = if rect.lly <= rect.ury {
-        (rect.lly, rect.ury)
-    } else {
-        (rect.ury, rect.lly)
-    };
-    x >= min_x && x <= max_x && y >= min_y && y <= max_y
+    x >= rect.llx && x <= rect.urx && y >= rect.lly && y <= rect.ury
 }
 
+/// Whether the normalised rectangles `a` and `b` overlap with some area.
 fn rects_overlap(a: &Rect, b: &Rect) -> bool {
-    let a_min_x = a.llx.min(a.urx);
-    let a_max_x = a.llx.max(a.urx);
-    let a_min_y = a.lly.min(a.ury);
-    let a_max_y = a.lly.max(a.ury);
-    let b_min_x = b.llx.min(b.urx);
-    let b_max_x = b.llx.max(b.urx);
-    let b_min_y = b.lly.min(b.ury);
-    let b_max_y = b.lly.max(b.ury);
-
-    a_min_x < b_max_x && a_max_x > b_min_x && a_min_y < b_max_y && a_max_y > b_min_y
+    a.llx < b.urx && a.urx > b.llx && a.lly < b.ury && a.ury > b.lly
 }
 
 /// Get raw content stream data from page dict.
@@ -368,6 +352,52 @@ fn get_page_content_data(doc: &PdfDocument, page_dict: &PdfDict) -> Result<Vec<u
 mod tests {
     use super::*;
     use crate::content::Operand;
+
+    fn redact_at(corners: [i64; 4]) -> Vec<RedactInfo> {
+        let rect = Rect::from_pdf_array(&corners.map(PdfObject::Integer)).unwrap();
+        vec![RedactInfo {
+            rect,
+            color: AnnotColor::Rgb(0.0, 0.0, 0.0),
+            overlay_text: None,
+        }]
+    }
+
+    fn op(operator: &str, operands: Vec<Operand>) -> ContentOp {
+        ContentOp {
+            operator: operator.as_bytes().to_vec(),
+            operands,
+        }
+    }
+
+    #[test]
+    fn a_redact_rect_written_upper_right_first_still_erases_text() {
+        let ops = vec![
+            op("BT", vec![]),
+            op("Td", vec![Operand::Real(150.0), Operand::Real(710.0)]),
+            op("Tj", vec![Operand::String(b"Secret".to_vec())]),
+            op("ET", vec![]),
+        ];
+        let filtered = filter_content_ops(&ops, &redact_at([300, 720, 100, 700]));
+        assert!(filtered.iter().all(|op| op.operator != b"Tj"));
+    }
+
+    #[test]
+    fn a_flipped_image_inside_the_redact_rect_is_removed() {
+        // `cm` with a negative d draws the image from y = 760 down to 710.
+        let ops = vec![
+            op("q", vec![]),
+            op(
+                "cm",
+                [100.0, 0.0, 0.0, -50.0, 150.0, 760.0]
+                    .map(Operand::Real)
+                    .to_vec(),
+            ),
+            op("Do", vec![Operand::Name(b"Im1".to_vec())]),
+            op("Q", vec![]),
+        ];
+        let filtered = filter_content_ops(&ops, &redact_at([100, 700, 300, 720]));
+        assert!(filtered.iter().all(|op| op.operator != b"Do"));
+    }
 
     #[test]
     fn test_point_in_rect() {
