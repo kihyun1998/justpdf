@@ -33,4 +33,4 @@ Sets a value on a field (`/V`; `/AS` on each widget of a button; a new normal ap
 
 ## Known holes / open
 - A value the `/DR` font cannot hold shows only where the viewer honours `/NeedAppearances`; justpdf's own renderer draws the old appearance stream (inferred, not run).
-- Tracked: #325, #332 (layout of variable text), #333 (`/MK`, `/BS`), #175 (a caller-supplied substitute font), #206 (justpdf's renderer draws no Flate appearance, so a fill does not show there)
+- Tracked: #325, #332 (layout of variable text), #333 (`/MK`, `/BS`), #175 (a caller-supplied substitute font)
