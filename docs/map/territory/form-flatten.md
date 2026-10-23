@@ -7,25 +7,35 @@ Draws the field widgets' appearances into the page content and removes `/AcroFor
 **None.**
 
 ## Design model
-- It uses `/AP /N` only when it is a reference. A checkbox's state dictionary (`/Yes`/`/Off`) is skipped, but the widget is still consumed.
-- It writes `q w 0 0 h llx lly cm /Fm{objnum} Do Q` but **does not register `/Fm{n}` in the page's `/Resources /XObject`** — it references an undefined name (measured: the page `/Resources` stays `{}`).
-- The `cm` applies a (w, h) scale once more on top of a BBox that is already w×h (measured: a 200×20 BBox on a 200×20 Rect got `200 0 0 20 100 700 cm`). `/Matrix` is ignored.
-- When a page has widgets but none has a usable appearance, the page is left untouched: `/AcroForm` is removed and the widgets stay (measured).
+- **Objects are read from the modifier**, falling back to the source document, so a value filled with `set_field_value` in the same modifier is the appearance flattened (maintainer decision, #40, 2026-10-23). Until #40 they were read from `doc` only, and the old appearance was drawn.
+- **Each widget is drawn by ISO 32000-2 §12.5.5** as `q A cm /FlatN Do Q`:
+  - A is `annot::placement::appearance_matrix`: the `/BBox` through `/Matrix`, mapped onto the normalised `/Rect`. `Do` applies the form's `/Matrix` itself.
+  - The appearance is `annot::placement::normal_appearance`: `/AP /N`, or its `/AS` entry when it is a state dictionary.
+  - The renderer uses the same two functions (#206), so a flattened page and a rendered unflattened one place an appearance identically.
+  - Until #40 it wrote `w 0 0 h llx lly cm`, scaling a w×h BBox a second time (measured: a 200×20 BBox on a 200×20 Rect got `200 0 0 20 100 700 cm`). It ignored `/Matrix` and skipped state dictionaries.
+- **Names resolve:**
+  - each drawn appearance is added to the page's `/Resources /XObject` under the first `FlatN` its existing XObjects do not use
+  - the effective resources (its own, else the inherited ones, an indirect object copied rather than modified) are written as a direct page `/Resources`
+  - until #40 `/Fm{n}` was written and never registered (measured)
+- **Isolation:** the existing content is wrapped in `q … Q` (a stream holding `q`, then the existing streams, then `Q` and the drawn content), so a leftover `cm` cannot move the appearances (measured: `an_unbalanced_cm_in_the_page_content_does_not_move_the_appearance`).
+- **Every `/Widget` is removed** from `/Annots` on every page, drawn or not. Hidden and NoView widgets are removed without being drawn. Other annotations stay. Until #40 a page whose widgets had no usable appearance kept them (measured).
 
 ## Code
 - `justpdf-core/src/form/flatten.rs` — `flatten_form`
+- `justpdf-core/src/annot/placement.rs` — `appearance_matrix`, `normal_appearance`, `form_matrix`, `is_hidden` (shared with the renderer)
+- `justpdf-render/tests/render_flatten.rs` — flattened pages rendered and sampled
 
 ## Reference behaviour
-**None.**
+ISO 32000-2 §12.5.5 (clause not re-read for #40; the #40 and #206 briefs' statement of it was followed).
 
 ## Cross-cutting invariants
 **None.**
 
 ## Blast radius
 - [Form appearance](form-appearance.md) — the coordinate rule of the appearances it draws in.
-- [Render interpreter](render-interpreter.md) — the side that draws the flattened result (the undefined XObject name).
+- [Render interpreter](render-interpreter.md), [Render annotations](render-annotations.md) — draw the flattened result; share `annot::placement`.
 - [AcroForm](acroform.md), [Document modifier](document-modifier.md).
 
 ## Known holes / open
-- The inline test module is empty. `test_flatten_form` only checks that `/AcroForm` is gone.
-- Tracked: #40 (form flatten)
+- The Print flag, NoZoom and NoRotate are not looked at.
+- A widget whose appearance stream is direct (not an indirect object) cannot be named in `/XObject` and is removed without being drawn.

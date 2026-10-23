@@ -152,8 +152,7 @@ impl<'a> RenderInterpreter<'a> {
             };
 
             // Skip hidden/no-view annotations
-            let flags = annot_dict.get_i64(b"F").unwrap_or(0) as u32;
-            if flags & 0x02 != 0 || flags & 0x20 != 0 {
+            if justpdf_core::annot::placement::is_hidden(&annot_dict) {
                 // Hidden or NoView
                 continue;
             }
@@ -196,38 +195,17 @@ impl<'a> RenderInterpreter<'a> {
     /// stream, else the entry of that state dictionary `/AS` names. `None`
     /// when there is none or it does not decode.
     fn normal_appearance(&mut self, annot: &PdfDict) -> Result<Option<Appearance>> {
-        let resolve = |this: &Self, o: &PdfObject| -> Result<(Option<IndirectRef>, PdfObject)> {
-            Ok(match o {
-                PdfObject::Reference(r) => (Some(r.clone()), this.doc.resolve(r)?),
-                other => (None, other.clone()),
-            })
-        };
-        let Some(ap) = annot.get(b"AP") else {
+        let doc = self.doc;
+        let Some((obj_ref, PdfObject::Stream { dict, data })) =
+            justpdf_core::annot::placement::normal_appearance(annot, |r| doc.resolve(r).ok())
+        else {
             return Ok(None);
         };
-        let (_, ap) = resolve(self, ap)?;
-        let Some(normal) = ap.as_dict().and_then(|ap| ap.get(b"N")).cloned() else {
-            return Ok(None);
-        };
-        let (mut obj_ref, mut normal) = resolve(self, &normal)?;
-        if let PdfObject::Dict(states) = &normal {
-            let Some(state) = annot.get_name(b"AS").and_then(|s| states.get(s)).cloned() else {
-                return Ok(None);
-            };
-            (obj_ref, normal) = resolve(self, &state)?;
-        }
-        let PdfObject::Stream { dict, data } = normal else {
-            return Ok(None);
-        };
-        Ok(self
-            .doc
-            .decode_stream(&dict, &data)
-            .ok()
-            .map(|data| Appearance {
-                obj_ref,
-                dict,
-                data,
-            }))
+        Ok(doc.decode_stream(&dict, &data).ok().map(|data| Appearance {
+            obj_ref,
+            dict,
+            data,
+        }))
     }
 
     /// Clip to the form `dict`'s `/BBox` in form space: through its
@@ -2452,55 +2430,20 @@ struct Appearance {
     data: Vec<u8>,
 }
 
-/// A form dictionary's `/Matrix`, identity when absent.
-fn form_matrix(dict: &PdfDict) -> Matrix {
-    match dict.get_array(b"Matrix") {
-        Some(m) if m.len() >= 6 => Matrix {
-            a: m[0].as_f64().unwrap_or(1.0),
-            b: m[1].as_f64().unwrap_or(0.0),
-            c: m[2].as_f64().unwrap_or(0.0),
-            d: m[3].as_f64().unwrap_or(1.0),
-            e: m[4].as_f64().unwrap_or(0.0),
-            f: m[5].as_f64().unwrap_or(0.0),
-        },
-        _ => Matrix::identity(),
-    }
+/// `[a b c d e f]` as a [`Matrix`].
+fn matrix_of([a, b, c, d, e, f]: [f64; 6]) -> Matrix {
+    Matrix { a, b, c, d, e, f }
 }
 
-/// The matrix A of ISO 32000-2 §12.5.5 that scales and translates the
-/// appearance form `dict`'s `/BBox`, transformed by its `/Matrix`, onto
-/// `rect`. `None` without a `/BBox`, or when that box has no width or height.
+/// A form dictionary's `/Matrix`, identity when absent.
+fn form_matrix(dict: &PdfDict) -> Matrix {
+    matrix_of(justpdf_core::annot::placement::form_matrix(dict))
+}
+
+/// The matrix A of ISO 32000-2 §12.5.5 mapping the appearance form `dict`
+/// onto `rect`; `None` when its box is degenerate.
 fn appearance_mapping(dict: &PdfDict, rect: &justpdf_core::page::Rect) -> Option<Matrix> {
-    let bbox = dict
-        .get_array(b"BBox")
-        .and_then(justpdf_core::page::Rect::from_pdf_array)?;
-    let m = form_matrix(dict);
-    let corners = [
-        m.transform_point(bbox.llx, bbox.lly),
-        m.transform_point(bbox.urx, bbox.lly),
-        m.transform_point(bbox.llx, bbox.ury),
-        m.transform_point(bbox.urx, bbox.ury),
-    ];
-    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-    for (x, y) in corners {
-        x0 = x0.min(x);
-        y0 = y0.min(y);
-        x1 = x1.max(x);
-        y1 = y1.max(y);
-    }
-    let (w, h) = (x1 - x0, y1 - y0);
-    if !(w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite()) {
-        return None;
-    }
-    let (sx, sy) = (rect.width() / w, rect.height() / h);
-    Some(Matrix {
-        a: sx,
-        b: 0.0,
-        c: 0.0,
-        d: sy,
-        e: rect.llx - x0 * sx,
-        f: rect.lly - y0 * sy,
-    })
+    justpdf_core::annot::placement::appearance_matrix(dict, rect).map(matrix_of)
 }
 
 fn image_to_rgba(img: &image::DecodedImage) -> Vec<u8> {

@@ -23,6 +23,7 @@ After drawing the page content, draws each annotation's `/AP /N` appearance stre
 
 ## Code
 - `justpdf-render/src/interpreter.rs` — `render_annotations`, `normal_appearance`, `clip_to_bbox`, `appearance_mapping`, `form_matrix`, `render_form_xobject`
+- `justpdf-core/src/annot/placement.rs` — the selection, the §12.5.5 matrix and the Hidden/NoView test, shared with form flatten (#40)
 - `justpdf-render/tests/render_annotations.rs` — the §12.5.5 cases (local, absolute, unit and matrix BBoxes, clip, states, transparency group, flags, degenerate box)
 
 ## Reference behaviour
