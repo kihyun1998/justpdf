@@ -44,13 +44,14 @@ pub fn generate_field_appearance(
     }
 
     let font = FieldFont::of(field, modifier)?;
+    let look = WidgetLook::of(field, modifier);
     let content = match field.field_type {
-        FieldType::Text => text_field_appearance(field, &font, w, h)?,
-        FieldType::Checkbox => checkbox_appearance(field, w, h),
-        FieldType::RadioButton => radio_appearance(field, w, h),
-        FieldType::ComboBox => combo_appearance(field, &font, w, h)?,
-        FieldType::ListBox => list_appearance(field, &font, w, h)?,
-        FieldType::PushButton => button_appearance(field, &font, w, h)?,
+        FieldType::Text => text_field_appearance(field, &font, &look, w, h)?,
+        FieldType::Checkbox => checkbox_appearance(field, &look, w, h),
+        FieldType::RadioButton => radio_appearance(field, &look, w, h),
+        FieldType::ComboBox => combo_appearance(field, &font, &look, w, h)?,
+        FieldType::ListBox => list_appearance(field, &font, &look, w, h)?,
+        FieldType::PushButton => button_appearance(field, &font, &look, w, h)?,
         FieldType::Signature => return Err(AppearanceError::Signature),
     };
 
@@ -184,24 +185,121 @@ fn dr_font(da: &str, modifier: &DocumentModifier) -> Option<FieldFont> {
     })
 }
 
+/// A widget's background and border: the colour operators of its `/MK /BG`
+/// (fill) and `/MK /BC` (stroke), and its border width.
+struct WidgetLook {
+    background: Option<String>,
+    border: Option<String>,
+    /// `/BS /W`, else `/Border[2]`, else 1.
+    width: f64,
+}
+
+impl WidgetLook {
+    /// The look of the first of `field`'s widgets in `modifier`.
+    fn of(field: &FormField, modifier: &DocumentModifier) -> WidgetLook {
+        let direct = |o: &PdfObject| match o {
+            PdfObject::Reference(r) => modifier.find_object_pub(r.obj_num).cloned(),
+            other => Some(other.clone()),
+        };
+        let widget = field
+            .widgets
+            .first()
+            .and_then(|r| modifier.find_object_pub(r.obj_num))
+            .and_then(|o| o.as_dict().cloned())
+            .unwrap_or_default();
+        let mk = widget
+            .get(b"MK")
+            .and_then(direct)
+            .and_then(|o| o.as_dict().cloned())
+            .unwrap_or_default();
+        let colour = |key: &[u8], stroke: bool| {
+            let arr = direct(mk.get(key)?)?;
+            colour_operator(arr.as_array()?, stroke)
+        };
+        let bs_width = widget
+            .get(b"BS")
+            .and_then(direct)
+            .and_then(|bs| direct(bs.as_dict()?.get(b"W")?)?.as_f64());
+        let border_width = || {
+            let border = direct(widget.get(b"Border")?)?;
+            direct(border.as_array()?.get(2)?)?.as_f64()
+        };
+        WidgetLook {
+            background: colour(b"BG", false),
+            border: colour(b"BC", true),
+            width: bs_width.or_else(border_width).unwrap_or(1.0),
+        }
+    }
+
+    /// The background and border of a `w` × `h` rectangle.
+    fn rect(&self, buf: &mut String, w: f64, h: f64) {
+        if let Some(fill) = &self.background {
+            let _ = write!(buf, "{fill}\n0 0 {} {} re\nf\n", Number(w), Number(h));
+        }
+        if let Some(stroke) = &self.border
+            && self.width > 0.0
+        {
+            let b = self.width;
+            let _ = write!(
+                buf,
+                "{} w\n{stroke}\n{} {} {} {} re\nS\n",
+                Number(b),
+                Number(b / 2.0),
+                Number(b / 2.0),
+                Number(w - b),
+                Number(h - b)
+            );
+        }
+    }
+
+    /// The background and border of a circle of radius `r` at (`cx`, `cy`).
+    fn circle(&self, buf: &mut String, cx: f64, cy: f64, r: f64) {
+        if let Some(fill) = &self.background {
+            let _ = writeln!(buf, "{fill}");
+            append_circle(buf, cx, cy, r, CIRCLE_K);
+            buf.push_str("f\n");
+        }
+        if let Some(stroke) = &self.border
+            && self.width > 0.0
+        {
+            let _ = write!(buf, "{} w\n{stroke}\n", Number(self.width));
+            append_circle(buf, cx, cy, r, CIRCLE_K);
+            buf.push_str("S\n");
+        }
+    }
+}
+
+/// The Bézier control-point factor of a quarter circle.
+const CIRCLE_K: f64 = 0.5522847498;
+
+/// The operator setting the colour `components` give: gray for 1 component,
+/// RGB for 3, CMYK for 4; `None` for any other length (0 is no colour).
+fn colour_operator(components: &[PdfObject], stroke: bool) -> Option<String> {
+    let values = components
+        .iter()
+        .map(|c| c.as_f64().map(|v| Number(v).to_string()))
+        .collect::<Option<Vec<_>>>()?;
+    let operator = match (values.len(), stroke) {
+        (1, false) => "g",
+        (1, true) => "G",
+        (3, false) => "rg",
+        (3, true) => "RG",
+        (4, false) => "k",
+        (4, true) => "K",
+        _ => return None,
+    };
+    Some(format!("{} {operator}", values.join(" ")))
+}
+
 fn text_field_appearance(
     field: &FormField,
     font: &FieldFont,
+    look: &WidgetLook,
     w: f64,
     h: f64,
 ) -> Result<String, AppearanceError> {
     let mut buf = String::new();
-
-    // Border
-    buf.push_str("0.75 g\n");
-    let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
-    buf.push_str("0 G\n0.5 w\n");
-    let _ = write!(
-        buf,
-        "0.5 0.5 {} {} re\nS\n",
-        Number(w - 1.0),
-        Number(h - 1.0)
-    );
+    look.rect(&mut buf, w, h);
 
     // Text value
     if let Some(text) = field.value_as_string()
@@ -214,19 +312,9 @@ fn text_field_appearance(
     Ok(buf)
 }
 
-fn checkbox_appearance(field: &FormField, w: f64, h: f64) -> String {
+fn checkbox_appearance(field: &FormField, look: &WidgetLook, w: f64, h: f64) -> String {
     let mut buf = String::new();
-
-    // Border
-    buf.push_str("1 g\n");
-    let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
-    buf.push_str("0 G\n0.5 w\n");
-    let _ = write!(
-        buf,
-        "0.5 0.5 {} {} re\nS\n",
-        Number(w - 1.0),
-        Number(h - 1.0)
-    );
+    look.rect(&mut buf, w, h);
 
     // Checkmark if checked
     if field.is_checked() {
@@ -245,20 +333,13 @@ fn checkbox_appearance(field: &FormField, w: f64, h: f64) -> String {
     buf
 }
 
-fn radio_appearance(field: &FormField, w: f64, h: f64) -> String {
+fn radio_appearance(field: &FormField, look: &WidgetLook, w: f64, h: f64) -> String {
     let mut buf = String::new();
     let cx = w / 2.0;
     let cy = h / 2.0;
-    let r = (w.min(h) / 2.0) - 1.0;
-    let k = 0.5522847498;
-
-    // Circle border
-    buf.push_str("1 g\n");
-    append_circle(&mut buf, cx, cy, r, k);
-    buf.push_str("f\n");
-    buf.push_str("0 G\n0.5 w\n");
-    append_circle(&mut buf, cx, cy, r, k);
-    buf.push_str("S\n");
+    let r = w.min(h) / 2.0 - look.width / 2.0;
+    let k = CIRCLE_K;
+    look.circle(&mut buf, cx, cy, r);
 
     // Filled dot if selected
     if field.is_checked() {
@@ -273,21 +354,12 @@ fn radio_appearance(field: &FormField, w: f64, h: f64) -> String {
 fn combo_appearance(
     field: &FormField,
     font: &FieldFont,
+    look: &WidgetLook,
     w: f64,
     h: f64,
 ) -> Result<String, AppearanceError> {
     let mut buf = String::new();
-
-    // Background + border
-    buf.push_str("1 g\n");
-    let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
-    buf.push_str("0 G\n0.5 w\n");
-    let _ = write!(
-        buf,
-        "0.5 0.5 {} {} re\nS\n",
-        Number(w - 1.0),
-        Number(h - 1.0)
-    );
+    look.rect(&mut buf, w, h);
 
     // Dropdown arrow area
     let arrow_w = h.min(20.0);
@@ -327,21 +399,12 @@ fn combo_appearance(
 fn list_appearance(
     field: &FormField,
     font: &FieldFont,
+    look: &WidgetLook,
     w: f64,
     h: f64,
 ) -> Result<String, AppearanceError> {
     let mut buf = String::new();
-
-    // Background + border
-    buf.push_str("1 g\n");
-    let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
-    buf.push_str("0 G\n0.5 w\n");
-    let _ = write!(
-        buf,
-        "0.5 0.5 {} {} re\nS\n",
-        Number(w - 1.0),
-        Number(h - 1.0)
-    );
+    look.rect(&mut buf, w, h);
 
     // List items
     let line_height = 12.0;
@@ -373,30 +436,12 @@ fn list_appearance(
 fn button_appearance(
     field: &FormField,
     font: &FieldFont,
+    look: &WidgetLook,
     w: f64,
     h: f64,
 ) -> Result<String, AppearanceError> {
     let mut buf = String::new();
-
-    // 3D button look
-    buf.push_str("0.85 g\n");
-    let _ = write!(buf, "0 0 {} {} re\nf\n", Number(w), Number(h));
-    buf.push_str("1 G\n1 w\n");
-    let _ = write!(
-        buf,
-        "0 0 m\n0 {} l\n{} {} l\nS\n",
-        Number(h),
-        Number(w),
-        Number(h)
-    );
-    buf.push_str("0.5 G\n");
-    let _ = write!(
-        buf,
-        "{} {} m\n{} 0 l\n0 0 l\nS\n",
-        Number(w),
-        Number(h),
-        Number(w)
-    );
+    look.rect(&mut buf, w, h);
 
     // Button caption
     if let Some(text) = field.value_as_string()
@@ -459,6 +504,15 @@ mod tests {
     use crate::object::IndirectRef;
     use crate::page::Rect;
 
+    /// A black 1 pt border and no background.
+    fn bordered() -> WidgetLook {
+        WidgetLook {
+            background: None,
+            border: Some("0 G".to_string()),
+            width: 1.0,
+        }
+    }
+
     /// Operators in `content` that come from a number written as `NaN` or `inf`.
     fn non_finite_operators(content: &[u8]) -> Vec<Vec<u8>> {
         crate::content::parse_content_stream(content)
@@ -494,13 +548,17 @@ mod tests {
         let yes = PdfObject::Name(b"Yes".to_vec());
         let (w, h) = (f64::NAN, f64::INFINITY);
         let d = FieldFont::Default;
+        let look = WidgetLook {
+            background: Some("1 g".to_string()),
+            ..bordered()
+        };
         let contents = [
-            text_field_appearance(&field(FieldType::Text, text.clone()), &d, w, h).unwrap(),
-            checkbox_appearance(&field(FieldType::Checkbox, yes.clone()), w, h),
-            radio_appearance(&field(FieldType::RadioButton, yes), w, h),
-            combo_appearance(&field(FieldType::ComboBox, text.clone()), &d, w, h).unwrap(),
-            list_appearance(&field(FieldType::ListBox, text.clone()), &d, w, h).unwrap(),
-            button_appearance(&field(FieldType::PushButton, text), &d, w, h).unwrap(),
+            text_field_appearance(&field(FieldType::Text, text.clone()), &d, &look, w, h).unwrap(),
+            checkbox_appearance(&field(FieldType::Checkbox, yes.clone()), &look, w, h),
+            radio_appearance(&field(FieldType::RadioButton, yes), &look, w, h),
+            combo_appearance(&field(FieldType::ComboBox, text.clone()), &d, &look, w, h).unwrap(),
+            list_appearance(&field(FieldType::ListBox, text.clone()), &d, &look, w, h).unwrap(),
+            button_appearance(&field(FieldType::PushButton, text), &d, &look, w, h).unwrap(),
         ];
         for (i, content) in contents.iter().enumerate() {
             assert_eq!(
@@ -535,7 +593,8 @@ mod tests {
             widgets: Vec::new(),
             page_obj_num: None,
         };
-        let content = text_field_appearance(&field, &FieldFont::Default, 200.0, 20.0).unwrap();
+        let content =
+            text_field_appearance(&field, &FieldFont::Default, &bordered(), 200.0, 20.0).unwrap();
         assert!(content.contains("re"));
         assert!(content.contains("(Hello)"));
         assert!(content.contains("Tj"));
@@ -565,7 +624,7 @@ mod tests {
             widgets: Vec::new(),
             page_obj_num: None,
         };
-        let content = checkbox_appearance(&field, 14.0, 14.0);
+        let content = checkbox_appearance(&field, &bordered(), 14.0, 14.0);
         assert!(content.contains("m")); // checkmark path
         assert!(content.contains("l"));
         assert!(content.contains("S"));
@@ -595,7 +654,7 @@ mod tests {
             widgets: Vec::new(),
             page_obj_num: None,
         };
-        let content = checkbox_appearance(&field, 14.0, 14.0);
+        let content = checkbox_appearance(&field, &bordered(), 14.0, 14.0);
         // No checkmark lines — just the border rectangle
         assert!(content.contains("re"));
         assert!(!content.contains("1.5 w")); // no thick stroke for checkmark
@@ -626,7 +685,8 @@ mod tests {
             widgets: Vec::new(),
             page_obj_num: None,
         };
-        let content = text_field_appearance(&field, &FieldFont::Default, 200.0, 20.0).unwrap();
+        let content =
+            text_field_appearance(&field, &FieldFont::Default, &bordered(), 200.0, 20.0).unwrap();
 
         let ops = crate::content::parse_content_stream(content.as_bytes()).unwrap();
         let tj = ops.iter().find(|op| op.operator == b"Tj").unwrap();
