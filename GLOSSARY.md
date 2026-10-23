@@ -73,5 +73,5 @@ The font, supplied by the caller, that a document's generated appearances draw w
 _Avoid_: default font, form font
 
 **Text box**:
-The part of a form field's widget rectangle, inside its border and padding, that its value is laid out in and clipped to.
+The part of a form field's widget rectangle inside its border (the border width from `/BS` or `/Border`) that its value is clipped to. The value is laid out in it with pdf.js's padding (2 horizontal, 1 vertical) on top.
 _Avoid_: inner box, content rect, padding box

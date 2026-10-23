@@ -78,6 +78,7 @@ fn field(
             ury: 20.0,
         }),
         default_appearance: None,
+        quadding: 0,
         field_ref: widget.clone(),
         widgets: vec![widget],
         page_obj_num: None,
@@ -92,10 +93,19 @@ fn content(modifier: &DocumentModifier, r: &IndirectRef) -> String {
     String::from_utf8(justpdf_core::stream::decode_stream(data, dict).unwrap()).unwrap()
 }
 
-/// The appearance of `field` drawn in `modifier`.
+/// The appearance of `field` drawn in `modifier`, without the
+/// `/Tx BMC q` a text field or combo box opens with (#325).
 fn drawn(modifier: &mut DocumentModifier, field: &FormField) -> String {
     let ap = generate_field_appearance(field, modifier).unwrap();
-    content(modifier, &ap)
+    let c = content(modifier, &ap);
+    c.strip_prefix("/Tx BMC\nq\n")
+        .map(str::to_string)
+        .unwrap_or(c)
+}
+
+/// Whether `c` fills or strokes a rectangle: a background or a border.
+fn has_box(c: &str) -> bool {
+    c.contains("re\nf\n") || c.contains("re\nS\n")
 }
 
 fn text(s: &str) -> PdfObject {
@@ -121,8 +131,7 @@ fn a_widget_without_mk_has_no_background_or_border() {
     let mut m = modifier();
     let f = field(&mut m, FieldType::Text, text("x"), vec![bs(3.0)]);
     let c = drawn(&mut m, &f);
-    let before_text = c.split("BT").next().unwrap();
-    assert!(!before_text.contains(" re"), "{c}");
+    assert!(!has_box(&c), "{c}");
 }
 
 #[test]
@@ -177,7 +186,7 @@ fn colour_arrays_pick_their_colour_space_by_length() {
         vec![mk(Some(&[]), None)],
     );
     let c = drawn(&mut m, &f);
-    assert!(!c.split("BT").next().unwrap().contains(" re"), "{c}");
+    assert!(!has_box(&c), "{c}");
 }
 
 #[test]
@@ -288,6 +297,7 @@ fn filling_draws_each_widget_with_its_own_mk() {
         let Some(PdfObject::Reference(n)) = ap.get(b"N") else {
             panic!("/N")
         };
-        assert!(content(&m, n).starts_with(colour), "{}", content(&m, n));
+        let c = content(&m, n);
+        assert!(c.starts_with(&format!("/Tx BMC\nq\n{colour}")), "{c}");
     }
 }

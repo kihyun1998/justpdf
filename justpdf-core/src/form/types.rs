@@ -74,6 +74,9 @@ pub struct FormField {
     pub rect: Option<Rect>,
     /// Default appearance string (/DA).
     pub default_appearance: Option<String>,
+    /// Quadding (`/Q`): 0 left, 1 centred, 2 right; the field's own, else its
+    /// ancestors', else the AcroForm's, else 0.
+    pub quadding: u8,
     /// Reference to the field object, which holds `/V`.
     pub field_ref: IndirectRef,
     /// The field's widget annotations: its kids without `/T`, or the field
@@ -146,6 +149,7 @@ mod tests {
             options: Vec::new(),
             rect: None,
             default_appearance: None,
+            quadding: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -168,6 +172,7 @@ mod tests {
             options: Vec::new(),
             rect: None,
             default_appearance: None,
+            quadding: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -187,6 +192,7 @@ mod tests {
             options: Vec::new(),
             rect: None,
             default_appearance: None,
+            quadding: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::error::{JustPdfError, Result};
-use crate::object::{IndirectRef, PdfObject};
+use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::page::Rect;
 use crate::parser::PdfDocument;
 use crate::tree_walk::VisitBudget;
@@ -65,6 +65,7 @@ pub fn parse_acroform(doc: &PdfDocument) -> Result<Option<AcroForm>> {
         ft: None,
         ff: 0,
         da: default_appearance.as_deref(),
+        q: quadding(&acroform_dict),
     };
     let mut ancestors = HashSet::new();
     let mut budget = VisitBudget::default();
@@ -99,6 +100,14 @@ struct InheritedField<'a> {
     ft: Option<&'a [u8]>,
     ff: u32,
     da: Option<&'a str>,
+    q: Option<u8>,
+}
+
+/// The `/Q` of `dict`: `None` when absent or not 0, 1 or 2.
+fn quadding(dict: &PdfDict) -> Option<u8> {
+    dict.get_i64(b"Q")
+        .and_then(|q| u8::try_from(q).ok())
+        .filter(|q| *q <= 2)
 }
 
 /// Recursively walk the field tree. `ancestors` holds the fields above
@@ -142,6 +151,8 @@ fn walk_field_tree(
         .map(|v| v as u32)
         .unwrap_or(inherited.ff);
 
+    let q = quadding(&dict).or(inherited.q);
+
     // Get default appearance — either from this dict or inherited
     let da = dict
         .get(b"DA")
@@ -184,7 +195,12 @@ fn walk_field_tree(
                 doc,
                 kid_ref,
                 &full_name,
-                InheritedField { ft, ff, da: da_ref },
+                InheritedField {
+                    ft,
+                    ff,
+                    da: da_ref,
+                    q,
+                },
                 ancestors,
                 budget,
                 fields,
@@ -258,6 +274,7 @@ fn walk_field_tree(
         options,
         rect,
         default_appearance: da_ref.map(|s| s.to_string()),
+        quadding: q.unwrap_or(0),
         field_ref: field_ref.clone(),
         widgets,
         page_obj_num: None,
