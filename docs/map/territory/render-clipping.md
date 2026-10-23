@@ -32,4 +32,4 @@ Applies `W`/`W*` clipping paths to the device's clip mask and restores them on q
 ## Known holes / open
 - Nested clips are not restored on `Q` (above, inferred; no test).
 - **Every clip is a full-page mask**, so the form `/BBox` clip costs a page-sized `Mask` per `Do` (measured 2026-10-23, release, best of 5, a 400 × 600 pt page of `n` 8 × 8 forms: 72 dpi, 2000 forms 14.5 → 39.2 ms; 300 dpi, 100 forms 4.4 → 27.9 ms, 2000 forms 99.7 → 700 ms). 112 real pages (21 local files, one with forms: `testpdf.pdf`, 2880 `Do`) rendered pixel-identical before and after; their timing was too noisy to read. MuPDF keeps a rectangular clip as a scissor rectangle with no mask, and sizes a non-rectangular clip's mask to its bounds (`fz_draw_clip_path`, `source/fitz/draw-device.c`, master, read raw). The maintainer chose to land the clip with this cost and take the device scissor separately (judgement, #365, 2026-10-23, shown these numbers and the MuPDF fast path).
-- Tracked: #50 (clip restore)
+- Tracked: #50 (clip restore), #369 (rectangular scissor)
