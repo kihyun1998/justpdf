@@ -1,6 +1,6 @@
 //! Filling form fields: `NeedAppearances`, checkbox on-states from `/AP`,
 //! `/AS` on each widget (#204), and each widget's normal appearance drawn
-//! from the new value (#344).
+//! from the new value (#344) with its own `/DA` (#347).
 
 use justpdf_core::form::{parse_acroform, set_field_value, toggle_checkbox};
 use justpdf_core::writer::{DocumentBuilder, DocumentModifier, PageBuilder};
@@ -593,4 +593,71 @@ fn filling_a_button_keeps_its_appearances() {
         });
         assert_eq!(ap_of(&out, &widget), old, "Ff {ff}");
     }
+}
+
+/// A text field `name`, `/V (old)`, `/DA (/Helv 12 Tf 0 g)`, whose kid widgets
+/// have the `/DA` of `das` (none for `None`), in a document whose AcroForm has
+/// [`dr`]: (the document, the widgets).
+fn kids_with_da(das: &[Option<&str>]) -> (PdfDocument, Vec<IndirectRef>) {
+    let mut refs = Vec::new();
+    let doc = form_document_with(false, vec![dr()], |modifier| {
+        let parent = modifier.add_object(PdfObject::Null);
+        for da in das {
+            let mut entries = vec![("Parent", PdfObject::Reference(parent.clone()))];
+            if let Some(da) = da {
+                entries.push(("DA", string(da)));
+            }
+            let d = widget(modifier, entries, Some(rect_of(100, 30)));
+            refs.push(modifier.add_object(PdfObject::Dict(d)));
+        }
+        modifier.set_object(
+            parent.obj_num,
+            PdfObject::Dict(dict(vec![
+                ("FT", name("Tx")),
+                ("T", string("name")),
+                ("V", string("old")),
+                ("DA", string("/Helv 12 Tf 0 g")),
+                (
+                    "Kids",
+                    PdfObject::Array(refs.iter().cloned().map(PdfObject::Reference).collect()),
+                ),
+            ])),
+        );
+        vec![parent]
+    });
+    (doc, refs)
+}
+
+/// The lines of `widget`'s normal appearance in `doc` that select a font.
+fn font_selection(doc: &PdfDocument, widget: &IndirectRef) -> Vec<String> {
+    String::from_utf8(normal_content(doc, widget).0)
+        .unwrap()
+        .lines()
+        .filter(|l| l.contains("Tf"))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn a_widget_with_its_own_da_is_drawn_with_it() {
+    let (doc, widgets) = kids_with_da(&[Some("/Helv 20 Tf 1 0 0 rg"), None]);
+    let out = filled(&doc, |modifier, form| {
+        set_field_value(modifier, form, "name", string("new")).unwrap();
+    });
+    assert_eq!(font_selection(&out, &widgets[0]), ["/Helv 20 Tf 1 0 0 rg"]);
+    assert_eq!(font_selection(&out, &widgets[1]), ["/Helv 12 Tf 0 g"]);
+}
+
+#[test]
+fn a_widget_whose_own_da_font_is_not_in_dr_keeps_its_appearance() {
+    let (doc, widgets) = kids_with_da(&[Some("/Nope 12 Tf 0 g"), None]);
+    let old = ap_of(&doc, &widgets[0]);
+    let out = filled(&doc, |modifier, form| {
+        set_field_value(modifier, form, "name", string("new")).unwrap();
+    });
+    assert_eq!(ap_of(&out, &widgets[0]), old);
+    assert_eq!(
+        normal_appearance(&out, &widgets[1]).0,
+        vec![b"new".to_vec()]
+    );
 }
