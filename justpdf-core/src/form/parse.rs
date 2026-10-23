@@ -256,14 +256,24 @@ fn walk_field_tree(
         .get_array(b"Opt")
         .map(|arr| {
             arr.iter()
-                .filter_map(|item| match item {
-                    PdfObject::String(s) => Some(String::from_utf8_lossy(s).into_owned()),
-                    PdfObject::Array(pair) => pair
-                        .get(1)
-                        .or_else(|| pair.first())
-                        .and_then(|o| o.as_str())
-                        .map(|b| String::from_utf8_lossy(b).into_owned()),
-                    _ => None,
+                .filter_map(|item| {
+                    let text = |o: Option<&PdfObject>| {
+                        o.and_then(|o| o.as_str())
+                            .map(|b| String::from_utf8_lossy(b).into_owned())
+                    };
+                    match item {
+                        PdfObject::String(_) => text(Some(item)).map(|t| ChoiceOption::from(&*t)),
+                        PdfObject::Array(pair) => {
+                            let export_value = text(pair.first())?;
+                            let display_value =
+                                text(pair.get(1)).unwrap_or_else(|| export_value.clone());
+                            Some(ChoiceOption {
+                                export_value,
+                                display_value,
+                            })
+                        }
+                        _ => None,
+                    }
                 })
                 .collect()
         })
@@ -282,6 +292,14 @@ fn walk_field_tree(
         default_value,
         flags: FieldFlags(ff),
         options,
+        indices: dict
+            .get_array(b"I")
+            .map(|a| {
+                a.iter()
+                    .filter_map(|o| o.as_i64().and_then(|i| usize::try_from(i).ok()))
+                    .collect()
+            })
+            .unwrap_or_default(),
         rect,
         default_appearance: da_ref.map(|s| s.to_string()),
         quadding: q.unwrap_or(0),

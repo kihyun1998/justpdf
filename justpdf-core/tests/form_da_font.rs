@@ -76,7 +76,8 @@ fn field(field_type: FieldType, value: &str, da: Option<&str>) -> FormField {
         value: Some(PdfObject::String(value.as_bytes().to_vec())),
         default_value: None,
         flags: FieldFlags::default(),
-        options: vec![value.to_string()],
+        options: vec![value.into()],
+        indices: Vec::new(),
         rect: Some(Rect {
             llx: 0.0,
             lly: 0.0,

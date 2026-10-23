@@ -9,6 +9,13 @@ Walks the `/AcroForm /Fields` tree and builds a model of the fields (text, check
 ## Design model
 - A field that has its own ancestor as a kid gives `CircularReference`, and going over the visit budget through shared fields gives `LimitExceeded` — [Tree traversal cycles](../invariant/tree-traversal-cycles.md). `/T` is decoded lossily — [Text string encoding](../invariant/text-string-encoding.md).
 - `page_obj_num` is always `None`.
+- **Choice options and selection** (#346):
+  - `FormField::options` holds a `ChoiceOption` per `/Opt` entry. A pair `[export display]` gives both values; a string gives the same text for both.
+  - `FormField::indices` is `/I`.
+  - `selected_values()` gives the export values of the options at `indices` when it is not empty, else `/V`: a string as one value, an array as its strings.
+  - This follows pdf.js `ChoiceWidgetAnnotation` (raw source, read 2026-10-23), where `/I` comes first ("Acrobat itself is using it whatever the V entry is").
+  - Until #346, `options` held display texts only, so an export value that differed from its display text matched nothing, and an array `/V` read as nothing (measured, #346 triage).
+  - `/Opt` is read from the field only. pdf.js also inherits it from a parent field (its issue 8094); that is not done here.
 - **`FormField::max_len`** is the field's `/MaxLen` when it is a non-negative integer (another value counts as 0), else its nearest ancestor's, else 0 (#332).
 - **`FormField::quadding`** is the field's `/Q` when it is 0, 1 or 2, else its nearest ancestor's, else the AcroForm's, else 0 (#325).
 - **One `FormField` per terminal field** (#204): a kid with neither `/T` nor `/Kids` is a widget of its parent, collected in `FormField::widgets`; the parent is the field, holding `/V`, and its `rect` is its own or its first widget's. A field and widget in one dictionary (no `/Kids`) has itself as its only widget. Kids that are fields are walked as before; a field with both kinds of kid is a field of its own as well. Until #204 each widget kid became a separate field with the parent's name and no `/V`, so a radio group read as two fields valued `None` and `set_field_value` wrote `/V` on the first widget (measured, `tests/form_fill.rs` against master). Maintainer decision (2026-10-22, #204): fix the model rather than have fill follow `/Parent`, so the field tree is walked in one place. Each widget kid is charged to the visit budget as a field was.

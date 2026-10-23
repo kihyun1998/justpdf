@@ -790,7 +790,12 @@ fn test_acroform_parse() {
         .unwrap();
     assert_eq!(combo.field_type, form::FieldType::ComboBox);
     assert_eq!(combo.value_as_string(), Some("Korea".to_string()));
-    assert_eq!(combo.options, vec!["Korea", "Japan", "China"]);
+    let shown: Vec<&str> = combo
+        .options
+        .iter()
+        .map(|o| o.display_value.as_str())
+        .collect();
+    assert_eq!(shown, ["Korea", "Japan", "China"]);
 
     let ro_field = acroform.fields.iter().find(|f| f.name == "id").unwrap();
     assert!(ro_field.flags.is_read_only());

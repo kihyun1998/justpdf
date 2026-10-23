@@ -81,6 +81,7 @@ fn field(
         default_value: None,
         flags: FieldFlags::default(),
         options: Vec::new(),
+        indices: Vec::new(),
         rect: Some(Rect {
             llx: 0.0,
             lly: 0.0,
