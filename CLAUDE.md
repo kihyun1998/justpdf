@@ -18,6 +18,10 @@ Single-context layout — one `GLOSSARY.md` and `docs/adr/` at the repo root. Se
 
 The repo's dependency map lives in `docs/map/` — start at `docs/map/README.md`.
 
+- **Read before designing a change:** open the territory note for the code you will touch, follow its `## Blast radius` as a checklist and its `## Cross-cutting invariants`.
+- **Write after it lands:** the touched notes' `## Code`, blast edges and holes still match the code; `python3 scripts/check-map.py .` passes.
+- **Promotion, at the first fix:** when a fix reveals a fact, ask in grep-able form whether it holds at every site that shares the assumption. If it does, the fix lands with an invariant note under `docs/map/invariant/`, or a new site in an existing one.
+
 ### Comments
 
 A comment says what the code is. Why it is this way, what it deliberately leaves out, the trap and the measured value go to the territory note under `docs/map/territory/`; history goes to the commit message. Comments written before this rule still carry the rest: never delete one whose content the map does not yet hold — move it first (`decant`).

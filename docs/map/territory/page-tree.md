@@ -32,10 +32,12 @@ Rules read from the code.
 ## Blast radius
 - [Render API](render-api.md), [Render interpreter](render-interpreter.md) — use `PageInfo`/`Rect` as they are.
 - [Text extraction](text-extraction.md), [Annotations](annotations.md), [AcroForm](acroform.md), [Page labels](page-labels.md), [optional content](optional-content.md) — rely on page lookup.
+- [Content interpreter](content-interpreter.md) (`DocResources::page`), [Render interpreter](render-interpreter.md) (`ResourceScopes::for_page`) — both start the page's [resource name scope](../invariant/resource-scope.md) from `PageInfo::resources_ref`, so a change to how `/Resources` is inherited or stored changes what every page-level name resolves to (inferred, `rg -n 'resources_ref' justpdf-*/src`).
 - [Document modifier](document-modifier.md) — page insertion, deletion and reordering rewrite this structure.
 - [Facade](facade.md), [CLI](cli.md), [Language bindings](language-bindings.md) — call `collect_pages`/`get_page`/`page_count` directly.
 
 ## Known holes / open
 - There is no depth limit — extreme depth without a cycle can overflow the stack (inferred).
 - `get_page` and `collect_pages`/`page_count` can answer differently for the same file — "What this invariant does not cover" in [Tree traversal cycles](../invariant/tree-traversal-cycles.md).
-- Tracked: #122 (depth limit: 256, overflow measured at depth 500 debug / 900 release), #133 (page API disagreement)
+- An inherited `/Resources` is cloned into each page's `PageInfo::resources_ref` (`InheritedAttrs`, `dict.get(b"Resources").cloned()`). A reference clones cheaply; a direct dictionary on a `/Pages` node is copied whole into every page below it, N pages × R entries, with no shared node and outside the visit budget (inferred, code read at `cf6fbcf`).
+- Tracked: #122 (depth limit: 256, overflow measured at depth 500 debug / 900 release), #133 (page API disagreement), #351 (per-page copy of an inherited direct `/Resources`)
