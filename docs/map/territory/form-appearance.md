@@ -39,6 +39,22 @@ Generates appearance streams for text, choice and button fields: in the AcroForm
   - **Widths:** the `/DR` font's `/Widths` (or the Standard 14 table) by code, a Type0 font's `/W` by CID. Without `/DA`, the WinAnsi Helvetica table.
   - **Structure:** `/Tx BMC q`, background and border, the clip `re W n`, `BT 0 g {da} x y Td (…) Tj ET`, then `Q EMC`. The background and border are **inside** the marked content, as in MuPDF and pdf.js. Maintainer decision (#325, 2026-10-23): this replaces #325's triage call to put them outside, which had been made without reading either reference. A password field, or one with an empty value, gives `/Tx BMC q {decoration} Q EMC`.
   - Until #325 every value was drawn at `2 (h − 10)/2 Td`, and `0 Tf` drew it invisibly (inferred).
+- **A multiline text field** (`MULTILINE`, `multiline_text`, #332) splits its value at `\r\n`, `\r` and `\n`. Each line is wrapped by `split_line`, which follows pdf.js `_splitLine`:
+  - a line within `bw − 2` stays whole
+  - otherwise it breaks after the last space seen, else before the character that overflows `bw − 4`
+  - after a space break, pdf.js restarts its width count one character past the new chunk's first (`i = lastSpacePos + 1`, then the loop's `i++`). `split_line` does the same, so the chunks match pdf.js's.
+- **Multiline line height and size** (pdf.js `_computeFontSize` with a line count):
+  - with a fixed size `s`, the line height is `height / max(1, round(height / (1.35 s)))`, where `height = bh − 2`; the `max(1, …)` is justpdf's, where pdf.js divides by 0
+  - with `0 Tf`, the line count `n` starts at `max(round(height / 16.2), lines)`, the size is `floor₂(height / n / 1.35)`, and `n` grows (exponential, then binary search) until the wrapped lines fit: chunk count × size ≤ height
+- **Multiline placement** (`_getMultilineAppearance`):
+  - the first line sits `vPadding + lineHeight − descent` below the text box top, each further chunk `lineHeight` lower
+  - `vPadding = min(floor((bh − size)/2), 1)`; `descent = max(lineHeight · 0.35/1.35, font descent · size)`
+  - each chunk is aligned by `/Q` with padding 2, or 1 when an unwrappable line overflows
+- **A comb** (`comb_text`, `_getCombAppearance`) is drawn when the field has `COMB`, is not multiline, password or file-select, and `FormField::max_len > 0`.
+  - Each character is centred in one of `max_len` cells of `bw / max_len`.
+  - `/Q` 1 shifts the run by whole cells (`floor((bw − run)/(2 cell)) · cell`), 2 by `bw − run`.
+  - A value longer than `max_len` is drawn in full and clipped.
+  - Maintainer decision (#332 triage, 2026-10-23): follow pdf.js throughout, an over-long comb value included. Combo boxes stay single-line.
 - Values go through `value_as_string` (`from_utf8_lossy`), so a UTF-16BE value becomes U+FFFD.
 - Signature fields return `None`.
 
@@ -59,4 +75,4 @@ MuPDF `source/pdf/pdf-appearance.c` and pdf.js `src/core/annotation.js` for `/MK
 - [Annotation appearance](annotation-appearance.md), [Signature appearance](signature-appearance.md) — the two other generators.
 
 ## Known holes / open
-- Tracked: #33 (text string encoding), #175 (text beyond WinAnsi through a caller-supplied appearance font), #332 (multiline and comb), #292 (approximate Standard 14 widths), `/BS /S` styles other than solid and `/MK /CA`, `/R`, `/I` (not tracked)
+- Tracked: #33 (text string encoding), #175 (text beyond WinAnsi through a caller-supplied appearance font), #292 (approximate Standard 14 widths), `/BS /S` styles other than solid and `/MK /CA`, `/R`, `/I` (not tracked)

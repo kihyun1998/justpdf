@@ -66,6 +66,7 @@ pub fn parse_acroform(doc: &PdfDocument) -> Result<Option<AcroForm>> {
         ff: 0,
         da: default_appearance.as_deref(),
         q: quadding(&acroform_dict),
+        max_len: None,
     };
     let mut ancestors = HashSet::new();
     let mut budget = VisitBudget::default();
@@ -101,6 +102,7 @@ struct InheritedField<'a> {
     ff: u32,
     da: Option<&'a str>,
     q: Option<u8>,
+    max_len: Option<u32>,
 }
 
 /// The `/Q` of `dict`: `None` when absent or not 0, 1 or 2.
@@ -152,6 +154,13 @@ fn walk_field_tree(
         .unwrap_or(inherited.ff);
 
     let q = quadding(&dict).or(inherited.q);
+    let max_len = dict
+        .get(b"MaxLen")
+        .map(|o| match o {
+            PdfObject::Integer(n) => u32::try_from(*n).unwrap_or(0),
+            _ => 0,
+        })
+        .or(inherited.max_len);
 
     // Get default appearance — either from this dict or inherited
     let da = dict
@@ -200,6 +209,7 @@ fn walk_field_tree(
                     ff,
                     da: da_ref,
                     q,
+                    max_len,
                 },
                 ancestors,
                 budget,
@@ -275,6 +285,7 @@ fn walk_field_tree(
         rect,
         default_appearance: da_ref.map(|s| s.to_string()),
         quadding: q.unwrap_or(0),
+        max_len: max_len.unwrap_or(0),
         field_ref: field_ref.clone(),
         widgets,
         page_obj_num: None,

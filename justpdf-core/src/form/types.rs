@@ -77,6 +77,9 @@ pub struct FormField {
     /// Quadding (`/Q`): 0 left, 1 centred, 2 right; the field's own, else its
     /// ancestors', else the AcroForm's, else 0.
     pub quadding: u8,
+    /// `/MaxLen`: the field's own, else its ancestors', else 0 (also when
+    /// negative or not an integer).
+    pub max_len: u32,
     /// Reference to the field object, which holds `/V`.
     pub field_ref: IndirectRef,
     /// The field's widget annotations: its kids without `/T`, or the field
@@ -150,6 +153,7 @@ mod tests {
             rect: None,
             default_appearance: None,
             quadding: 0,
+            max_len: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -173,6 +177,7 @@ mod tests {
             rect: None,
             default_appearance: None,
             quadding: 0,
+            max_len: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -193,6 +198,7 @@ mod tests {
             rect: None,
             default_appearance: None,
             quadding: 0,
+            max_len: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
