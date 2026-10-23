@@ -30,4 +30,5 @@ Walks the `/AcroForm /Fields` tree and builds a model of the fields (text, check
 
 ## Known holes / open
 - There is no depth limit — an extreme depth without a cycle can overflow the stack (inferred).
-- Tracked: #33 (text string encoding), #122 (depth limit)
+- `walk_field_tree` builds each field's `full_name` by `format!`-ing the parent's name onto the partial name, so every field holds its own copy of the whole path and the copied text grows with depth, outside the visit budget (inferred, code read at `cf6fbcf`).
+- Tracked: #33 (text string encoding), #122 (depth limit), #351 (per-depth `full_name` copy)

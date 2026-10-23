@@ -1,6 +1,7 @@
 # justpdf map
 
-<!-- grill-map build stamp: eb0cd67 -->
+<!-- grill-map build stamp: 024bd2d -->
+<!-- grill-map synced at: cf6fbcf (2026-10-23) -->
 
 This map answers two questions.
 
@@ -57,7 +58,7 @@ It covers **the whole repository**: every workspace crate, the four bindings out
 
 `python3 scripts/check-map.py .` (from the repository root) — append a path to check a single note. It checks: the section set (per territory, invariant and aggregate), that each `## Code` symbol is in the file listed, that links and `#anchors` resolve (ignoring code spans and fenced blocks), and invariant ↔ territory back-links.
 
-Its scope is `docs/map/` only. It is not wired into CI, so passing only means "someone ran it". It does not check a note's **claims** (design rules, inferences, blast edges) — after a refactor, fix addresses with the symbol check, and if a symbol has **disappeared**, reread that note's `## Design model` first.
+Its scope is `docs/map/` only. CI runs it as the `map` job on every push to master and every pull request into master (`.github/workflows/ci.yml`, since 53baca9, #190). It does not check a note's **claims** (design rules, inferences, blast edges) — after a refactor, fix addresses with the symbol check, and if a symbol has **disappeared**, reread that note's `## Design model` first.
 
 ## Questions as commands
 
