@@ -94,6 +94,7 @@ fn redraw_widgets(modifier: &mut DocumentModifier, field: &FormField, value: &Pd
             .and_then(|da| direct(modifier, da))
             .and_then(|da| da.as_str().map(|b| String::from_utf8_lossy(b).into_owned()))
             .or_else(|| field.default_appearance.clone());
+        drawn.widgets = vec![widget.clone()];
         drawn.rect = widget_dict
             .get(b"Rect")
             .and_then(|r| direct(modifier, r))
