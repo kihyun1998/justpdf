@@ -158,46 +158,108 @@ impl<'a> RenderInterpreter<'a> {
                 continue;
             }
 
-            // Get appearance stream: /AP /N
-            let (ap_ref, ap_stream) = match annot_dict.get(b"AP") {
-                Some(PdfObject::Dict(ap)) => {
-                    let (n_ref, n_obj) = match ap.get(b"N") {
-                        Some(PdfObject::Reference(r)) => {
-                            let r = r.clone();
-                            let obj = self.doc.resolve(&r)?;
-                            (Some(r), obj)
-                        }
-                        Some(other) => (None, other.clone()),
-                        None => continue,
-                    };
-                    match n_obj {
-                        PdfObject::Stream { dict, data } => (n_ref, (dict, data)),
-                        _ => continue,
-                    }
-                }
-                _ => continue,
+            let Some(rect) = annot_dict
+                .get_array(b"Rect")
+                .and_then(justpdf_core::page::Rect::from_pdf_array)
+            else {
+                continue;
+            };
+            let Some(Appearance {
+                obj_ref: ap_ref,
+                dict: ap_dict,
+                data: ap_data,
+            }) = self.normal_appearance(&annot_dict)?
+            else {
+                continue;
+            };
+            let Some(mapping) = appearance_mapping(&ap_dict, &rect) else {
+                continue;
             };
 
-            // Require annotation rect (needed for positioning)
-            if annot_dict.get_array(b"Rect").is_none() {
-                continue;
-            }
-
-            // Save graphics state, render AP Form XObject
             self.state_stack.push(self.state.clone());
-
-            let (ap_dict, ap_data) = ap_stream;
+            let saved_clip = self.device.clip_mask.clone();
+            self.state.ctm = mapping.concat(&self.state.ctm);
+            self.clip_to_bbox(&ap_dict);
             self.with_stream_resources(&ap_dict, ap_ref.as_ref(), |this| {
                 let _ = this.render_form_xobject(&ap_dict, &ap_data);
             });
-
-            // Restore graphics state
+            self.device.clip_mask = saved_clip;
             if let Some(saved) = self.state_stack.pop() {
                 self.state = saved;
             }
         }
 
         Ok(())
+    }
+
+    /// The decoded normal appearance of `annot`: `/AP /N` when it is a
+    /// stream, else the entry of that state dictionary `/AS` names. `None`
+    /// when there is none or it does not decode.
+    fn normal_appearance(&mut self, annot: &PdfDict) -> Result<Option<Appearance>> {
+        let resolve = |this: &Self, o: &PdfObject| -> Result<(Option<IndirectRef>, PdfObject)> {
+            Ok(match o {
+                PdfObject::Reference(r) => (Some(r.clone()), this.doc.resolve(r)?),
+                other => (None, other.clone()),
+            })
+        };
+        let Some(ap) = annot.get(b"AP") else {
+            return Ok(None);
+        };
+        let (_, ap) = resolve(self, ap)?;
+        let Some(normal) = ap.as_dict().and_then(|ap| ap.get(b"N")).cloned() else {
+            return Ok(None);
+        };
+        let (mut obj_ref, mut normal) = resolve(self, &normal)?;
+        if let PdfObject::Dict(states) = &normal {
+            let Some(state) = annot.get_name(b"AS").and_then(|s| states.get(s)).cloned() else {
+                return Ok(None);
+            };
+            (obj_ref, normal) = resolve(self, &state)?;
+        }
+        let PdfObject::Stream { dict, data } = normal else {
+            return Ok(None);
+        };
+        Ok(self
+            .doc
+            .decode_stream(&dict, &data)
+            .ok()
+            .map(|data| Appearance {
+                obj_ref,
+                dict,
+                data,
+            }))
+    }
+
+    /// Clip to the form `dict`'s `/BBox` in form space: through its
+    /// `/Matrix` and the current CTM.
+    fn clip_to_bbox(&mut self, dict: &PdfDict) {
+        let Some(bbox) = dict
+            .get_array(b"BBox")
+            .and_then(justpdf_core::page::Rect::from_pdf_array)
+        else {
+            return;
+        };
+        let Some(path) = tiny_skia::Rect::from_ltrb(
+            bbox.llx as f32,
+            bbox.lly as f32,
+            bbox.urx as f32,
+            bbox.ury as f32,
+        )
+        .map(PathBuilder::from_rect) else {
+            return;
+        };
+        let transform = form_matrix(dict)
+            .concat(&self.state.ctm)
+            .concat(&self.page_transform)
+            .to_skia();
+        if self.state.has_clip {
+            self.device
+                .intersect_clip_path(&path, FillRule::Winding, transform);
+        } else {
+            self.device
+                .set_clip_path(&path, FillRule::Winding, transform);
+        }
+        self.state.has_clip = true;
     }
 
     /// Check if an OC (Optional Content) marked content block is visible.
@@ -2382,6 +2444,65 @@ enum XObjectData {
 }
 
 /// Convert decoded image data to RGBA bytes.
+/// An annotation's decoded appearance stream: its reference (when it is
+/// indirect), dictionary and content.
+struct Appearance {
+    obj_ref: Option<IndirectRef>,
+    dict: PdfDict,
+    data: Vec<u8>,
+}
+
+/// A form dictionary's `/Matrix`, identity when absent.
+fn form_matrix(dict: &PdfDict) -> Matrix {
+    match dict.get_array(b"Matrix") {
+        Some(m) if m.len() >= 6 => Matrix {
+            a: m[0].as_f64().unwrap_or(1.0),
+            b: m[1].as_f64().unwrap_or(0.0),
+            c: m[2].as_f64().unwrap_or(0.0),
+            d: m[3].as_f64().unwrap_or(1.0),
+            e: m[4].as_f64().unwrap_or(0.0),
+            f: m[5].as_f64().unwrap_or(0.0),
+        },
+        _ => Matrix::identity(),
+    }
+}
+
+/// The matrix A of ISO 32000-2 §12.5.5 that scales and translates the
+/// appearance form `dict`'s `/BBox`, transformed by its `/Matrix`, onto
+/// `rect`. `None` without a `/BBox`, or when that box has no width or height.
+fn appearance_mapping(dict: &PdfDict, rect: &justpdf_core::page::Rect) -> Option<Matrix> {
+    let bbox = dict
+        .get_array(b"BBox")
+        .and_then(justpdf_core::page::Rect::from_pdf_array)?;
+    let m = form_matrix(dict);
+    let corners = [
+        m.transform_point(bbox.llx, bbox.lly),
+        m.transform_point(bbox.urx, bbox.lly),
+        m.transform_point(bbox.llx, bbox.ury),
+        m.transform_point(bbox.urx, bbox.ury),
+    ];
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for (x, y) in corners {
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x);
+        y1 = y1.max(y);
+    }
+    let (w, h) = (x1 - x0, y1 - y0);
+    if !(w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite()) {
+        return None;
+    }
+    let (sx, sy) = (rect.width() / w, rect.height() / h);
+    Some(Matrix {
+        a: sx,
+        b: 0.0,
+        c: 0.0,
+        d: sy,
+        e: rect.llx - x0 * sx,
+        f: rect.lly - y0 * sy,
+    })
+}
+
 fn image_to_rgba(img: &image::DecodedImage) -> Vec<u8> {
     let pixel_count = (img.width * img.height) as usize;
     let mut rgba = vec![255u8; pixel_count * 4];
