@@ -1,6 +1,7 @@
 pub mod appearance;
 pub mod builder;
 pub mod parse;
+pub mod placement;
 pub mod redact;
 pub mod types;
 

@@ -910,6 +910,27 @@ fn test_flatten_form() {
     // AcroForm should be removed
     let acroform2 = form::parse_acroform(&doc2).unwrap();
     assert!(acroform2.is_none());
+
+    // No page keeps a widget annotation.
+    for page in collect_pages(&doc2).unwrap() {
+        let PdfObject::Dict(page_dict) = doc2.resolve(&page.page_ref).unwrap() else {
+            panic!("page")
+        };
+        let annots = match page_dict.get(b"Annots") {
+            Some(PdfObject::Array(a)) => a.clone(),
+            _ => Vec::new(),
+        };
+        for annot in annots {
+            let annot = match annot {
+                PdfObject::Reference(r) => doc2.resolve(&r).unwrap(),
+                other => other,
+            };
+            assert_ne!(
+                annot.as_dict().and_then(|d| d.get_name(b"Subtype")),
+                Some(&b"Widget"[..])
+            );
+        }
+    }
 }
 
 #[test]
