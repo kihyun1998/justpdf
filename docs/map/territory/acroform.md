@@ -9,6 +9,7 @@ Walks the `/AcroForm /Fields` tree and builds a model of the fields (text, check
 ## Design model
 - A field that has its own ancestor as a kid gives `CircularReference`, and going over the visit budget through shared fields gives `LimitExceeded` — [Tree traversal cycles](../invariant/tree-traversal-cycles.md). `/T` is decoded lossily — [Text string encoding](../invariant/text-string-encoding.md).
 - `page_obj_num` is always `None`.
+- **`FormField::quadding`** is the field's `/Q` when it is 0, 1 or 2, else its nearest ancestor's, else the AcroForm's, else 0 (#325).
 - **One `FormField` per terminal field** (#204): a kid with neither `/T` nor `/Kids` is a widget of its parent, collected in `FormField::widgets`; the parent is the field, holding `/V`, and its `rect` is its own or its first widget's. A field and widget in one dictionary (no `/Kids`) has itself as its only widget. Kids that are fields are walked as before; a field with both kinds of kid is a field of its own as well. Until #204 each widget kid became a separate field with the parent's name and no `/V`, so a radio group read as two fields valued `None` and `set_field_value` wrote `/V` on the first widget (measured, `tests/form_fill.rs` against master). Maintainer decision (2026-10-22, #204): fix the model rather than have fill follow `/Parent`, so the field tree is walked in one place. Each widget kid is charged to the visit budget as a field was.
 - `/Opt` pairs take the display string.
 

@@ -22,6 +22,22 @@ pub fn is_standard14(name: &[u8]) -> bool {
     )
 }
 
+/// The AFM `Ascender` and the magnitude of `Descender` of a Standard 14 font,
+/// in 1/1000 units. `None` for Symbol, ZapfDingbats and other fonts, whose
+/// AFM gives neither.
+pub fn standard14_ascent_descent(name: &[u8]) -> Option<(f64, f64)> {
+    let name = strip_subset_prefix(name);
+    if name.starts_with(b"Courier") {
+        Some((629.0, 157.0))
+    } else if name.starts_with(b"Helvetica") {
+        Some((718.0, 207.0))
+    } else if name.starts_with(b"Times") {
+        Some((683.0, 217.0))
+    } else {
+        None
+    }
+}
+
 /// Get approximate glyph widths for Standard 14 fonts.
 /// Returns widths for char codes 0-255 in 1/1000 units.
 pub fn standard14_widths(name: &[u8]) -> Vec<f64> {

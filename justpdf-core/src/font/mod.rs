@@ -29,7 +29,7 @@ pub use encoding::{
 };
 pub(crate) use encoding::{symbol_code, winansi_char, winansi_code, zapf_dingbats_code};
 pub use glyph_select::{encoding_glyph_name, truetype_glyph_candidates};
-pub use standard14::{is_standard14, standard14_widths};
+pub use standard14::{is_standard14, standard14_ascent_descent, standard14_widths};
 
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 

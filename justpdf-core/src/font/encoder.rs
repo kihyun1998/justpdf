@@ -5,17 +5,19 @@ use std::collections::HashMap;
 
 use ttf_parser::{Face, GlyphId};
 
-use super::standard14::strip_subset_prefix;
+use super::standard14::{standard14_ascent_descent, strip_subset_prefix};
 use super::{
-    EncodingCMap, ToUnicodeCMap, descendant_font, parse_font_info, resolve_font_entries,
+    EncodingCMap, FontInfo, ToUnicodeCMap, descendant_font, parse_font_info, resolve_font_entries,
     truetype_glyph_candidates, type0_encoding_cmap,
 };
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 
-/// The codes of one font, by the character each decodes to.
+/// The codes of one font, by the character each decodes to, with each
+/// code's width and the font's ascent and descent.
 #[derive(Debug, Clone)]
 pub(crate) struct FontEncoder {
-    codes: HashMap<char, Vec<u8>>,
+    codes: HashMap<char, (Vec<u8>, f64)>,
+    ascent_descent: Option<(f64, f64)>,
 }
 
 impl FontEncoder {
@@ -40,12 +42,13 @@ impl FontEncoder {
         let to_unicode = to_unicode(&font, &mut resolve, &mut decode);
         let subset = strip_subset_prefix(&info.base_font).len() < info.base_font.len();
         let mut codes = HashMap::new();
-        let mut insert = |text: Option<String>, bytes: Vec<u8>| {
+        let mut insert = |text: Option<String>, bytes: Vec<u8>, width: f64| {
             let mut chars = text.as_deref().unwrap_or("").chars();
             if let (Some(c), None) = (chars.next(), chars.next()) {
-                codes.entry(c).or_insert(bytes);
+                codes.entry(c).or_insert((bytes, width));
             }
         };
+        let mut ascent_descent = ascent_descent(&info);
 
         if font.get_name(b"Subtype") == Some(b"Type0") {
             match direct(font.get(b"Encoding"), &mut resolve) {
@@ -58,6 +61,8 @@ impl FontEncoder {
             let cmap = type0_encoding_cmap(&font, &mut resolve, &mut decode);
             let descendant = descendant_font(&font, &mut resolve)
                 .map(|d| resolve_font_entries(&d, &mut resolve))?;
+            let cid_info = parse_font_info(&descendant);
+            ascent_descent = ascent_descent.or_else(|| self::ascent_descent(&cid_info));
             let program = font_file2(&descendant, &mut resolve, &mut decode);
             if subset && program.is_none() {
                 return None;
@@ -71,8 +76,8 @@ impl FontEncoder {
                 let Some(bytes) = code_bytes(&cmap, code) else {
                     continue;
                 };
+                let cid = cmap.next_code(&bytes).cid;
                 if let Some(face) = &face {
-                    let cid = cmap.next_code(&bytes).cid;
                     let gid = match &cid_to_gid {
                         Some(map) => usize::try_from(cid)
                             .ok()
@@ -85,7 +90,7 @@ impl FontEncoder {
                         continue;
                     }
                 }
-                insert(Some(text), bytes);
+                insert(Some(text), bytes, cid_info.widths.get_width(cid));
             }
         } else {
             let program = font_file2(&font, &mut resolve, &mut decode);
@@ -115,20 +120,52 @@ impl FontEncoder {
                     .as_ref()
                     .and_then(|t| t.lookup(u32::from(code)))
                     .unwrap_or_else(|| info.decode_simple_code(code));
-                insert(Some(text), vec![code]);
+                insert(
+                    Some(text),
+                    vec![code],
+                    info.widths.get_width(u32::from(code)),
+                );
             }
         }
-        Some(FontEncoder { codes })
+        Some(FontEncoder {
+            codes,
+            ascent_descent,
+        })
     }
 
     /// `text` in this font's codes, `None` when a character has none.
     pub(crate) fn encode(&self, text: &str) -> Option<Vec<u8>> {
         let mut out = Vec::new();
         for c in text.chars() {
-            out.extend_from_slice(self.codes.get(&c)?);
+            out.extend_from_slice(&self.codes.get(&c)?.0);
         }
         Some(out)
     }
+
+    /// The summed width of `text`'s codes in 1/1000 text space units, `None`
+    /// when a character has no code.
+    pub(crate) fn width(&self, text: &str) -> Option<f64> {
+        text.chars()
+            .map(|c| self.codes.get(&c).map(|(_, w)| *w))
+            .sum()
+    }
+
+    /// The font's ascent and the magnitude of its descent in 1/1000 units:
+    /// the font descriptor's unless both are 0, else a Standard 14 font's
+    /// AFM values; `None` when neither is known.
+    pub(crate) fn ascent_descent(&self) -> Option<(f64, f64)> {
+        self.ascent_descent
+    }
+}
+
+/// The ascent and descent magnitude `info`'s descriptor gives (unless both
+/// are 0), else its Standard 14 AFM values.
+fn ascent_descent(info: &FontInfo) -> Option<(f64, f64)> {
+    info.descriptor
+        .as_ref()
+        .filter(|d| d.ascent != 0.0 || d.descent != 0.0)
+        .map(|d| (d.ascent, d.descent.abs()))
+        .or_else(|| standard14_ascent_descent(&info.base_font))
 }
 
 /// `obj`, resolved when it is a reference.

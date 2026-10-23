@@ -1,7 +1,8 @@
 use std::fmt::Write;
 
 use crate::content::Operand;
-use crate::font::{FontEncoder, encode_winansi};
+use crate::content::{ContentOp, write_content};
+use crate::font::{FontEncoder, encode_winansi, standard14_ascent_descent, standard14_widths};
 use crate::object::{IndirectRef, Number, PdfDict, PdfObject, string_syntax};
 use crate::writer::document::standard_font_dict;
 use crate::writer::encode::make_stream;
@@ -96,6 +97,8 @@ enum FieldFont {
     Dr {
         /// The `/DA` string, which selects the font.
         da: String,
+        /// The size the last `Tf` of `/DA` sets; 0 is auto size.
+        size: f64,
         /// The font's name in `/DR` and `/DA`.
         name: Vec<u8>,
         /// The `/DR` entry: a reference to the font, or the font dictionary.
@@ -120,6 +123,65 @@ impl FieldFont {
             FieldFont::Default => "/Helvetica 10 Tf",
             FieldFont::Dr { da, .. } => da,
         }
+    }
+
+    /// The font size `/DA` sets: 0 is auto size. 10 without `/DA`.
+    fn size(&self) -> f64 {
+        match self {
+            FieldFont::Default => 10.0,
+            FieldFont::Dr { size, .. } => *size,
+        }
+    }
+
+    /// The operators that select the font at `size`: [`Self::select`] as it
+    /// is when `size` is the one it sets, else with its last `Tf` set to
+    /// `size`.
+    fn select_at(&self, size: f64) -> String {
+        if size == self.size() {
+            return self.select().to_string();
+        }
+        let Ok(mut ops) = crate::content::parse_content_stream(self.select().as_bytes()) else {
+            return self.select().to_string();
+        };
+        if let Some(tf) = ops.iter_mut().rev().find(|op| op.operator == b"Tf")
+            && let Some(operand) = tf.operands.get_mut(1)
+        {
+            *operand = Operand::Real(size);
+        }
+        let ops: Vec<ContentOp> = ops;
+        String::from_utf8_lossy(&write_content(&ops))
+            .trim_end()
+            .replace('\n', " ")
+    }
+
+    /// The width of `text` in em (text space units at size 1).
+    fn width(&self, text: &str) -> Result<f64, AppearanceError> {
+        match self {
+            FieldFont::Default => {
+                let widths = standard14_widths(b"Helvetica");
+                Ok(encode_winansi(text)
+                    .iter()
+                    .map(|&code| widths[usize::from(code)])
+                    .sum::<f64>()
+                    / 1000.0)
+            }
+            FieldFont::Dr { encoder, .. } => encoder
+                .width(text)
+                .map(|w| w / 1000.0)
+                .ok_or(AppearanceError::NotEncodable),
+        }
+    }
+
+    /// The font's ascent and descent magnitude in em: its own, else pdf.js's
+    /// fallback.
+    fn ascent_descent(&self) -> (f64, f64) {
+        let known = match self {
+            FieldFont::Default => standard14_ascent_descent(b"Helvetica"),
+            FieldFont::Dr { encoder, .. } => encoder.ascent_descent(),
+        };
+        known
+            .map(|(a, d)| (a / 1000.0, d / 1000.0))
+            .unwrap_or((LINE_FACTOR - LINE_DESCENT_FACTOR, LINE_DESCENT_FACTOR))
     }
 
     /// `text` in the font's codes.
@@ -152,15 +214,19 @@ impl FieldFont {
 /// `modifier`'s document. `None` when there is no such font or it can encode
 /// nothing.
 fn dr_font(da: &str, modifier: &DocumentModifier) -> Option<FieldFont> {
-    let name = crate::content::parse_content_stream(da.as_bytes())
+    let tf = crate::content::parse_content_stream(da.as_bytes())
         .ok()?
         .into_iter()
         .rev()
-        .find(|op| op.operator == b"Tf")
-        .and_then(|op| match op.operands.into_iter().next() {
-            Some(Operand::Name(n)) => Some(n),
-            _ => None,
-        })?;
+        .find(|op| op.operator == b"Tf")?;
+    let Some(Operand::Name(name)) = tf.operands.first().cloned() else {
+        return None;
+    };
+    let size = match tf.operands.get(1) {
+        Some(Operand::Integer(i)) => *i as f64,
+        Some(Operand::Real(r)) => *r,
+        _ => 0.0,
+    };
     let resolve = |r: &IndirectRef| modifier.find_object_pub(r.obj_num).cloned();
     let direct = |o: &PdfObject| match o {
         PdfObject::Reference(r) => resolve(r),
@@ -179,6 +245,7 @@ fn dr_font(da: &str, modifier: &DocumentModifier) -> Option<FieldFont> {
     })?;
     Some(FieldFont::Dr {
         da: da.to_string(),
+        size,
         name,
         font,
         encoder,
@@ -192,6 +259,8 @@ struct WidgetLook {
     border: Option<String>,
     /// `/BS /W`, else `/Border[2]`, else 1.
     width: f64,
+    /// The widget's own `/Q`, when it is 0, 1 or 2.
+    quadding: Option<u8>,
 }
 
 impl WidgetLook {
@@ -228,6 +297,10 @@ impl WidgetLook {
             background: colour(b"BG", false),
             border: colour(b"BC", true),
             width: bs_width.or_else(border_width).unwrap_or(1.0),
+            quadding: widget
+                .get_i64(b"Q")
+                .and_then(|q| u8::try_from(q).ok())
+                .filter(|q| *q <= 2),
         }
     }
 
@@ -298,17 +371,83 @@ fn text_field_appearance(
     w: f64,
     h: f64,
 ) -> Result<String, AppearanceError> {
-    let mut buf = String::new();
-    look.rect(&mut buf, w, h);
+    let mut decoration = String::new();
+    look.rect(&mut decoration, w, h);
+    let b = look.width;
+    single_line(
+        field,
+        font,
+        look,
+        &decoration,
+        [b, b, w - 2.0 * b, h - 2.0 * b],
+    )
+}
 
-    // Text value
-    if let Some(text) = field.value_as_string()
-        && !text.is_empty()
-    {
-        let _ = write!(buf, "BT\n0 g\n{}\n", font.select());
-        let _ = writeln!(buf, "2 {} Td", Number((h - 10.0) / 2.0));
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&font.encode(&text)?));
+/// pdf.js `TextWidgetAnnotation`'s padding inside the text box: horizontal,
+/// then vertical.
+const H_PADDING: f64 = 2.0;
+const V_PADDING: f64 = 1.0;
+/// pdf.js's line height and descent per unit font size (`LINE_FACTOR`,
+/// `LINE_DESCENT_FACTOR`).
+const LINE_FACTOR: f64 = 1.35;
+const LINE_DESCENT_FACTOR: f64 = 0.35;
+
+/// A single-line field's appearance: `/Tx BMC q`, `decoration` (background,
+/// border), then the value laid out in `text_box` (`[x, y, width, height]`)
+/// and clipped to it, then `Q EMC`. A password field, or one with no value,
+/// draws no value.
+fn single_line(
+    field: &FormField,
+    font: &FieldFont,
+    look: &WidgetLook,
+    decoration: &str,
+    text_box: [f64; 4],
+) -> Result<String, AppearanceError> {
+    let mut buf = format!("/Tx BMC\nq\n{decoration}");
+    let value = field
+        .value_as_string()
+        .filter(|t| !t.is_empty() && !field.flags.has(FieldFlags::PASSWORD));
+    if let Some(text) = value {
+        let codes = font.encode(&text)?;
+        let em = font.width(&text)?;
+        let [x0, y0, bw, bh] = text_box;
+        let size = match font.size() {
+            s if s > 0.0 => Some(s),
+            _ if bw <= 2.0 * H_PADDING || bh <= 2.0 * V_PADDING => None,
+            _ => {
+                let by_height = (bh - 2.0 * V_PADDING) / LINE_FACTOR;
+                let by_width = if em > 0.0 {
+                    (bw - 2.0 * H_PADDING) / em
+                } else {
+                    f64::INFINITY
+                };
+                Some((by_height.min(by_width) * 100.0).floor() / 100.0)
+            }
+        };
+        if let Some(size) = size {
+            let width = em * size;
+            let x = match look.quadding.unwrap_or(field.quadding) {
+                1 => x0 + (bw - width) / 2.0,
+                2 => x0 + bw - width - H_PADDING,
+                _ => x0 + H_PADDING,
+            };
+            let (ascent, descent) = font.ascent_descent();
+            let y = y0 + (bh - (ascent + descent) * size) / 2.0 + descent * size;
+            let _ = write!(
+                buf,
+                "{} {} {} {} re\nW\nn\nBT\n0 g\n{}\n{} {} Td\n{} Tj\nET\n",
+                Number(x0),
+                Number(y0),
+                Number(bw),
+                Number(bh),
+                font.select_at(size),
+                Number(x),
+                Number(y),
+                string_syntax(&codes)
+            );
+        }
     }
+    buf.push_str("Q\nEMC\n");
     Ok(buf)
 }
 
@@ -385,15 +524,14 @@ fn combo_appearance(
         Number(h * 0.3),
     );
 
-    // Selected value text
-    if let Some(text) = field.value_as_string()
-        && !text.is_empty()
-    {
-        let _ = write!(buf, "BT\n0 g\n{}\n", font.select());
-        let _ = writeln!(buf, "2 {} Td", Number((h - 10.0) / 2.0));
-        let _ = write!(buf, "{} Tj\nET\n", string_syntax(&font.encode(&text)?));
-    }
-    Ok(buf)
+    let b = look.width;
+    single_line(
+        field,
+        font,
+        look,
+        &buf,
+        [b, b, w - arrow_w - 2.0 * b, h - 2.0 * b],
+    )
 }
 
 fn list_appearance(
@@ -510,6 +648,7 @@ mod tests {
             background: None,
             border: Some("0 G".to_string()),
             width: 1.0,
+            quadding: None,
         }
     }
 
@@ -537,6 +676,7 @@ mod tests {
             options: vec!["one".to_string()],
             rect: None,
             default_appearance: None,
+            quadding: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -586,6 +726,7 @@ mod tests {
                 ury: 20.0,
             }),
             default_appearance: None,
+            quadding: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -617,6 +758,7 @@ mod tests {
                 ury: 14.0,
             }),
             default_appearance: None,
+            quadding: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -647,6 +789,7 @@ mod tests {
                 ury: 14.0,
             }),
             default_appearance: None,
+            quadding: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -678,6 +821,7 @@ mod tests {
                 ury: 20.0,
             }),
             default_appearance: None,
+            quadding: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,
@@ -712,6 +856,7 @@ mod tests {
                 ury: 20.0,
             }),
             default_appearance: da.map(str::to_string),
+            quadding: 0,
             field_ref: IndirectRef {
                 obj_num: 1,
                 gen_num: 0,

@@ -84,6 +84,7 @@ fn field(field_type: FieldType, value: &str, da: Option<&str>) -> FormField {
             ury: 20.0,
         }),
         default_appearance: da.map(str::to_string),
+        quadding: 0,
         field_ref: IndirectRef {
             obj_num: 1,
             gen_num: 0,
