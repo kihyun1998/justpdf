@@ -79,7 +79,8 @@ pub fn set_field_value(
 }
 
 /// Set the `/AP` of each widget of `field` to `<< /N … >>`, drawn from
-/// `value` in the widget's own `/Rect`. A widget the generator cannot draw
+/// `value` in the widget's own `/Rect`, with the widget's own `/DA` where it
+/// has one and the field's otherwise. A widget the generator cannot draw
 /// keeps its `/AP`.
 fn redraw_widgets(modifier: &mut DocumentModifier, field: &FormField, value: &PdfObject) {
     let mut drawn = field.clone();
@@ -88,6 +89,11 @@ fn redraw_widgets(modifier: &mut DocumentModifier, field: &FormField, value: &Pd
         let Some(mut widget_dict) = dict_at(modifier, widget) else {
             continue;
         };
+        drawn.default_appearance = widget_dict
+            .get(b"DA")
+            .and_then(|da| direct(modifier, da))
+            .and_then(|da| da.as_str().map(|b| String::from_utf8_lossy(b).into_owned()))
+            .or_else(|| field.default_appearance.clone());
         drawn.rect = widget_dict
             .get(b"Rect")
             .and_then(|r| direct(modifier, r))
