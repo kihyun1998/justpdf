@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use justpdf_core::font::{Encoding, encoding_glyph_name, truetype_glyph_candidates};
+use justpdf_core::font::{
+    Encoding, cff_cid_to_gid, cff_simple_glyph, encoding_glyph_name, truetype_glyph_candidates,
+};
 use justpdf_core::ttf_parser::{self, Face, GlyphId, cff};
 use tiny_skia::{Path, PathBuilder};
 
@@ -108,11 +110,9 @@ impl<'a> GlyphSource<'a> {
                     .first()
                     .map(|gid| GlyphRef::Id(*gid))
             }
-            Self::Cff(table) => match name {
-                Some(name) => table.glyph_index_by_name(name),
-                None => table.glyph_index(code),
+            Self::Cff(table) => {
+                cff_simple_glyph(table, code, explicit_base, differences).map(GlyphRef::Id)
             }
-            .map(GlyphRef::Id),
             Self::Type1(table) => name
                 .or_else(|| table.code_to_string(code))
                 .map(|n| GlyphRef::Name(n.to_string())),
@@ -123,10 +123,7 @@ impl<'a> GlyphSource<'a> {
     /// other program.
     pub fn cff_cid_to_gid(&self) -> Option<HashMap<u16, u16>> {
         let Self::Cff(table) = self else { return None };
-        let map: HashMap<u16, u16> = (0..table.number_of_glyphs())
-            .filter_map(|gid| table.glyph_cid(GlyphId(gid)).map(|cid| (cid, gid)))
-            .collect();
-        (!map.is_empty()).then_some(map)
+        cff_cid_to_gid(table)
     }
 }
 

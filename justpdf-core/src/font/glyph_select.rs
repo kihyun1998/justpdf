@@ -1,9 +1,12 @@
 //! Character code to glyph ID for simple TrueType fonts (ISO 32000-2 §9.6.6.4).
 
+use std::collections::HashMap;
+
 use super::encoding_tables::{MAC_ROMAN_GLYPH_NAMES, STANDARD_GLYPH_NAMES, WIN_ANSI_GLYPH_NAMES};
 use super::{Encoding, glyph_name_to_unicode, winansi_char};
+use crate::object::{PdfDict, PdfObject};
 use ttf_parser::cmap::Subtable;
-use ttf_parser::{Face, GlyphId, PlatformId};
+use ttf_parser::{Face, GlyphId, PlatformId, cff};
 
 /// The glyph IDs a simple TrueType font's one-byte `code` can draw, most
 /// preferred first and without duplicates.
@@ -127,6 +130,57 @@ pub fn encoding_glyph_name(
 }
 
 /// The single character a glyph name stands for, by the Adobe Glyph List rules.
+/// The base encoding the font dictionary `font` names itself: an
+/// `/Encoding` name, or an encoding dictionary's `/BaseEncoding`. `None`
+/// otherwise, where an embedded program's built-in encoding applies.
+pub fn explicit_base_encoding(font: &PdfDict) -> Option<Encoding> {
+    match font.get(b"Encoding") {
+        Some(PdfObject::Name(name)) => Some(Encoding::from_name(name)),
+        Some(PdfObject::Dict(d)) => d.get_name(b"BaseEncoding").map(Encoding::from_name),
+        _ => None,
+    }
+}
+
+/// The glyph a simple font's `code` draws in the bare CFF program `table`:
+/// by the glyph name [`encoding_glyph_name`] gives (the `/Differences` name,
+/// else `explicit_base`'s), else through the program's built-in encoding.
+pub fn cff_simple_glyph(
+    table: &cff::Table,
+    code: u8,
+    explicit_base: Option<Encoding>,
+    differences: &[(u8, Vec<u8>)],
+) -> Option<GlyphId> {
+    match encoding_glyph_name(code, explicit_base, differences) {
+        Some(name) => table.glyph_index_by_name(name),
+        None => table.glyph_index(code),
+    }
+}
+
+/// CID to glyph ID for the CID-keyed bare CFF `table`, from its charset;
+/// `None` when no glyph has a CID (a name-keyed program).
+pub fn cff_cid_to_gid(table: &cff::Table) -> Option<HashMap<u16, u16>> {
+    let map: HashMap<u16, u16> = (0..table.number_of_glyphs())
+        .filter_map(|gid| table.glyph_cid(GlyphId(gid)).map(|cid| (cid, gid)))
+        .collect();
+    (!map.is_empty()).then_some(map)
+}
+
+/// Whether `gid` is a glyph of `table` other than `.notdef` with an outline
+/// or an advance width.
+pub fn cff_has_glyph(table: &cff::Table, gid: GlyphId) -> bool {
+    struct Discard;
+    impl ttf_parser::OutlineBuilder for Discard {
+        fn move_to(&mut self, _: f32, _: f32) {}
+        fn line_to(&mut self, _: f32, _: f32) {}
+        fn quad_to(&mut self, _: f32, _: f32, _: f32, _: f32) {}
+        fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {}
+        fn close(&mut self) {}
+    }
+    gid.0 != 0
+        && gid.0 < table.number_of_glyphs()
+        && (table.outline(gid, &mut Discard).is_ok() || table.glyph_width(gid).unwrap_or(0) > 0)
+}
+
 fn single_char(name: &str) -> Option<char> {
     let text = glyph_name_to_unicode(name.as_bytes())?;
     let mut chars = text.chars();

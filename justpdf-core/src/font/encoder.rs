@@ -3,11 +3,12 @@
 
 use std::collections::HashMap;
 
-use ttf_parser::{Face, GlyphId};
+use ttf_parser::{Face, GlyphId, cff};
 
 use super::standard14::{standard14_ascent_descent, strip_subset_prefix};
 use super::{
-    EncodingCMap, FontInfo, ToUnicodeCMap, descendant_font, parse_font_info, resolve_font_entries,
+    EncodingCMap, FontInfo, ToUnicodeCMap, cff_cid_to_gid, cff_has_glyph, cff_simple_glyph,
+    descendant_font, explicit_base_encoding, parse_font_info, resolve_font_entries,
     truetype_glyph_candidates, type0_encoding_cmap,
 };
 use crate::object::{IndirectRef, PdfDict, PdfObject};
@@ -64,13 +65,22 @@ impl FontEncoder {
             let cid_info = parse_font_info(&descendant);
             ascent_descent = ascent_descent.or_else(|| self::ascent_descent(&cid_info));
             let program = font_file2(&descendant, &mut resolve, &mut decode);
-            if subset && program.is_none() {
+            let cff_program = match program {
+                Some(_) => None,
+                None => font_file3(&descendant, &mut resolve, &mut decode),
+            };
+            if subset && program.is_none() && cff_program.is_none() {
                 return None;
             }
             let face = match &program {
                 Some(data) => Some(Face::parse(data, 0).ok()?),
                 None => None,
             };
+            let cff_table = match &cff_program {
+                Some(data) => Some(cff::Table::parse(data)?),
+                None => None,
+            };
+            let cff_gids = cff_table.as_ref().and_then(cff_cid_to_gid);
             let cid_to_gid = cid_to_gid_map(&descendant, &mut resolve, &mut decode);
             for (code, text) in to_unicode.entries() {
                 let Some(bytes) = code_bytes(&cmap, code) else {
@@ -90,17 +100,38 @@ impl FontEncoder {
                         continue;
                     }
                 }
+                if let Some(table) = &cff_table {
+                    let gid = match &cff_gids {
+                        Some(map) => u16::try_from(cid)
+                            .ok()
+                            .and_then(|cid| map.get(&cid))
+                            .copied(),
+                        None => u16::try_from(cid).ok(),
+                    };
+                    if !gid.is_some_and(|gid| cff_has_glyph(table, GlyphId(gid))) {
+                        continue;
+                    }
+                }
                 insert(Some(text), bytes, cid_info.widths.get_width(cid));
             }
         } else {
             let program = font_file2(&font, &mut resolve, &mut decode);
-            if subset && program.is_none() {
+            let cff_program = match program {
+                Some(_) => None,
+                None => font_file3(&font, &mut resolve, &mut decode),
+            };
+            if subset && program.is_none() && cff_program.is_none() {
                 return None;
             }
             let face = match &program {
                 Some(data) => Some(Face::parse(data, 0).ok()?),
                 None => None,
             };
+            let cff_table = match &cff_program {
+                Some(data) => Some(cff::Table::parse(data)?),
+                None => None,
+            };
+            let explicit_base = explicit_base_encoding(&font);
             let encoding = font.get(b"Encoding").map(|_| info.encoding);
             let symbolic = info.descriptor.as_ref().is_some_and(|d| d.is_symbolic());
             for code in 0..=255u8 {
@@ -115,6 +146,12 @@ impl FontEncoder {
                     if !candidates.first().is_some_and(|g| has_glyph(face, g.0)) {
                         continue;
                     }
+                }
+                if let Some(table) = &cff_table
+                    && !cff_simple_glyph(table, code, explicit_base, &info.differences)
+                        .is_some_and(|g| cff_has_glyph(table, g))
+                {
+                    continue;
                 }
                 let text = to_unicode
                     .as_ref()
@@ -210,6 +247,19 @@ fn font_file2(
         _ => return None,
     };
     stream_data(descriptor.get(b"FontFile2"), resolve, decode)
+}
+
+/// The decoded `/FontFile3` program of `font`'s descriptor.
+fn font_file3(
+    font: &PdfDict,
+    resolve: &mut impl FnMut(&IndirectRef) -> Option<PdfObject>,
+    decode: &mut impl FnMut(&PdfDict, &[u8]) -> Option<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    let descriptor = match direct(font.get(b"FontDescriptor"), resolve)? {
+        PdfObject::Dict(d) => d,
+        _ => return None,
+    };
+    stream_data(descriptor.get(b"FontFile3"), resolve, decode)
 }
 
 /// A CID font's `/CIDToGIDMap` stream data; `None` for `/Identity` or none.
