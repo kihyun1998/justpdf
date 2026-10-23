@@ -1443,11 +1443,18 @@ impl<'a> RenderInterpreter<'a> {
                     return Ok(()); // nested too deep
                 }
                 self.xobject_depth += 1;
+                self.state_stack.push(self.state.clone());
+                let saved_clip = self.device.clip_mask.clone();
+                self.clip_to_bbox(&dict);
                 self.with_running_stream(Some(&obj_ref), |this| {
                     this.with_stream_resources(&dict, Some(&obj_ref), |this| {
                         let _ = this.render_form_xobject(&dict, &data);
                     });
                 });
+                self.device.clip_mask = saved_clip;
+                if let Some(saved) = self.state_stack.pop() {
+                    self.state = saved;
+                }
                 self.xobject_depth -= 1;
             }
         }

@@ -17,7 +17,7 @@ After drawing the page content, draws each annotation's `/AP /N` appearance stre
   - A box with no width or height draws nothing; the guard keeps the matrix finite, and its absence is not visible in pixels, because tiny-skia drops a non-finite transform (measured by mutation).
   - Until #206 only the form's own `/Matrix` applied (measured: a highlight at `[100 500 300 520]` with Matrix `[1 0 0 1 -100 -500]` was drawn at page `(0..200, 0..20)`).
 - **Clipped to `/BBox`** in form space (`clip_to_bbox`): the BBox rectangle through `/Matrix × A × CTM`, intersected with any clip already set. The device clip mask is saved before and restored after each annotation, since popping the graphics state does not restore it (#50). Within the annotation pass a mutation that drops the restore stays green: popping clears `has_clip`, so the next annotation sets a fresh clip, and annotations are drawn last (measured by mutation).
-- Page-content `Do` is unchanged: it neither maps nor clips to `/BBox`.
+- Page-content `Do` does not map onto a `/Rect`, but since #365 it clips to `/BBox` through the same `clip_to_bbox` ([Render clipping](render-clipping.md)). An appearance is not reached through `do_xobject`, so it is clipped once.
 - The appearance form is drawn in its own `/Resources` scope, else the page's — [resource name scope](../invariant/resource-scope.md).
 - The annotation's `/OC` is not checked.
 
