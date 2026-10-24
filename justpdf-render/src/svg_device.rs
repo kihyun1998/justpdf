@@ -1350,50 +1350,10 @@ fn extract_font_family(info: &FontInfo) -> String {
 
 /// Convert decoded image data to RGBA.
 fn image_to_rgba(img: &image::DecodedImage) -> Vec<u8> {
-    let pixel_count = (img.width * img.height) as usize;
-    let mut rgba = vec![255u8; pixel_count * 4];
-
-    match img.components {
-        1 => {
-            // Grayscale
-            for i in 0..pixel_count.min(img.data.len()) {
-                let g = img.data[i];
-                rgba[i * 4] = g;
-                rgba[i * 4 + 1] = g;
-                rgba[i * 4 + 2] = g;
-            }
-        }
-        3 => {
-            // RGB
-            for i in 0..pixel_count.min(img.data.len() / 3) {
-                rgba[i * 4] = img.data[i * 3];
-                rgba[i * 4 + 1] = img.data[i * 3 + 1];
-                rgba[i * 4 + 2] = img.data[i * 3 + 2];
-            }
-        }
-        4 => {
-            // CMYK -> RGB
-            for i in 0..pixel_count.min(img.data.len() / 4) {
-                let c = img.data[i * 4] as f64 / 255.0;
-                let m = img.data[i * 4 + 1] as f64 / 255.0;
-                let y = img.data[i * 4 + 2] as f64 / 255.0;
-                let k = img.data[i * 4 + 3] as f64 / 255.0;
-                rgba[i * 4] = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
-                rgba[i * 4 + 1] = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
-                rgba[i * 4 + 2] = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
-            }
-        }
-        _ => {
-            // Fill with black
-            for i in 0..pixel_count {
-                rgba[i * 4] = 0;
-                rgba[i * 4 + 1] = 0;
-                rgba[i * 4 + 2] = 0;
-            }
-        }
-    }
-
-    rgba
+    img.to_rgb8()
+        .chunks_exact(3)
+        .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
+        .collect()
 }
 
 /// Encode RGBA data as PNG bytes (minimal encoder without external crate).

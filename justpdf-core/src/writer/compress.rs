@@ -652,37 +652,7 @@ fn to_rgb_pixels(decoded: &image::DecodedImage, target_w: u32, target_h: u32) ->
     use ::image::{DynamicImage, RgbImage, imageops::FilterType};
 
     let (src_w, src_h) = (decoded.width, decoded.height);
-    let components = decoded.components;
-
-    // Build an RgbImage from the decoded pixel data
-    let rgb_data: Vec<u8> = match components {
-        1 => {
-            // Grayscale → RGB
-            decoded.data.iter().flat_map(|&g| [g, g, g]).collect()
-        }
-        3 => {
-            // Already RGB
-            decoded.data.clone()
-        }
-        4 => {
-            // CMYK → RGB (simple conversion)
-            decoded
-                .data
-                .chunks_exact(4)
-                .flat_map(|cmyk| {
-                    let c = cmyk[0] as f32 / 255.0;
-                    let m = cmyk[1] as f32 / 255.0;
-                    let y = cmyk[2] as f32 / 255.0;
-                    let k = cmyk[3] as f32 / 255.0;
-                    let r = (255.0 * (1.0 - c) * (1.0 - k)) as u8;
-                    let g = (255.0 * (1.0 - m) * (1.0 - k)) as u8;
-                    let b = (255.0 * (1.0 - y) * (1.0 - k)) as u8;
-                    [r, g, b]
-                })
-                .collect()
-        }
-        _ => return Vec::new(),
-    };
+    let rgb_data = decoded.to_rgb8();
 
     let expected_len = (src_w * src_h * 3) as usize;
     if rgb_data.len() < expected_len {
@@ -861,7 +831,7 @@ fn convert_images_to_grayscale(
         };
 
         // Skip already grayscale
-        if info.color_space == b"DeviceGray" || info.num_components == 1 {
+        if info.color_space == b"DeviceGray" {
             continue;
         }
 
@@ -877,41 +847,18 @@ fn convert_images_to_grayscale(
         };
 
         // Convert to grayscale
-        let gray_pixels: Vec<u8> = match decoded.components {
-            3 => {
-                // RGB → Gray using luminance: 0.299R + 0.587G + 0.114B
-                decoded
-                    .data
-                    .chunks_exact(3)
-                    .map(|rgb| {
-                        let r = rgb[0] as f32;
-                        let g = rgb[1] as f32;
-                        let b = rgb[2] as f32;
-                        (0.299 * r + 0.587 * g + 0.114 * b).round() as u8
-                    })
-                    .collect()
-            }
-            4 => {
-                // CMYK → Gray
-                decoded
-                    .data
-                    .chunks_exact(4)
-                    .map(|cmyk| {
-                        let c = cmyk[0] as f32 / 255.0;
-                        let m = cmyk[1] as f32 / 255.0;
-                        let y = cmyk[2] as f32 / 255.0;
-                        let k = cmyk[3] as f32 / 255.0;
-                        let r = (1.0 - c) * (1.0 - k);
-                        let g = (1.0 - m) * (1.0 - k);
-                        let b = (1.0 - y) * (1.0 - k);
-                        ((0.299 * r + 0.587 * g + 0.114 * b) * 255.0).round() as u8
-                    })
-                    .collect()
-            }
-            _ => continue,
-        };
+        if decoded.is_gray() {
+            continue;
+        }
+        let gray_pixels: Vec<u8> = decoded
+            .to_rgb8()
+            .chunks_exact(3)
+            .map(|rgb| {
+                let [r, g, b] = [rgb[0], rgb[1], rgb[2]].map(f32::from);
+                (0.299 * r + 0.587 * g + 0.114 * b).round() as u8
+            })
+            .collect();
 
-        // Encode as JPEG grayscale
         let jpeg_bytes = match encode_jpeg_gray(&gray_pixels, decoded.width, decoded.height, 65) {
             Ok(bytes) => bytes,
             Err(_) => continue,
@@ -2343,6 +2290,8 @@ mod tests {
             bpc: 8,
             data: vec![],
             source_format: image::ImageFormat::Raw,
+            color_space: crate::color::ColorSpace::DeviceRGB,
+            decode: None,
         };
         let (w, h, scaled) = compute_target_dimensions(&decoded, None);
         assert_eq!((w, h), (1000, 500));
@@ -2358,6 +2307,8 @@ mod tests {
             bpc: 8,
             data: vec![],
             source_format: image::ImageFormat::Raw,
+            color_space: crate::color::ColorSpace::DeviceRGB,
+            decode: None,
         };
         // At 150 DPI max, max pixels = 150 * 14 = 2100
         let (w, h, scaled) = compute_target_dimensions(&decoded, Some(150.0));
@@ -4296,6 +4247,8 @@ mod tests {
             bpc: 8,
             data: vec![],
             source_format: image::ImageFormat::Raw,
+            color_space: crate::color::ColorSpace::DeviceRGB,
+            decode: None,
         };
         // Image displayed at 200x200 pt → DPI = 4000 / (200/72) = 1440
         let (w, h, scaled) =
@@ -4319,6 +4272,8 @@ mod tests {
             bpc: 8,
             data: vec![],
             source_format: image::ImageFormat::Raw,
+            color_space: crate::color::ColorSpace::DeviceRGB,
+            decode: None,
         };
         // Full page: 612x792 pt (8.5x11 in)
         let (w, h, scaled) =
@@ -4340,6 +4295,8 @@ mod tests {
             bpc: 8,
             data: vec![],
             source_format: image::ImageFormat::Raw,
+            color_space: crate::color::ColorSpace::DeviceRGB,
+            decode: None,
         };
         // 100px displayed at 100pt → DPI = 100 / (100/72) = 72
         let (w, h, scaled) =
@@ -4360,6 +4317,8 @@ mod tests {
             bpc: 8,
             data: vec![],
             source_format: image::ImageFormat::Raw,
+            color_space: crate::color::ColorSpace::DeviceRGB,
+            decode: None,
         };
         // Without CTM, fallback should match old behavior
         let (w1, h1, _) = compute_target_dimensions_with_ctm(&decoded, Some(150.0), None);
