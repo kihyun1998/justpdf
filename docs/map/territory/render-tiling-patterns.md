@@ -9,7 +9,7 @@ Resolves the pattern set by `scn`/`SCN`: a tiling pattern draws the tile and rep
 ## Design model
 - `scn`/`SCN` resolves the pattern in the current scope and puts the object (`PatternSelection`) in the graphics state. The tile is drawn in the pattern's `/Resources` scope — [resource name scope](../invariant/resource-scope.md).
 - Only path fills and strokes use the pattern. Text is not filled with the pattern (inferred).
-- The tile is drawn while recorded as a running stream, and painting the same pattern again inside the tile paints with the fill color, without the pattern. The tile is drawn without the page's soft mask — [Content stream recursion](../invariant/content-stream-recursion.md). The pattern fill or stroke that paints with the tile goes through `draw_mask`, so the page's soft mask applies there (#129; `tile_is_drawn_without_the_page_soft_mask` asserts both halves).
+- The tile is drawn while recorded as a running stream, and painting the same pattern again inside the tile paints with the fill color, without the pattern. The tile is drawn without the page's soft mask — [Content stream recursion](../invariant/content-stream-recursion.md). The tile runs through `nested_stream` (#128): an unmatched `q` in it stays in it, and the page's current path does not reach it. The pattern fill or stroke that paints with the tile goes through `draw_mask`, so the page's soft mask applies there (#129; `tile_is_drawn_without_the_page_soft_mask` asserts both halves).
 
 ## Code
 - `justpdf-render/src/resources.rs` — `select_pattern`

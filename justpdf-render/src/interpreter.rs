@@ -63,6 +63,9 @@ pub struct RenderInterpreter<'a> {
     path_builder: Option<PathBuilder>,
     /// Form XObject recursion depth limit.
     xobject_depth: u32,
+    /// The `state_stack` depth `Q` cannot pop below: that on entry to the
+    /// content stream being executed.
+    state_floor: usize,
     /// The last clip × soft mask product, with the clip and soft mask it was
     /// made from.
     combined_mask: Option<(SharedMask, SharedMask, SharedMask)>,
@@ -96,6 +99,7 @@ impl<'a> RenderInterpreter<'a> {
             page_transform,
             path_builder: None,
             xobject_depth: 0,
+            state_floor: 0,
             combined_mask: None,
             running_streams: Vec::new(),
             glyph_cache: GlyphCache::with_default_capacity(),
@@ -595,7 +599,9 @@ impl<'a> RenderInterpreter<'a> {
                 self.state_stack.push(self.state.clone());
             }
             "Q" => {
-                if let Some(s) = self.state_stack.pop() {
+                if self.state_stack.len() > self.state_floor
+                    && let Some(s) = self.state_stack.pop()
+                {
                     self.state = s;
                 }
             }
@@ -1809,35 +1815,7 @@ impl<'a> RenderInterpreter<'a> {
         if has_transparency_group {
             return self.render_transparency_group(dict, data);
         }
-
-        // Save state
-        self.state_stack.push(self.state.clone());
-
-        // Apply form matrix if present
-        if let Some(matrix_arr) = dict.get_array(b"Matrix")
-            && matrix_arr.len() >= 6
-        {
-            let m = Matrix {
-                a: matrix_arr[0].as_f64().unwrap_or(1.0),
-                b: matrix_arr[1].as_f64().unwrap_or(0.0),
-                c: matrix_arr[2].as_f64().unwrap_or(0.0),
-                d: matrix_arr[3].as_f64().unwrap_or(1.0),
-                e: matrix_arr[4].as_f64().unwrap_or(0.0),
-                f: matrix_arr[5].as_f64().unwrap_or(0.0),
-            };
-            self.state.ctm = m.concat(&self.state.ctm);
-        }
-
-        // Parse and execute the form's content stream
-        let ops = parse_content_stream(data).map_err(RenderError::Core)?;
-        self.execute_ops(&ops)?;
-
-        // Restore state
-        if let Some(s) = self.state_stack.pop() {
-            self.state = s;
-        }
-
-        Ok(())
+        self.render_form_xobject_direct(dict, data)
     }
 
     /// Render a transparency group: draw content into a temporary pixmap,
@@ -1854,6 +1832,7 @@ impl<'a> RenderInterpreter<'a> {
                 return self.render_form_xobject_direct(dict, data);
             }
         };
+        let ops = parse_content_stream(data).map_err(RenderError::Core)?;
 
         // Check if group is isolated (starts with transparent backdrop)
         let is_isolated = self
@@ -1868,82 +1847,68 @@ impl<'a> RenderInterpreter<'a> {
                 .copy_from_slice(self.device.pixmap.data());
         }
 
-        // Swap in the temp pixmap
+        // Draw the content into the temp pixmap, unclipped (it is clipped when
+        // composited) and with blend Normal, alpha 1 and no soft mask, which
+        // apply once, when the group is composited
         std::mem::swap(&mut self.device.pixmap, &mut temp_pixmap);
-
-        // Save state; the group is drawn unclipped and clipped when composited
-        self.state_stack.push(self.state.clone());
-        self.state.clip = None;
-
-        // Apply form matrix if present
-        if let Some(matrix_arr) = dict.get_array(b"Matrix")
-            && matrix_arr.len() >= 6
-        {
-            let m = Matrix {
-                a: matrix_arr[0].as_f64().unwrap_or(1.0),
-                b: matrix_arr[1].as_f64().unwrap_or(0.0),
-                c: matrix_arr[2].as_f64().unwrap_or(0.0),
-                d: matrix_arr[3].as_f64().unwrap_or(1.0),
-                e: matrix_arr[4].as_f64().unwrap_or(0.0),
-                f: matrix_arr[5].as_f64().unwrap_or(0.0),
-            };
-            self.state.ctm = m.concat(&self.state.ctm);
-        }
-
-        // Parse and execute the form's content stream into temp pixmap
-        let ops = parse_content_stream(data).map_err(RenderError::Core)?;
-        let _ = self.execute_ops(&ops);
-
-        // Restore state
-        if let Some(s) = self.state_stack.pop() {
-            self.state = s;
-        }
-
-        // Swap back: temp_pixmap now has the group content, device has original
+        self.nested_stream(|this| {
+            this.state.clip = None;
+            this.reset_transparency();
+            this.state.ctm = form_matrix(dict).concat(&this.state.ctm);
+            let _ = this.execute_ops(&ops);
+        });
         std::mem::swap(&mut self.device.pixmap, &mut temp_pixmap);
 
         // Composite the group result onto the main pixmap
         let alpha = self.state.fill_alpha as f32;
         let bm = self.blend_mode();
-        let clip = self.state.clip.as_ref().map(SharedMask::mask);
+        let mask = self.draw_mask();
         self.device.draw_pixmap(
             &temp_pixmap.as_ref(),
             Transform::identity(),
             alpha,
             bm,
-            clip,
+            mask.as_ref().map(SharedMask::mask),
         );
 
         Ok(())
     }
 
     /// Render a form xobject directly (without transparency group handling).
-    /// Used as fallback when temp pixmap creation fails.
     fn render_form_xobject_direct(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
-        self.state_stack.push(self.state.clone());
-
-        if let Some(matrix_arr) = dict.get_array(b"Matrix")
-            && matrix_arr.len() >= 6
-        {
-            let m = Matrix {
-                a: matrix_arr[0].as_f64().unwrap_or(1.0),
-                b: matrix_arr[1].as_f64().unwrap_or(0.0),
-                c: matrix_arr[2].as_f64().unwrap_or(0.0),
-                d: matrix_arr[3].as_f64().unwrap_or(1.0),
-                e: matrix_arr[4].as_f64().unwrap_or(0.0),
-                f: matrix_arr[5].as_f64().unwrap_or(0.0),
-            };
-            self.state.ctm = m.concat(&self.state.ctm);
-        }
-
         let ops = parse_content_stream(data).map_err(RenderError::Core)?;
-        self.execute_ops(&ops)?;
+        self.nested_stream(|this| {
+            this.state.ctm = form_matrix(dict).concat(&this.state.ctm);
+            this.execute_ops(&ops)
+        })
+    }
 
+    /// Runs `f` as a nested content stream: on a copy of the graphics state
+    /// with no current path, where `Q` cannot pop below the state on entry.
+    /// Afterwards the stack is unwound to its depth on entry and the caller's
+    /// state and path are restored, whatever `f` returned.
+    fn nested_stream<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let depth = self.state_stack.len();
+        self.state_stack.push(self.state.clone());
+        let floor = std::mem::replace(&mut self.state_floor, depth + 1);
+        let path = self.path_builder.take();
+        let out = f(self);
+        self.state_stack.truncate(depth + 1);
         if let Some(s) = self.state_stack.pop() {
             self.state = s;
         }
+        self.state_floor = floor;
+        self.path_builder = path;
+        out
+    }
 
-        Ok(())
+    /// Sets blend mode Normal, alpha 1 and no soft mask, the state a soft mask
+    /// form or a transparency group starts from (ISO 32000-2 §11.6.6).
+    fn reset_transparency(&mut self) {
+        self.state.blend_mode = PdfBlendMode::Normal;
+        self.state.fill_alpha = 1.0;
+        self.state.stroke_alpha = 1.0;
+        self.state.soft_mask = None;
     }
 
     /// The mask one draw is painted through: the clip, the soft mask, or their
@@ -2117,34 +2082,16 @@ impl<'a> RenderInterpreter<'a> {
         // Swap in the mask pixmap for rendering
         std::mem::swap(&mut self.device.pixmap, &mut mask_pixmap);
 
-        // Save and reset state for mask rendering, unclipped
-        self.state_stack.push(self.state.clone());
-        self.state.clip = None;
-
-        // Apply form matrix if present
-        if let Some(matrix_arr) = form_dict.get_array(b"Matrix")
-            && matrix_arr.len() >= 6
-        {
-            let m = Matrix {
-                a: matrix_arr[0].as_f64().unwrap_or(1.0),
-                b: matrix_arr[1].as_f64().unwrap_or(0.0),
-                c: matrix_arr[2].as_f64().unwrap_or(0.0),
-                d: matrix_arr[3].as_f64().unwrap_or(1.0),
-                e: matrix_arr[4].as_f64().unwrap_or(0.0),
-                f: matrix_arr[5].as_f64().unwrap_or(0.0),
-            };
-            self.state.ctm = m.concat(&self.state.ctm);
-        }
-
-        // Render the mask form
-        if let Ok(ops) = parse_content_stream(form_data) {
-            let _ = self.execute_ops(&ops);
-        }
-
-        // Restore state
-        if let Some(s) = self.state_stack.pop() {
-            self.state = s;
-        }
+        // Render the mask form unclipped, with blend Normal, alpha 1 and no
+        // soft mask
+        self.nested_stream(|this| {
+            this.state.clip = None;
+            this.reset_transparency();
+            this.state.ctm = form_matrix(form_dict).concat(&this.state.ctm);
+            if let Ok(ops) = parse_content_stream(form_data) {
+                let _ = this.execute_ops(&ops);
+            }
+        });
 
         // Swap back
         std::mem::swap(&mut self.device.pixmap, &mut mask_pixmap);
@@ -2258,27 +2205,19 @@ impl<'a> RenderInterpreter<'a> {
         // Swap in the cell pixmap
         std::mem::swap(&mut self.device.pixmap, &mut cell_pixmap);
 
-        // Save state for pattern rendering
-        self.state_stack.push(self.state.clone());
+        // Render the pattern content stream into the cell, without the page's
+        // clip and soft mask
         let saved_page_transform = self.page_transform;
-
-        // Set up state for rendering into the cell, without the page's clip
-        // and soft mask
-        self.state.ctm = Matrix::identity();
-        self.state.clip = None;
-        self.state.soft_mask = None;
         self.page_transform = cell_transform;
-
-        // Render the pattern content stream
-        if let Ok(ops) = parse_content_stream(pattern_data) {
-            let _ = self.execute_ops(&ops);
-        }
-
-        // Restore state
+        self.nested_stream(|this| {
+            this.state.ctm = Matrix::identity();
+            this.state.clip = None;
+            this.state.soft_mask = None;
+            if let Ok(ops) = parse_content_stream(pattern_data) {
+                let _ = this.execute_ops(&ops);
+            }
+        });
         self.page_transform = saved_page_transform;
-        if let Some(s) = self.state_stack.pop() {
-            self.state = s;
-        }
 
         // Swap back
         std::mem::swap(&mut self.device.pixmap, &mut cell_pixmap);
