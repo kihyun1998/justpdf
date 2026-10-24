@@ -10,6 +10,7 @@ use justpdf_core::font::{
     Encoding, EncodingCMap, FontInfo, ToUnicodeCMap, descendant_font, parse_font_info,
     resolve_font_entries, type0_encoding_cmap,
 };
+use justpdf_core::function::PdfFunction;
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::ocg::{self, OCConfig};
@@ -2042,6 +2043,11 @@ impl<'a> RenderInterpreter<'a> {
             PdfObject::Stream { dict, data } => (dict, data),
             _ => return Ok(()),
         };
+        let backdrop = match subtype {
+            SoftMaskSubtype::Luminosity => self.mask_backdrop(&smask_dict, &form_dict),
+            SoftMaskSubtype::Alpha => [0.0; 3],
+        };
+        let transfer = self.transfer_table(&smask_dict);
 
         self.with_running_stream(form_ref.as_ref(), |this| {
             let form_data = match this.doc.decode_stream(&form_dict, &form_data) {
@@ -2049,10 +2055,65 @@ impl<'a> RenderInterpreter<'a> {
                 Err(_) => return Ok(()),
             };
             this.with_stream_resources(&form_dict, form_ref.as_ref(), |this| {
-                this.render_soft_mask(subtype, &form_dict, &form_data)
+                this.render_soft_mask(subtype, &form_dict, &form_data, backdrop, transfer)
             })
         })
         .unwrap_or(Ok(()))
+    }
+
+    /// `obj`, through an indirect reference when it is one.
+    fn resolved(&self, obj: &PdfObject) -> Option<PdfObject> {
+        match obj {
+            PdfObject::Reference(r) => self.doc.resolve(r).ok(),
+            other => Some(other.clone()),
+        }
+    }
+
+    /// The RGB backdrop a Luminosity soft mask's group is composited over:
+    /// the soft-mask dictionary's `/BC` in the group's `/CS`, black without
+    /// one. A group colour space whose colours cannot be converted here
+    /// (ICCBased, whose profile is not loaded, or an unknown one) is taken
+    /// from the number of `/BC` components: gray, RGB or CMYK.
+    fn mask_backdrop(&self, smask: &PdfDict, form: &PdfDict) -> [f64; 3] {
+        let Some(PdfObject::Array(bc)) = smask.get(b"BC").and_then(|o| self.resolved(o)) else {
+            return [0.0; 3];
+        };
+        let components: Vec<f64> = bc.iter().filter_map(PdfObject::as_f64).collect();
+        let group_cs = self
+            .dict_entry(form, b"Group")
+            .and_then(|group| group.get(b"CS").and_then(|cs| self.resolved(cs)))
+            .map(|cs| ColorSpace::from_pdf_object(&cs));
+        let cs = match group_cs {
+            Some(
+                cs @ (ColorSpace::DeviceGray
+                | ColorSpace::DeviceRGB
+                | ColorSpace::DeviceCMYK
+                | ColorSpace::CalGray { .. }
+                | ColorSpace::CalRGB { .. }),
+            ) => cs,
+            _ => match components.len() {
+                1 => ColorSpace::DeviceGray,
+                3 => ColorSpace::DeviceRGB,
+                4 => ColorSpace::DeviceCMYK,
+                _ => return [0.0; 3],
+            },
+        };
+        PdfColor { components }.to_rgb(&cs)
+    }
+
+    /// The soft-mask dictionary's `/TR` as a table from mask value to mask
+    /// value. `None` for `Identity`, no `/TR`, and a function that does not
+    /// parse.
+    fn transfer_table(&self, smask: &PdfDict) -> Option<[u8; 256]> {
+        let obj = self.resolved(smask.get(b"TR")?)?;
+        let function = PdfFunction::parse(&obj)?;
+        let mut table = [0u8; 256];
+        for (i, out) in table.iter_mut().enumerate() {
+            let v = i as f64 / 255.0;
+            let mapped = function.evaluate(&[v]).first().copied().unwrap_or(v);
+            *out = (mapped.clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+        Some(table)
     }
 
     /// Render a soft mask form into a mask and install it as the current
@@ -2062,6 +2123,8 @@ impl<'a> RenderInterpreter<'a> {
         subtype: SoftMaskSubtype,
         form_dict: &PdfDict,
         form_data: &[u8],
+        backdrop: [f64; 3],
+        transfer: Option<[u8; 256]>,
     ) -> Result<()> {
         let w = self.device.pixmap.width();
         let h = self.device.pixmap.height();
@@ -2072,11 +2135,11 @@ impl<'a> RenderInterpreter<'a> {
             None => return Ok(()),
         };
 
-        // For luminosity masks, initialize to white background if /BC is specified
+        // A luminosity mask's group is composited over its backdrop colour
         if subtype == SoftMaskSubtype::Luminosity {
-            // Default backdrop: black (which means mask = 0, fully transparent)
-            // Some PDFs specify /BC (backdrop color) but we use black as default
-            mask_pixmap.fill(tiny_skia::Color::BLACK);
+            let [r, g, b] = backdrop.map(|c| c.clamp(0.0, 1.0) as f32);
+            mask_pixmap
+                .fill(tiny_skia::Color::from_rgba(r, g, b, 1.0).unwrap_or(tiny_skia::Color::BLACK));
         }
 
         // Swap in the mask pixmap for rendering
@@ -2097,7 +2160,12 @@ impl<'a> RenderInterpreter<'a> {
         std::mem::swap(&mut self.device.pixmap, &mut mask_pixmap);
 
         // Convert the rendered mask pixmap to a tiny_skia::Mask
-        if let Some(mask) = self.pixmap_to_mask(&mask_pixmap, subtype) {
+        if let Some(mut mask) = self.pixmap_to_mask(&mask_pixmap, subtype) {
+            if let Some(table) = transfer {
+                for v in mask.data_mut() {
+                    *v = table[*v as usize];
+                }
+            }
             self.state.soft_mask = Some(SoftMask {
                 mask: SharedMask::new(mask),
                 subtype,

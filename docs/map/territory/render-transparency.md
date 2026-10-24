@@ -10,7 +10,9 @@ Applies the alpha, blend mode and soft mask from an ExtGState (`gs`), and draws 
 - Soft masks are Luminosity and Alpha only. Any other subtype returns early.
 - The mask is built by drawing the `/G` form the moment `gs` is met (MuPDF defers it until painting). If `/G` is already running, applying that `/SMask` is skipped altogether — [Content stream recursion](../invariant/content-stream-recursion.md).
 - The `/G` form is drawn in its own `/Resources` scope, else the scope at the `gs` — [resource name scope](../invariant/resource-scope.md).
-- `/BC` (backdrop color) is ignored and black is used.
+- **A Luminosity mask's group is composited over `/BC`**, given in the group's `/CS`, black without one; an Alpha mask ignores it (ISO 32000-1 Table 144, read raw, #374). The mask pixmap is filled with the backdrop before `/G` runs, so it shows where `/G` paints nothing, including outside `/G`'s `/BBox` (MuPDF master `begin_softmask` uses an unbounded area for luminosity masks, read raw). `mask_backdrop` converts it with `Color::to_rgb` for the device and Cal spaces. For an ICCBased or unknown group space the space is taken from the number of components (1, 3, 4: gray, RGB, CMYK), because `ColorSpace::from_pdf_object` never loads an ICC profile, and `to_rgb` would give black (inferred).
+- **`/TR` maps the mask values**, for both subtypes, clamped to 0..1 (Table 144). `transfer_table` parses it with `justpdf_core::function::PdfFunction` into a 256-entry table applied after `pixmap_to_mask`. `Identity`, no `/TR`, and a function that does not parse (Type 0, and a filtered Type 4 stream, whose bytes are parsed undecoded, #47) leave the values as they are. Measured by mutation: a check that skipped filtered streams before parsing changed no test, because the undecoded bytes do not parse, so it was removed.
+  - Until #374 both were ignored (measured 2026-10-24 on master, a red full-page fill, centre pixel): `/BC [1]` with an empty `/G` gave white instead of red, and an inverting `/TR` over a white `/G` gave red instead of white. Pinned by `tests/render_soft_mask_dict.rs`.
 - **The soft mask is a graphics-state parameter apart from the clip** (ISO 32000-1 Table 58, `SMask`: setting it replaces the old value rather than intersecting, unlike the clip; read raw, #50). `SoftMask::mask` is a `SharedMask`, so `q` shares it. Every painting path draws through `draw_mask` (clip × soft mask, never stored in the graphics state), so the mask ends with its `Q` or `/SMask /None`, and each draw under it is masked once. The paths: solid fills and strokes, pattern fills and strokes, `sh`, glyph fills (outlines and the placeholder rectangle), stencil masks (`render_image_mask`), and image XObjects (#129).
   - Until #50 each masked draw multiplied the soft mask into the device clip and never took it out (measured: the mask applied after its `Q` to the end of the page, and two fills under a uniform 0.5 mask came out (128,128,255) and (192,192,255)).
   - **An image XObject with its own `/SMask` or `/Mask` is drawn with the clip only**: "Either form of mask in the image dictionary shall override the current soft mask in the graphics state" (ISO 32000-1 §11.6.4.3, read raw, #129). Until #129 such an image was masked twice (measured: an opaque red image with an all-255 `/SMask`, under a half-white soft mask, drew white on the masked-out half).
@@ -25,7 +27,8 @@ Applies the alpha, blend mode and soft mask from an ExtGState (`gs`), and draws 
 - The ExtGState's `/Font` is ignored (text extraction does the same).
 
 ## Code
-- `justpdf-render/src/interpreter.rs` — `render_form_xobject`, `render_transparency_group`, `render_form_xobject_direct`, `apply_extgstate`, `apply_soft_mask`, `render_soft_mask`, `pixmap_to_mask`, `draw_mask`, `combined_mask`, `dict_entry`, `nested_stream`, `reset_transparency`
+- `justpdf-render/src/interpreter.rs` — `render_form_xobject`, `render_transparency_group`, `render_form_xobject_direct`, `apply_extgstate`, `apply_soft_mask`, `render_soft_mask`, `pixmap_to_mask`, `draw_mask`, `combined_mask`, `dict_entry`, `nested_stream`, `reset_transparency`, `mask_backdrop`, `transfer_table`
+- `justpdf-render/tests/render_soft_mask_dict.rs` — `/BC` and `/TR`
 - `justpdf-render/src/graphics_state.rs` — `SoftMask`, `PdfBlendMode`
 - `justpdf-render/tests/render_soft_mask_paths.rs` — the soft mask on every painting path, the image's own mask overriding it, and indirect `/SMask` and `/Group`
 
@@ -42,4 +45,4 @@ Applies the alpha, blend mode and soft mask from an ExtGState (`gs`), and draws 
 - [Render images](render-images.md) — SMask.
 
 ## Known holes / open
-- `/BC` (backdrop colour; black is used), `/TR` (transfer function), and the group's `/K` and `/CS` are not read at all (inferred). Tracked: #374 (`/BC`, `/TR`), #375 (`/K`, `/CS`)
+- The group's `/K` (knockout) and `/CS` (blending colour space) are not read (measured for `/K`, 2026-10-24). Tracked: #375
