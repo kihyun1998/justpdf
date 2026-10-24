@@ -13,6 +13,7 @@ Draws image XObjects, image masks, SMasks, explicit masks and inline images onto
 - Image XObjects, image masks, SMasks and explicit `/Mask` streams reach `decode_image` as their **raw** stream bytes, decoded once there (#229). Until #229 the renderer decoded them with `decode_stream` first: a Flate image drew nothing (the second decode failed and `do_xobject` dropped the error; measured 2026-09-30 and 2026-10-06, 0 red pixels against MuPDF's 10000), a Flate SMask or `/Mask` dropped out and the image drew opaque (a red image under an all-0 Flate SMask drew 10000 red pixels, MuPDF 0), and a `[/FlateDecode /DCTDecode]` image drew only because that pre-decode inflated it. Pinned by `tests/render_images.rs`.
 - The explicit-mask test asserts only that the masked and unmasked halves differ, not which half is painted: the polarity was not compared with a reference.
 - **Inline images are not drawn**: the body of `render_inline_image` is only `// TODO` and `Ok(())` (measured 2026-10-06: an inline 2×2 RGB image and an inline `/IM true` mask drew 0 pixels; MuPDF drew both).
+- An image XObject with its own `/SMask` or `/Mask` is drawn with the clip only, without the graphics state's soft mask; other images and stencil masks (`render_image_mask`) draw through `draw_mask` (ISO 32000-1 §11.6.4.3, #129) — [Render transparency](render-transparency.md).
 
 ## Code
 - `justpdf-render/src/interpreter.rs` — `do_xobject`, `resolve_xobject`, `render_image`, `render_image_mask`, `apply_image_smask`, `apply_image_explicit_mask`, `render_inline_image`, `image_to_rgba`

@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -64,6 +63,9 @@ pub struct RenderInterpreter<'a> {
     path_builder: Option<PathBuilder>,
     /// Form XObject recursion depth limit.
     xobject_depth: u32,
+    /// The last clip × soft mask product, with the clip and soft mask it was
+    /// made from.
+    combined_mask: Option<(SharedMask, SharedMask, SharedMask)>,
     /// Content streams being executed (Form XObjects, tiling patterns, soft
     /// mask forms), outermost first.
     running_streams: Vec<IndirectRef>,
@@ -94,6 +96,7 @@ impl<'a> RenderInterpreter<'a> {
             page_transform,
             path_builder: None,
             xobject_depth: 0,
+            combined_mask: None,
             running_streams: Vec::new(),
             glyph_cache: GlyphCache::with_default_capacity(),
             oc_config,
@@ -1073,9 +1076,15 @@ impl<'a> RenderInterpreter<'a> {
             let transform = self.effective_transform();
             let color = self.state.fill_color_rgba();
             let bm = self.blend_mode();
-            let mask = draw_mask(&self.state);
-            self.device
-                .fill_path(&path, rule, transform, color, bm, mask.as_deref());
+            let mask = self.draw_mask();
+            self.device.fill_path(
+                &path,
+                rule,
+                transform,
+                color,
+                bm,
+                mask.as_ref().map(SharedMask::mask),
+            );
         }
     }
 
@@ -1090,9 +1099,15 @@ impl<'a> RenderInterpreter<'a> {
                 let transform = self.effective_transform();
                 let color = self.state.fill_color_rgba();
                 let bm = self.blend_mode();
-                let mask = draw_mask(&self.state);
-                self.device
-                    .fill_path(&path, rule, transform, color, bm, mask.as_deref());
+                let mask = self.draw_mask();
+                self.device.fill_path(
+                    &path,
+                    rule,
+                    transform,
+                    color,
+                    bm,
+                    mask.as_ref().map(SharedMask::mask),
+                );
             }
         }
     }
@@ -1108,9 +1123,15 @@ impl<'a> RenderInterpreter<'a> {
             let transform = self.effective_transform();
             let color = self.state.stroke_color_rgba();
             let bm = self.blend_mode();
-            let mask = draw_mask(&self.state);
-            self.device
-                .stroke_path(&path, transform, color, &self.state, bm, mask.as_deref());
+            let mask = self.draw_mask();
+            self.device.stroke_path(
+                &path,
+                transform,
+                color,
+                &self.state,
+                bm,
+                mask.as_ref().map(SharedMask::mask),
+            );
         }
     }
 
@@ -1294,9 +1315,15 @@ impl<'a> RenderInterpreter<'a> {
                     let transform = text_rendering_matrix.to_skia();
                     let color = self.state.fill_color_rgba();
                     let bm = self.blend_mode();
-                    let clip = self.state.clip.as_ref().map(SharedMask::mask);
-                    self.device
-                        .fill_path(&path, FillRule::Winding, transform, color, bm, clip);
+                    let mask = self.draw_mask();
+                    self.device.fill_path(
+                        &path,
+                        FillRule::Winding,
+                        transform,
+                        color,
+                        bm,
+                        mask.as_ref().map(SharedMask::mask),
+                    );
                     return Ok(());
                 }
             } else {
@@ -1327,9 +1354,15 @@ impl<'a> RenderInterpreter<'a> {
             let transform = text_rendering_matrix.to_skia();
             let color = self.state.fill_color_rgba();
             let bm = self.blend_mode();
-            let clip = self.state.clip.as_ref().map(SharedMask::mask);
-            self.device
-                .fill_path(&path, FillRule::Winding, transform, color, bm, clip);
+            let mask = self.draw_mask();
+            self.device.fill_path(
+                &path,
+                FillRule::Winding,
+                transform,
+                color,
+                bm,
+                mask.as_ref().map(SharedMask::mask),
+            );
         }
 
         Ok(())
@@ -1514,13 +1547,17 @@ impl<'a> RenderInterpreter<'a> {
             .concat(&self.page_transform);
 
         let bm = self.blend_mode();
-        let mask = draw_mask(&self.state);
+        let mask = if dict.get(b"SMask").is_some() || dict.get(b"Mask").is_some() {
+            self.state.clip.clone()
+        } else {
+            self.draw_mask()
+        };
         self.device.draw_image(
             &img_pixmap.as_ref(),
             full_transform.to_skia(),
             self.state.fill_alpha as f32,
             bm,
-            mask.as_deref(),
+            mask.as_ref().map(SharedMask::mask),
         );
 
         Ok(())
@@ -1602,13 +1639,13 @@ impl<'a> RenderInterpreter<'a> {
             .concat(&self.page_transform);
 
         let bm = self.blend_mode();
-        let clip = self.state.clip.as_ref().map(SharedMask::mask);
+        let mask = self.draw_mask();
         self.device.draw_image(
             &img_pixmap.as_ref(),
             full_transform.to_skia(),
             self.state.fill_alpha as f32,
             bm,
-            clip,
+            mask.as_ref().map(SharedMask::mask),
         );
 
         Ok(())
@@ -1750,13 +1787,13 @@ impl<'a> RenderInterpreter<'a> {
             resolved_dict.insert(b"Function".to_vec(), func_obj);
         }
 
-        let clip = self.state.clip.as_ref().map(SharedMask::mask);
+        let mask = self.draw_mask();
         crate::shading::render_shading(
             &mut self.device.pixmap,
             &resolved_dict,
             &self.state.ctm,
             &self.page_transform,
-            clip,
+            mask.as_ref().map(SharedMask::mask),
             stream_data.as_deref(),
         );
 
@@ -1765,14 +1802,9 @@ impl<'a> RenderInterpreter<'a> {
 
     fn render_form_xobject(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
         // Check if this form has a transparency group
-        let has_transparency_group = dict
-            .get(b"Group")
-            .and_then(|o| match o {
-                PdfObject::Dict(d) => Some(d),
-                _ => None,
-            })
-            .map(|group| group.get_name(b"S") == Some(b"Transparency"))
-            .unwrap_or(false);
+        let has_transparency_group = self
+            .dict_entry(dict, b"Group")
+            .is_some_and(|group| group.get_name(b"S") == Some(b"Transparency"));
 
         if has_transparency_group {
             return self.render_transparency_group(dict, data);
@@ -1824,14 +1856,9 @@ impl<'a> RenderInterpreter<'a> {
         };
 
         // Check if group is isolated (starts with transparent backdrop)
-        let is_isolated = dict
-            .get(b"Group")
-            .and_then(|o| match o {
-                PdfObject::Dict(d) => Some(d),
-                _ => None,
-            })
-            .and_then(|group| group.get(b"I"))
-            .and_then(|o| o.as_bool())
+        let is_isolated = self
+            .dict_entry(dict, b"Group")
+            .and_then(|group| group.get(b"I").and_then(|o| o.as_bool()))
             .unwrap_or(false);
 
         // If not isolated, copy the current pixmap as backdrop
@@ -1919,6 +1946,46 @@ impl<'a> RenderInterpreter<'a> {
         Ok(())
     }
 
+    /// The mask one draw is painted through: the clip, the soft mask, or their
+    /// product when both are set. It is never stored in the graphics state,
+    /// so the soft mask does not enter the clip. The product is kept for the
+    /// next draw under the same clip and soft mask.
+    fn draw_mask(&mut self) -> Option<SharedMask> {
+        let clip = self.state.clip.clone();
+        let Some(soft) = self.state.soft_mask.as_ref().map(|s| s.mask.clone()) else {
+            return clip;
+        };
+        let Some(clip) = clip else {
+            return Some(soft);
+        };
+        if let Some((c, s, product)) = &self.combined_mask
+            && c.ptr_eq(&clip)
+            && s.ptr_eq(&soft)
+        {
+            return Some(product.clone());
+        }
+        let mut combined = clip.mask().clone();
+        for (c, m) in combined.data_mut().iter_mut().zip(soft.mask().data()) {
+            *c = ((*c as u16 * *m as u16) / 255) as u8;
+        }
+        let product = SharedMask::new(combined);
+        self.combined_mask = Some((clip, soft, product.clone()));
+        Some(product)
+    }
+
+    /// `dict[key]` as a dictionary, through an indirect reference when it is
+    /// one.
+    fn dict_entry(&self, dict: &PdfDict, key: &[u8]) -> Option<PdfDict> {
+        match dict.get(key)? {
+            PdfObject::Dict(d) => Some(d.clone()),
+            PdfObject::Reference(r) => match self.doc.resolve(r).ok()? {
+                PdfObject::Dict(d) => Some(d),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn apply_extgstate(&mut self, name: &[u8]) -> Result<()> {
         let gs_obj = match self.resources.lookup(self.doc, b"ExtGState", name)? {
             Some(found) => found.object,
@@ -1972,10 +2039,12 @@ impl<'a> RenderInterpreter<'a> {
                 Some(PdfObject::Name(n)) if n == b"None" => {
                     self.state.soft_mask = None;
                 }
-                Some(PdfObject::Dict(smask_dict)) => {
-                    let _ = self.apply_soft_mask(smask_dict.clone());
+                Some(_) => {
+                    if let Some(smask_dict) = self.dict_entry(gs_dict, b"SMask") {
+                        let _ = self.apply_soft_mask(smask_dict);
+                    }
                 }
-                _ => {}
+                None => {}
             }
         }
 
@@ -2228,6 +2297,7 @@ impl<'a> RenderInterpreter<'a> {
         if let Ok(Some(pattern_pixmap)) = self.render_pattern(&pattern) {
             let transform = self.effective_transform();
             let bm = self.blend_mode();
+            let mask = self.draw_mask();
             self.device.fill_path_with_pattern(
                 path,
                 rule,
@@ -2235,7 +2305,7 @@ impl<'a> RenderInterpreter<'a> {
                 &pattern_pixmap.as_ref(),
                 Transform::identity(),
                 bm,
-                self.state.clip.as_ref().map(SharedMask::mask),
+                mask.as_ref().map(SharedMask::mask),
             );
             true
         } else {
@@ -2254,6 +2324,7 @@ impl<'a> RenderInterpreter<'a> {
         if let Ok(Some(pattern_pixmap)) = self.render_pattern(&pattern) {
             let transform = self.effective_transform();
             let bm = self.blend_mode();
+            let mask = self.draw_mask();
             self.device.stroke_path_with_pattern(
                 path,
                 transform,
@@ -2261,7 +2332,7 @@ impl<'a> RenderInterpreter<'a> {
                 &pattern_pixmap.as_ref(),
                 Transform::identity(),
                 bm,
-                self.state.clip.as_ref().map(SharedMask::mask),
+                mask.as_ref().map(SharedMask::mask),
             );
             true
         } else {
@@ -2403,24 +2474,6 @@ struct Appearance {
     obj_ref: Option<IndirectRef>,
     dict: PdfDict,
     data: Vec<u8>,
-}
-
-/// The mask one draw is painted through: the clip, the soft mask, or their
-/// product when both are set. It is never stored, so the soft mask does not
-/// enter the clip.
-fn draw_mask(state: &GraphicsState) -> Option<Cow<'_, Mask>> {
-    let clip = state.clip.as_ref().map(SharedMask::mask);
-    let Some(soft) = state.soft_mask.as_ref().map(|s| s.mask.mask()) else {
-        return clip.map(Cow::Borrowed);
-    };
-    let Some(clip) = clip else {
-        return Some(Cow::Borrowed(soft));
-    };
-    let mut combined = clip.clone();
-    for (c, m) in combined.data_mut().iter_mut().zip(soft.data()) {
-        *c = ((*c as u16 * *m as u16) / 255) as u8;
-    }
-    Some(Cow::Owned(combined))
 }
 
 /// `[a b c d e f]` as a [`Matrix`].

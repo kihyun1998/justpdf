@@ -9,7 +9,7 @@ Resolves the pattern set by `scn`/`SCN`: a tiling pattern draws the tile and rep
 ## Design model
 - `scn`/`SCN` resolves the pattern in the current scope and puts the object (`PatternSelection`) in the graphics state. The tile is drawn in the pattern's `/Resources` scope — [resource name scope](../invariant/resource-scope.md).
 - Only path fills and strokes use the pattern. Text is not filled with the pattern (inferred).
-- The tile is drawn while recorded as a running stream, and painting the same pattern again inside the tile paints with the fill color, without the pattern. The tile is drawn without the page's soft mask — [Content stream recursion](../invariant/content-stream-recursion.md).
+- The tile is drawn while recorded as a running stream, and painting the same pattern again inside the tile paints with the fill color, without the pattern. The tile is drawn without the page's soft mask — [Content stream recursion](../invariant/content-stream-recursion.md). The pattern fill or stroke that paints with the tile goes through `draw_mask`, so the page's soft mask applies there (#129; `tile_is_drawn_without_the_page_soft_mask` asserts both halves).
 
 ## Code
 - `justpdf-render/src/resources.rs` — `select_pattern`
@@ -30,4 +30,3 @@ Resolves the pattern set by `scn`/`SCN`: a tiling pattern draws the tile and rep
 
 ## Known holes / open
 - The cell size is `(step * scale).ceil().max(1.0).min(2048.0)`: a NaN step gives a 1-pixel cell. `f64::clamp` would pass NaN through, cast it to 0 and make `Pixmap::new` fail, so clippy's `manual_clamp` is allowed there (inferred from the code).
-- Filling or stroking with a pattern on the page (`try_fill_with_pattern`, `try_stroke_with_pattern`) does not apply the soft mask — only solid fills go through `apply_soft_mask_to_device` (observed 2026-09-29 while writing `tests/render_recursion.rs`). Tracked: #129
