@@ -105,6 +105,11 @@ fn tile_is_drawn_without_the_page_soft_mask() {
         ],
     );
     assert_eq!(rgb(&doc, 52, 7), RED);
+    assert_eq!(
+        rgb(&doc, 2, 7),
+        WHITE,
+        "the page's soft mask applies to the pattern fill"
+    );
 }
 
 /// The soft mask form applies the ExtGState that installs it; the inner

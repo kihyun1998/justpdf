@@ -28,6 +28,11 @@ impl SharedMask {
     pub fn make_mut(&mut self) -> &mut Mask {
         Arc::make_mut(&mut self.0)
     }
+
+    /// Whether `self` and `other` share one mask.
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 impl std::fmt::Debug for SharedMask {
