@@ -42,4 +42,4 @@ Applies the alpha, blend mode and soft mask from an ExtGState (`gs`), and draws 
 
 ## Known holes / open
 - The soft mask `/G` and transparency group forms inherit the caller's `ca`/`CA`, blend and soft mask. Tracked: #128
-- `/BC` (backdrop colour; black is used), `/TR` (transfer function), and the group's `/K` and `/CS` are not read at all (inferred).
+- `/BC` (backdrop colour; black is used), `/TR` (transfer function), and the group's `/K` and `/CS` are not read at all (inferred). Tracked: #374
