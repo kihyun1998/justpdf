@@ -13,6 +13,7 @@
 - `d0`/`d1` are no-ops — [Type3 fonts](type3-fonts.md) are not supported.
 - `v` (Bézier) is approximated without tracking the current point ("lossy without current point tracking").
 - The color operators (`cs`/`CS`/`sc`/`scn`…) use the local `cs_from_name` (Device Gray/RGB/CMYK only, everything else is RGB) — the resource's color space, ICC, Indexed and Separation are not interpreted.
+- Nested content streams run through `nested_stream`, which floors the graphics-state stack and restores the caller's state and path ([Content stream recursion](../invariant/content-stream-recursion.md), #128).
 - Other content streams (Form XObject, tile, soft mask `/G`) are entered through `with_running_stream`: a stream met again while it is running is skipped — [Content stream recursion](../invariant/content-stream-recursion.md). Separately, a Form XObject is skipped past depth 10.
 - The device color operators (`g`/`rg`/`k`, `G`/`RG`/`K`) clear that side's pattern selection.
 - Page content is assembled by its own function — [Page content assembly](../invariant/page-content-assembly.md).
@@ -45,4 +46,3 @@
 
 ## Known holes / open
 - `interpreter.rs` and `graphics_state.rs` have no unit tests. Render tests that read pixels are `tests/render_recursion.rs` (recursion paths) and `tests/render_resources.rs` (resource name scope); the other integration tests check only the PNG magic bytes and length.
-- Nested stream boundaries have no floor on the graphics state stack, so an unbalanced `q`/`Q` crosses the boundary, and a path left after filling goes into the tile. Tracked: #128

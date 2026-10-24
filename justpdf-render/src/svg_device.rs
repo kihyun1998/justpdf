@@ -33,6 +33,9 @@ pub struct SvgRenderer<'a> {
     doc: &'a PdfDocument,
     state: GraphicsState,
     state_stack: Vec<GraphicsState>,
+    /// The `state_stack` depth `Q` cannot pop below: that on entry to the
+    /// content stream being executed.
+    state_floor: usize,
     fonts: HashMap<FontKey, ResolvedFont>,
     /// The `/Resources` names resolve in.
     resources: ResourceScopes,
@@ -70,6 +73,7 @@ impl<'a> SvgRenderer<'a> {
             doc,
             state: GraphicsState::default(),
             state_stack: Vec::new(),
+            state_floor: 0,
             fonts: HashMap::new(),
             resources: ResourceScopes::default(),
             page_transform,
@@ -282,11 +286,13 @@ impl<'a> SvgRenderer<'a> {
                 self.clip_id_stack.push(self.active_clip_id.clone());
             }
             "Q" => {
-                if let Some(s) = self.state_stack.pop() {
-                    self.state = s;
-                }
-                if let Some(clip_id) = self.clip_id_stack.pop() {
-                    self.active_clip_id = clip_id;
+                if self.state_stack.len() > self.state_floor {
+                    if let Some(s) = self.state_stack.pop() {
+                        self.state = s;
+                    }
+                    if let Some(clip_id) = self.clip_id_stack.pop() {
+                        self.active_clip_id = clip_id;
+                    }
                 }
             }
             "cm" => {
@@ -1183,10 +1189,15 @@ impl<'a> SvgRenderer<'a> {
     }
 
     fn render_form_xobject(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
+        let ops = parse_content_stream(data).map_err(RenderError::Core)?;
+
+        // Run the form on a copy of the state, where Q cannot pop below it;
+        // afterwards unwind to the depth on entry
+        let depth = self.state_stack.len();
         self.state_stack.push(self.state.clone());
         self.clip_id_stack.push(self.active_clip_id.clone());
+        let floor = std::mem::replace(&mut self.state_floor, depth + 1);
 
-        // Apply form matrix if present
         if let Some(matrix_arr) = dict.get_array(b"Matrix")
             && matrix_arr.len() >= 6
         {
@@ -1200,16 +1211,17 @@ impl<'a> SvgRenderer<'a> {
             };
             self.state.ctm = m.concat(&self.state.ctm);
         }
-
-        let ops = parse_content_stream(data).map_err(RenderError::Core)?;
         let _ = self.execute_ops(&ops);
 
+        self.state_stack.truncate(depth + 1);
+        self.clip_id_stack.truncate(depth + 1);
         if let Some(s) = self.state_stack.pop() {
             self.state = s;
         }
         if let Some(clip_id) = self.clip_id_stack.pop() {
             self.active_clip_id = clip_id;
         }
+        self.state_floor = floor;
 
         Ok(())
     }
