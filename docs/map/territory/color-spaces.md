@@ -7,13 +7,13 @@ The PDF color space model (Device*, CalGray/CalRGB, Lab, Indexed, Separation, De
 **None.**
 
 ## Design model
-- `from_array` always builds ICCBased with `num_components: 3`, `profile: None` (comment: "actual value requires reading the stream").
-- `Color::to_rgb` returns black for Lab, Indexed, Separation, DeviceN and ICCBased without a profile. CalGray/CalRGB are treated as Device.
+- **`ColorSpace::resolve(obj, doc)`** reads a colour space through references (#46): an Indexed lookup given as a string or a stream (decoded), an ICCBased stream's `/N` (clamped to 1..4) and `/Alternate`, and the alternate space and tint transform (`justpdf_core::function::PdfFunction`) of Separation and DeviceN. `from_pdf_object` (no document) still builds ICCBased with `num_components: 3` and no alternate, and parses only a direct tint transform.
+- **`Color::to_rgb`** converts Indexed (index rounded and clamped to `hival`, the lookup entry read in the base space), Separation and DeviceN (through the tint transform into the alternate; without one, the tint shows as gray `1 − t`), and ICCBased without a profile through `substitute`: its `/Alternate`, else DeviceGray/RGB/CMYK for `/N` 1/3/4 (no ICC transform, #46 brief). It returns black for Lab. CalGray/CalRGB are treated as Device. A tint transform of Type 0 or a filtered Type 4 does not parse yet (#47), so such a space shows as gray.
 - **ICC, OutputIntent and overprint are unreachable from product paths**: the only callers of `parse_icc_profile`, `read_output_intents` and `parse_overprint` are tests, and `icc_to_srgb` is reached only through `to_rgb` with a profile set, which is never set.
 - Besides this module (`cmyk_to_rgb`), the renderer, SVG, shading and compression each keep their own copy of CMYK→RGB conversion — [Image pixel layout](../invariant/image-pixel-layout.md).
 
 ## Code
-- `justpdf-core/src/color/mod.rs` — `ColorSpace`, `from_pdf_object`, `from_array`, `num_components`, `Color`, `to_rgb`, `cmyk_to_rgb`, `rgb_to_cmyk`, `OutputIntent`, `read_output_intents`, `parse_overprint`
+- `justpdf-core/src/color/mod.rs` — `ColorSpace`, `resolve`, `substitute`, `from_pdf_object`, `from_array`, `num_components`, `Color`, `to_rgb`, `cmyk_to_rgb`, `rgb_to_cmyk`, `OutputIntent`, `read_output_intents`, `parse_overprint`
 - `justpdf-core/src/color/icc.rs` — `IccProfile`, `parse_icc_profile`, `icc_to_srgb`, `RenderingIntent`
 
 ## Reference behaviour
@@ -25,9 +25,9 @@ The PDF color space model (Device*, CalGray/CalRGB, Lab, Indexed, Separation, De
 ## Blast radius
 - [Render interpreter](render-interpreter.md) — `cs`/`CS` use a local `cs_from_name` (names only) and bypass this module's array color spaces. Extending color space support starts there.
 - [SVG renderer](svg-renderer.md), [Render shading](render-shading.md) — each has its own name-only copy.
-- [Image decoding](image-decoding.md) — reads an image's color space by name only.
-- [Compress images](compress-images.md) — skips CMYK and converts on its own with `to_rgb_pixels`.
+- [Image decoding](image-decoding.md) — resolves an image's colour space with `resolve` and converts samples with `to_rgb`.
+- [Compress images](compress-images.md) — skips CMYK; converts through `DecodedImage::to_rgb8`.
 
 ## Known holes / open
-- `test_indexed` checks only the component count, base and hival. No code looks up an actual color in an Indexed palette.
+- Indexed lookups are tested through `DecodedImage::to_rgb8` (`justpdf-core/tests/image_rgb.rs`); `test_indexed` still checks only the parsed fields.
 - Rendering Intent is only parsed and applied nowhere.

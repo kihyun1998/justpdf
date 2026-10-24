@@ -1,6 +1,7 @@
 pub mod icc;
 
 use crate::error::{JustPdfError, Result};
+use crate::function::PdfFunction;
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::parser::PdfDocument;
 
@@ -36,10 +37,14 @@ pub enum ColorSpace {
     Separation {
         name: Vec<u8>,
         alternate: Box<ColorSpace>,
+        /// The tint transform into `alternate`, when it parses.
+        tint: Option<Box<PdfFunction>>,
     },
     DeviceN {
         names: Vec<Vec<u8>>,
         alternate: Box<ColorSpace>,
+        /// The tint transform into `alternate`, when it parses.
+        tint: Option<Box<PdfFunction>>,
     },
     /// ICC profile-based color space.
     ///
@@ -49,6 +54,8 @@ pub enum ColorSpace {
         num_components: u32,
         /// Parsed ICC profile (populated when profile data is available).
         profile: Option<Box<IccProfile>>,
+        /// The stream's `/Alternate`, when given.
+        alternate: Option<Box<ColorSpace>>,
     },
     /// Unknown/unsupported color space.
     Unknown(Vec<u8>),
@@ -114,20 +121,24 @@ impl PartialEq for ColorSpace {
                 Self::Separation {
                     name: n1,
                     alternate: a1,
+                    ..
                 },
                 Self::Separation {
                     name: n2,
                     alternate: a2,
+                    ..
                 },
             ) => n1 == n2 && a1 == a2,
             (
                 Self::DeviceN {
                     names: n1,
                     alternate: a1,
+                    ..
                 },
                 Self::DeviceN {
                     names: n2,
                     alternate: a2,
+                    ..
                 },
             ) => n1 == n2 && a1 == a2,
             (
@@ -145,6 +156,24 @@ impl PartialEq for ColorSpace {
 }
 
 impl ColorSpace {
+    /// The space an ICCBased space's colours convert through without its
+    /// profile: its `/Alternate`, else DeviceGray, DeviceRGB or DeviceCMYK for
+    /// `/N` 1, 3 or 4. `None` for any other space.
+    pub fn substitute(&self) -> Option<ColorSpace> {
+        match self {
+            Self::ICCBased {
+                alternate: Some(a), ..
+            } => Some((**a).clone()),
+            Self::ICCBased { num_components, .. } => match num_components {
+                1 => Some(Self::DeviceGray),
+                3 => Some(Self::DeviceRGB),
+                4 => Some(Self::DeviceCMYK),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Number of components in this color space.
     pub fn num_components(&self) -> usize {
         match self {
@@ -156,6 +185,100 @@ impl ColorSpace {
             Self::DeviceN { names, .. } => names.len(),
             Self::ICCBased { num_components, .. } => *num_components as usize,
             Self::Unknown(_) => 0,
+        }
+    }
+
+    /// Parse a color space from a PDF name, array or reference, resolving
+    /// references through `doc`: the colour space itself, an Indexed lookup
+    /// stream, an ICCBased stream (its `/N` and `/Alternate`), and the
+    /// alternate space and tint transform of Separation and DeviceN.
+    pub fn resolve(obj: &PdfObject, doc: &PdfDocument) -> Self {
+        let obj = match obj {
+            PdfObject::Reference(r) => match doc.resolve(r) {
+                Ok(o) => o,
+                Err(_) => return Self::Unknown(b"unresolved".to_vec()),
+            },
+            other => other.clone(),
+        };
+        let PdfObject::Array(arr) = &obj else {
+            return Self::from_pdf_object(&obj);
+        };
+        let resolved = |i: usize| -> Option<PdfObject> {
+            match arr.get(i)? {
+                PdfObject::Reference(r) => doc.resolve(r).ok(),
+                other => Some(other.clone()),
+            }
+        };
+        match arr.first().and_then(|o| o.as_name()) {
+            Some(b"Indexed" | b"I") => {
+                let base = arr
+                    .get(1)
+                    .map(|b| Self::resolve(b, doc))
+                    .unwrap_or(Self::DeviceRGB);
+                let hival = arr.get(2).and_then(|o| o.as_i64()).unwrap_or(255).max(0) as u32;
+                let lookup = match resolved(3) {
+                    Some(PdfObject::String(s)) => s,
+                    Some(PdfObject::Stream { dict, data }) => {
+                        doc.decode_stream(&dict, &data).unwrap_or_default()
+                    }
+                    _ => Vec::new(),
+                };
+                Self::Indexed {
+                    base: Box::new(base),
+                    hival,
+                    lookup,
+                }
+            }
+            Some(b"ICCBased") => {
+                let dict = match resolved(1) {
+                    Some(PdfObject::Stream { dict, .. }) | Some(PdfObject::Dict(dict)) => dict,
+                    _ => PdfDict::new(),
+                };
+                let num_components = dict.get_i64(b"N").unwrap_or(3).clamp(1, 4) as u32;
+                let alternate = dict
+                    .get(b"Alternate")
+                    .map(|a| Box::new(Self::resolve(a, doc)));
+                Self::ICCBased {
+                    num_components,
+                    profile: None,
+                    alternate,
+                }
+            }
+            Some(b"Separation") => Self::Separation {
+                name: arr
+                    .get(1)
+                    .and_then(|o| o.as_name())
+                    .unwrap_or(b"Unknown")
+                    .to_vec(),
+                alternate: Box::new(
+                    arr.get(2)
+                        .map(|a| Self::resolve(a, doc))
+                        .unwrap_or(Self::DeviceGray),
+                ),
+                tint: resolved(3)
+                    .as_ref()
+                    .and_then(PdfFunction::parse)
+                    .map(Box::new),
+            },
+            Some(b"DeviceN") => Self::DeviceN {
+                names: match resolved(1) {
+                    Some(PdfObject::Array(a)) => a
+                        .iter()
+                        .filter_map(|o| o.as_name().map(<[u8]>::to_vec))
+                        .collect(),
+                    _ => Vec::new(),
+                },
+                alternate: Box::new(
+                    arr.get(2)
+                        .map(|a| Self::resolve(a, doc))
+                        .unwrap_or(Self::DeviceCMYK),
+                ),
+                tint: resolved(3)
+                    .as_ref()
+                    .and_then(PdfFunction::parse)
+                    .map(Box::new),
+            },
+            _ => Self::from_pdf_object(&obj),
         }
     }
 
@@ -193,6 +316,7 @@ impl ColorSpace {
             b"ICCBased" => Self::ICCBased {
                 num_components: 3, // default, actual value requires reading the stream
                 profile: None,
+                alternate: None,
             },
             b"DeviceGray" | b"G" => Self::DeviceGray,
             b"DeviceRGB" | b"RGB" => Self::DeviceRGB,
@@ -269,6 +393,7 @@ impl ColorSpace {
         Self::Separation {
             name,
             alternate: Box::new(alternate),
+            tint: arr.get(3).and_then(PdfFunction::parse).map(Box::new),
         }
     }
 
@@ -290,6 +415,7 @@ impl ColorSpace {
         Self::DeviceN {
             names,
             alternate: Box::new(alternate),
+            tint: arr.get(3).and_then(PdfFunction::parse).map(Box::new),
         }
     }
 }
@@ -342,6 +468,47 @@ impl Color {
             ColorSpace::ICCBased {
                 profile: Some(p), ..
             } => icc::icc_to_srgb(p, &self.components),
+            ColorSpace::ICCBased { .. } => match cs.substitute() {
+                Some(space) => self.to_rgb(&space),
+                None => [0.0, 0.0, 0.0],
+            },
+            ColorSpace::Indexed {
+                base,
+                hival,
+                lookup,
+            } => {
+                let index = self
+                    .components
+                    .first()
+                    .copied()
+                    .unwrap_or(0.0)
+                    .round()
+                    .clamp(0.0, *hival as f64) as usize;
+                let n = base.num_components();
+                let entry = lookup.get(index * n..(index + 1) * n).unwrap_or(&[]);
+                let components = if entry.len() == n {
+                    entry.iter().map(|&b| b as f64 / 255.0).collect()
+                } else {
+                    vec![0.0; n]
+                };
+                Color { components }.to_rgb(base)
+            }
+            ColorSpace::Separation {
+                alternate, tint, ..
+            }
+            | ColorSpace::DeviceN {
+                alternate, tint, ..
+            } => match tint {
+                Some(function) => Color {
+                    components: function.evaluate(&self.components),
+                }
+                .to_rgb(alternate),
+                // Without a tint transform the tint is shown as gray ink.
+                None => {
+                    let g = 1.0 - self.components.first().copied().unwrap_or(0.0);
+                    [g, g, g]
+                }
+            },
             _ => [0.0, 0.0, 0.0],
         }
     }

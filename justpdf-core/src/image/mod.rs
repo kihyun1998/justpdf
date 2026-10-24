@@ -1,3 +1,4 @@
+use crate::color::{Color, ColorSpace};
 use crate::error::{JustPdfError, Result};
 use crate::object::{PdfDict, PdfObject};
 use crate::parser::PdfDocument;
@@ -87,6 +88,177 @@ pub struct DecodedImage {
     pub data: Vec<u8>,
     /// The image format the data came from.
     pub source_format: ImageFormat,
+    /// The image's colour space, resolved; the samples are in it.
+    pub color_space: ColorSpace,
+    /// The image's `/Decode` array, when given.
+    pub decode: Option<Vec<f64>>,
+}
+
+impl DecodedImage {
+    /// The image as 8-bit RGB, `width × height × 3` bytes. Samples are
+    /// unpacked by `bpc` (1, 2, 4, 8 or 16, each row starting on a byte
+    /// boundary), mapped through `/Decode` (ISO 32000-2 §8.9.5.2), and
+    /// converted from the colour space. A colour space whose component count
+    /// differs from the buffer's is replaced by the device space with that
+    /// many components. Missing samples read as 0.
+    pub fn to_rgb8(&self) -> Vec<u8> {
+        let (w, h) = (self.width as usize, self.height as usize);
+        let n = self.components.max(1) as usize;
+        let mut out = vec![0u8; w * h * 3];
+        let space = self.sample_space(n);
+
+        if self.bpc == 8 && self.decode.is_none() {
+            let pixels = (w * h).min(self.data.len() / n);
+            match (&space, n) {
+                (ColorSpace::DeviceGray, 1) => {
+                    for (px, &g) in out.chunks_exact_mut(3).zip(&self.data[..pixels]) {
+                        px.copy_from_slice(&[g, g, g]);
+                    }
+                    return out;
+                }
+                (ColorSpace::DeviceRGB, 3) => {
+                    out[..pixels * 3].copy_from_slice(&self.data[..pixels * 3]);
+                    return out;
+                }
+                (ColorSpace::DeviceCMYK, 4) => {
+                    for (px, cmyk) in out.chunks_exact_mut(3).zip(self.data.chunks_exact(4)) {
+                        let [c, m, y, k] =
+                            [cmyk[0], cmyk[1], cmyk[2], cmyk[3]].map(|v| v as f64 / 255.0);
+                        px.copy_from_slice(&[
+                            ((1.0 - c) * (1.0 - k) * 255.0) as u8,
+                            ((1.0 - m) * (1.0 - k) * 255.0) as u8,
+                            ((1.0 - y) * (1.0 - k) * 255.0) as u8,
+                        ]);
+                    }
+                    return out;
+                }
+                _ => {}
+            }
+        }
+
+        let bpc = self.bpc.clamp(1, 16);
+        let max = ((1u32 << bpc) - 1) as f64;
+        let decode = self.decode_ranges(&space, n, max);
+        let decoded =
+            |c: usize, raw: f64| decode[2 * c] + raw * (decode[2 * c + 1] - decode[2 * c]) / max;
+        let to_rgb = |components: &[f64]| -> [u8; 3] {
+            let rgb = match (&space, components) {
+                (ColorSpace::DeviceGray, &[g]) => [g, g, g],
+                (ColorSpace::DeviceRGB, &[r, g, b]) => [r, g, b],
+                (ColorSpace::DeviceCMYK, &[c, m, y, k]) => crate::color::cmyk_to_rgb(c, m, y, k),
+                _ => Color {
+                    components: components.to_vec(),
+                }
+                .to_rgb(&space),
+            };
+            rgb.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8)
+        };
+        let row_bytes = (w * n * bpc as usize).div_ceil(8);
+
+        // One component of at most 8 bits: one conversion per sample value.
+        if n == 1 && bpc <= 8 {
+            let table: Vec<[u8; 3]> = (0..=max as u32)
+                .map(|v| to_rgb(&[decoded(0, v as f64)]))
+                .collect();
+            for y in 0..h {
+                let row = y * row_bytes;
+                for x in 0..w {
+                    let v = if bpc == 8 {
+                        self.data.get(row + x).copied().unwrap_or(0) as u32
+                    } else {
+                        read_sample(&self.data, row * 8 + x * bpc as usize, bpc)
+                    };
+                    out[(y * w + x) * 3..][..3].copy_from_slice(&table[v as usize]);
+                }
+            }
+            return out;
+        }
+
+        // Each component's decoded value per raw sample, for at most 8 bits.
+        let tables: Option<Vec<Vec<f64>>> = (bpc <= 8).then(|| {
+            (0..n)
+                .map(|c| (0..=max as u32).map(|v| decoded(c, v as f64)).collect())
+                .collect()
+        });
+        let mut components = vec![0.0; n];
+        for y in 0..h {
+            let row = y * row_bytes;
+            for x in 0..w {
+                for (c, value) in components.iter_mut().enumerate() {
+                    let raw = if bpc == 8 {
+                        self.data.get(row + x * n + c).copied().unwrap_or(0) as u32
+                    } else {
+                        read_sample(&self.data, row * 8 + (x * n + c) * bpc as usize, bpc)
+                    };
+                    *value = match &tables {
+                        Some(t) => t[c][raw as usize],
+                        None => decoded(c, raw as f64),
+                    };
+                }
+                out[(y * w + x) * 3..][..3].copy_from_slice(&to_rgb(&components));
+            }
+        }
+        out
+    }
+
+    /// Whether the samples are gray already: one component in a gray space
+    /// (DeviceGray, CalGray, or ICCBased standing in for one).
+    pub fn is_gray(&self) -> bool {
+        let n = self.components.max(1) as usize;
+        matches!(
+            self.sample_space(n),
+            ColorSpace::DeviceGray | ColorSpace::CalGray { .. }
+        )
+    }
+
+    /// The space the samples convert from: the colour space (through its
+    /// substitute for ICCBased), or the device space with `n` components
+    /// when the counts differ.
+    fn sample_space(&self, n: usize) -> ColorSpace {
+        let space = self
+            .color_space
+            .substitute()
+            .unwrap_or_else(|| self.color_space.clone());
+        if space.num_components() == n {
+            return space;
+        }
+        match n {
+            1 => ColorSpace::DeviceGray,
+            4 => ColorSpace::DeviceCMYK,
+            _ => ColorSpace::DeviceRGB,
+        }
+    }
+
+    /// `/Decode` as `[min, max]` per component, else the default: `[0, max]`
+    /// for an Indexed index, `[0, 1]` otherwise.
+    fn decode_ranges(&self, space: &ColorSpace, n: usize, max: f64) -> Vec<f64> {
+        match &self.decode {
+            Some(d) if d.len() >= 2 * n => d[..2 * n].to_vec(),
+            _ => match space {
+                ColorSpace::Indexed { .. } => vec![0.0, max],
+                _ => [0.0, 1.0].repeat(n),
+            },
+        }
+    }
+}
+
+/// The `bpc`-bit sample starting at bit `bit` of `data`, most significant bit
+/// first; 0 past the end.
+fn read_sample(data: &[u8], bit: usize, bpc: u32) -> u32 {
+    let byte = bit / 8;
+    match bpc {
+        8 => data.get(byte).copied().unwrap_or(0) as u32,
+        16 => {
+            let hi = data.get(byte).copied().unwrap_or(0) as u32;
+            let lo = data.get(byte + 1).copied().unwrap_or(0) as u32;
+            (hi << 8) | lo
+        }
+        _ => {
+            let shift = 8 - bpc as usize - bit % 8;
+            let mask = (1u32 << bpc) - 1;
+            (data.get(byte).copied().unwrap_or(0) as u32 >> shift) & mask
+        }
+    }
 }
 
 /// The original encoding format of the image.
@@ -113,8 +285,20 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
     })?;
 
     let filter = info.filter.as_deref();
+    let color_space = match dict.get(b"ColorSpace") {
+        Some(cs) => ColorSpace::resolve(cs, doc),
+        None if info.is_mask => ColorSpace::DeviceGray,
+        None => ColorSpace::Unknown(Vec::new()),
+    };
+    let decode = dict
+        .get_array(b"Decode")
+        .map(|d| d.iter().filter_map(PdfObject::as_f64).collect::<Vec<f64>>());
+    let raw_components = match color_space.num_components() {
+        0 => info.num_components,
+        n => n as u32,
+    };
 
-    match filter {
+    let decoded: Result<DecodedImage> = match filter {
         Some(b"DCTDecode") | Some(b"DCT") => {
             let codec_input = stream::decode_stream_cow(raw_data, dict)?;
             let decoded = dct::decode(&codec_input)?;
@@ -125,6 +309,8 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
                 bpc: 8,
                 data: decoded.data,
                 source_format: ImageFormat::Jpeg,
+                color_space: ColorSpace::Unknown(Vec::new()),
+                decode: None,
             })
         }
         Some(b"JPXDecode") => {
@@ -159,6 +345,8 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
                 bpc: 8,
                 data,
                 source_format: ImageFormat::Jpeg2000,
+                color_space: ColorSpace::Unknown(Vec::new()),
+                decode: None,
             })
         }
         Some(b"JBIG2Decode") => {
@@ -204,6 +392,8 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
                 bpc: 8,
                 data,
                 source_format: ImageFormat::Jbig2,
+                color_space: ColorSpace::Unknown(Vec::new()),
+                decode: None,
             })
         }
         Some(b"CCITTFaxDecode") | Some(b"CCF") => {
@@ -218,6 +408,8 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
                 bpc: 8,
                 data: decoded,
                 source_format: ImageFormat::CcittFax,
+                color_space: ColorSpace::Unknown(Vec::new()),
+                decode: None,
             })
         }
         _ => {
@@ -225,13 +417,19 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
             Ok(DecodedImage {
                 width: info.width,
                 height: info.height,
-                components: info.num_components,
+                components: raw_components,
                 bpc: info.bits_per_component,
                 data: decoded,
                 source_format: ImageFormat::Raw,
+                color_space: ColorSpace::Unknown(Vec::new()),
+                decode: None,
             })
         }
-    }
+    };
+    let mut image = decoded?;
+    image.color_space = color_space;
+    image.decode = decode;
+    Ok(image)
 }
 
 /// The decoded `/JBIG2Globals` stream named by the `JBIG2Decode` filter's
