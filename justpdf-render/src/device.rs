@@ -9,7 +9,6 @@ use crate::graphics_state;
 /// A rendering device that draws PDF operations onto a pixel buffer.
 pub struct PixmapDevice {
     pub pixmap: Pixmap,
-    pub(crate) clip_mask: Option<Mask>,
 }
 
 impl PixmapDevice {
@@ -17,44 +16,20 @@ impl PixmapDevice {
         let pixmap = Pixmap::new(width, height).ok_or_else(|| RenderError::InvalidDimensions {
             detail: format!("cannot create {width}x{height} pixmap"),
         })?;
-        Ok(Self {
-            pixmap,
-            clip_mask: None,
-        })
+        Ok(Self { pixmap })
     }
 
-    /// Set a clipping path (replaces existing clip).
-    pub fn set_clip_path(
-        &mut self,
+    /// A clip mask the size of the pixmap covering `path`. `None` when the
+    /// mask cannot be allocated.
+    pub fn clip_mask(
+        &self,
         path: &tiny_skia::Path,
         fill_rule: FillRule,
         transform: Transform,
-    ) {
-        let w = self.pixmap.width();
-        let h = self.pixmap.height();
-        if let Some(mut mask) = Mask::new(w, h) {
-            mask.fill_path(path, fill_rule, true, transform);
-            self.clip_mask = Some(mask);
-        }
-    }
-
-    /// Intersect the current clip with another path.
-    pub fn intersect_clip_path(
-        &mut self,
-        path: &tiny_skia::Path,
-        fill_rule: FillRule,
-        transform: Transform,
-    ) {
-        if let Some(mask) = &mut self.clip_mask {
-            mask.intersect_path(path, fill_rule, true, transform);
-        } else {
-            self.set_clip_path(path, fill_rule, transform);
-        }
-    }
-
-    /// Clear the clip mask.
-    pub fn clear_clip(&mut self) {
-        self.clip_mask = None;
+    ) -> Option<Mask> {
+        let mut mask = Mask::new(self.pixmap.width(), self.pixmap.height())?;
+        mask.fill_path(path, fill_rule, true, transform);
+        Some(mask)
     }
 
     /// Fill a path.
@@ -65,13 +40,13 @@ impl PixmapDevice {
         transform: Transform,
         color: [u8; 4],
         blend_mode: BlendMode,
+        clip: Option<&Mask>,
     ) {
         let mut paint = Paint::default();
         paint.set_color(Color::from_rgba8(color[0], color[1], color[2], color[3]));
         paint.anti_alias = true;
         paint.blend_mode = blend_mode;
 
-        let clip = self.clip_mask.as_ref();
         self.pixmap
             .fill_path(path, &paint, fill_rule, transform, clip);
     }
@@ -84,6 +59,7 @@ impl PixmapDevice {
         color: [u8; 4],
         gs: &graphics_state::GraphicsState,
         blend_mode: BlendMode,
+        clip: Option<&Mask>,
     ) {
         let mut paint = Paint::default();
         paint.set_color(Color::from_rgba8(color[0], color[1], color[2], color[3]));
@@ -113,7 +89,6 @@ impl PixmapDevice {
             }
         }
 
-        let clip = self.clip_mask.as_ref();
         self.pixmap
             .stroke_path(path, &paint, &stroke, transform, clip);
     }
@@ -125,6 +100,7 @@ impl PixmapDevice {
         transform: Transform,
         alpha: f32,
         blend_mode: BlendMode,
+        clip: Option<&Mask>,
     ) {
         let paint = tiny_skia::PixmapPaint {
             opacity: alpha,
@@ -132,7 +108,6 @@ impl PixmapDevice {
             quality: tiny_skia::FilterQuality::Bilinear,
         };
 
-        let clip = self.clip_mask.as_ref();
         self.pixmap
             .draw_pixmap(0, 0, *image_pixmap, &paint, transform, clip);
     }
@@ -144,6 +119,7 @@ impl PixmapDevice {
         transform: Transform,
         alpha: f32,
         blend_mode: BlendMode,
+        clip: Option<&Mask>,
     ) {
         let paint = tiny_skia::PixmapPaint {
             opacity: alpha,
@@ -151,11 +127,11 @@ impl PixmapDevice {
             quality: tiny_skia::FilterQuality::Bilinear,
         };
 
-        let clip = self.clip_mask.as_ref();
         self.pixmap.draw_pixmap(0, 0, *src, &paint, transform, clip);
     }
 
     /// Fill a path with a pattern (tiled pixmap).
+    #[allow(clippy::too_many_arguments)]
     pub fn fill_path_with_pattern(
         &mut self,
         path: &tiny_skia::Path,
@@ -164,6 +140,7 @@ impl PixmapDevice {
         pattern_pixmap: &tiny_skia::PixmapRef,
         pattern_transform: Transform,
         blend_mode: BlendMode,
+        clip: Option<&Mask>,
     ) {
         let paint = Paint {
             anti_alias: true,
@@ -178,12 +155,12 @@ impl PixmapDevice {
             ..Default::default()
         };
 
-        let clip = self.clip_mask.as_ref();
         self.pixmap
             .fill_path(path, &paint, fill_rule, transform, clip);
     }
 
     /// Stroke a path with a pattern (tiled pixmap).
+    #[allow(clippy::too_many_arguments)]
     pub fn stroke_path_with_pattern(
         &mut self,
         path: &tiny_skia::Path,
@@ -192,6 +169,7 @@ impl PixmapDevice {
         pattern_pixmap: &tiny_skia::PixmapRef,
         pattern_transform: Transform,
         blend_mode: BlendMode,
+        clip: Option<&Mask>,
     ) {
         let paint = Paint {
             anti_alias: true,
@@ -229,7 +207,6 @@ impl PixmapDevice {
             }
         }
 
-        let clip = self.clip_mask.as_ref();
         self.pixmap
             .stroke_path(path, &paint, &stroke, transform, clip);
     }
