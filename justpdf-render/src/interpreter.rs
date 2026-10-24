@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -21,8 +22,8 @@ use crate::device::PixmapDevice;
 use crate::error::{RenderError, Result};
 use crate::glyph_cache::GlyphCache;
 use crate::graphics_state::{
-    FontKey, GraphicsState, LineCap, LineJoin, Matrix, PatternSelection, PdfBlendMode, SoftMask,
-    SoftMaskSubtype,
+    FontKey, GraphicsState, LineCap, LineJoin, Matrix, PatternSelection, PdfBlendMode, SharedMask,
+    SoftMask, SoftMaskSubtype,
 };
 use crate::resources::ResourceScopes;
 
@@ -176,13 +177,11 @@ impl<'a> RenderInterpreter<'a> {
             };
 
             self.state_stack.push(self.state.clone());
-            let saved_clip = self.device.clip_mask.clone();
             self.state.ctm = mapping.concat(&self.state.ctm);
             self.clip_to_bbox(&ap_dict);
             self.with_stream_resources(&ap_dict, ap_ref.as_ref(), |this| {
                 let _ = this.render_form_xobject(&ap_dict, &ap_data);
             });
-            self.device.clip_mask = saved_clip;
             if let Some(saved) = self.state_stack.pop() {
                 self.state = saved;
             }
@@ -230,14 +229,7 @@ impl<'a> RenderInterpreter<'a> {
             .concat(&self.state.ctm)
             .concat(&self.page_transform)
             .to_skia();
-        if self.state.has_clip {
-            self.device
-                .intersect_clip_path(&path, FillRule::Winding, transform);
-        } else {
-            self.device
-                .set_clip_path(&path, FillRule::Winding, transform);
-        }
-        self.state.has_clip = true;
+        self.intersect_clip(&path, FillRule::Winding, transform);
     }
 
     /// Check if an OC (Optional Content) marked content block is visible.
@@ -600,16 +592,8 @@ impl<'a> RenderInterpreter<'a> {
                 self.state_stack.push(self.state.clone());
             }
             "Q" => {
-                let had_clip = self.state.has_clip;
                 if let Some(s) = self.state_stack.pop() {
                     self.state = s;
-                }
-                // If the popped state had a clip but restored state doesn't,
-                // we need to clear the device clip
-                if had_clip && !self.state.has_clip {
-                    self.device.clear_clip();
-                    // Re-apply clip from state stack if any parent has one
-                    // (simplified: just clear for now)
                 }
             }
             "cm" => {
@@ -1089,9 +1073,9 @@ impl<'a> RenderInterpreter<'a> {
             let transform = self.effective_transform();
             let color = self.state.fill_color_rgba();
             let bm = self.blend_mode();
-            self.apply_soft_mask_to_device();
-            self.device.fill_path(&path, rule, transform, color, bm);
-            self.restore_clip_after_soft_mask();
+            let mask = draw_mask(&self.state);
+            self.device
+                .fill_path(&path, rule, transform, color, bm, mask.as_deref());
         }
     }
 
@@ -1106,9 +1090,9 @@ impl<'a> RenderInterpreter<'a> {
                 let transform = self.effective_transform();
                 let color = self.state.fill_color_rgba();
                 let bm = self.blend_mode();
-                self.apply_soft_mask_to_device();
-                self.device.fill_path(&path, rule, transform, color, bm);
-                self.restore_clip_after_soft_mask();
+                let mask = draw_mask(&self.state);
+                self.device
+                    .fill_path(&path, rule, transform, color, bm, mask.as_deref());
             }
         }
     }
@@ -1124,45 +1108,9 @@ impl<'a> RenderInterpreter<'a> {
             let transform = self.effective_transform();
             let color = self.state.stroke_color_rgba();
             let bm = self.blend_mode();
-            self.apply_soft_mask_to_device();
+            let mask = draw_mask(&self.state);
             self.device
-                .stroke_path(&path, transform, color, &self.state, bm);
-            self.restore_clip_after_soft_mask();
-        }
-    }
-
-    /// If a soft mask is active, combine it with the current clip mask
-    /// so that drawing operations are masked accordingly.
-    fn apply_soft_mask_to_device(&mut self) {
-        if let Some(ref soft_mask) = self.state.soft_mask {
-            // Intersect the soft mask with the existing clip mask
-            if let Some(ref existing_clip) = self.device.clip_mask {
-                // Combine: for each pixel, min(existing_clip, soft_mask)
-                let mut combined = existing_clip.clone();
-                let combined_data = combined.data_mut();
-                let mask_data = soft_mask.mask.data();
-                let len = combined_data.len().min(mask_data.len());
-                for i in 0..len {
-                    combined_data[i] =
-                        ((combined_data[i] as u16 * mask_data[i] as u16) / 255) as u8;
-                }
-                self.device.clip_mask = Some(combined);
-            } else {
-                self.device.clip_mask = Some(soft_mask.mask.clone());
-            }
-        }
-    }
-
-    /// Restore the clip mask after soft mask application (remove the soft mask contribution).
-    fn restore_clip_after_soft_mask(&mut self) {
-        if self.state.soft_mask.is_some() {
-            // Restore original clip (without the soft mask merged in)
-            // We need to reconstruct just the clip path mask.
-            // For simplicity, if we had a clip before, we need to re-establish it.
-            // Since we don't track the clip path separately, we'll just leave
-            // the combined mask in place. The Q operator will restore properly.
-            // This is acceptable because soft masks are typically used within
-            // a q/Q pair.
+                .stroke_path(&path, transform, color, &self.state, bm, mask.as_deref());
         }
     }
 
@@ -1171,12 +1119,21 @@ impl<'a> RenderInterpreter<'a> {
             let pb_clone = pb.clone();
             if let Some(path) = pb_clone.finish() {
                 let transform = self.effective_transform();
-                if self.state.has_clip {
-                    self.device.intersect_clip_path(&path, rule, transform);
-                } else {
-                    self.device.set_clip_path(&path, rule, transform);
-                }
-                self.state.has_clip = true;
+                self.intersect_clip(&path, rule, transform);
+            }
+        }
+    }
+
+    /// Intersect the current clip with `path`, or make `path` the clip when
+    /// there is none. The mask is copied only while another state shares it.
+    fn intersect_clip(&mut self, path: &tiny_skia::Path, rule: FillRule, transform: Transform) {
+        match &mut self.state.clip {
+            Some(clip) => clip.make_mut().intersect_path(path, rule, true, transform),
+            None => {
+                self.state.clip = self
+                    .device
+                    .clip_mask(path, rule, transform)
+                    .map(SharedMask::new);
             }
         }
     }
@@ -1337,8 +1294,9 @@ impl<'a> RenderInterpreter<'a> {
                     let transform = text_rendering_matrix.to_skia();
                     let color = self.state.fill_color_rgba();
                     let bm = self.blend_mode();
+                    let clip = self.state.clip.as_ref().map(SharedMask::mask);
                     self.device
-                        .fill_path(&path, FillRule::Winding, transform, color, bm);
+                        .fill_path(&path, FillRule::Winding, transform, color, bm, clip);
                     return Ok(());
                 }
             } else {
@@ -1369,8 +1327,9 @@ impl<'a> RenderInterpreter<'a> {
             let transform = text_rendering_matrix.to_skia();
             let color = self.state.fill_color_rgba();
             let bm = self.blend_mode();
+            let clip = self.state.clip.as_ref().map(SharedMask::mask);
             self.device
-                .fill_path(&path, FillRule::Winding, transform, color, bm);
+                .fill_path(&path, FillRule::Winding, transform, color, bm, clip);
         }
 
         Ok(())
@@ -1444,14 +1403,12 @@ impl<'a> RenderInterpreter<'a> {
                 }
                 self.xobject_depth += 1;
                 self.state_stack.push(self.state.clone());
-                let saved_clip = self.device.clip_mask.clone();
                 self.clip_to_bbox(&dict);
                 self.with_running_stream(Some(&obj_ref), |this| {
                     this.with_stream_resources(&dict, Some(&obj_ref), |this| {
                         let _ = this.render_form_xobject(&dict, &data);
                     });
                 });
-                self.device.clip_mask = saved_clip;
                 if let Some(saved) = self.state_stack.pop() {
                     self.state = saved;
                 }
@@ -1557,14 +1514,14 @@ impl<'a> RenderInterpreter<'a> {
             .concat(&self.page_transform);
 
         let bm = self.blend_mode();
-        self.apply_soft_mask_to_device();
+        let mask = draw_mask(&self.state);
         self.device.draw_image(
             &img_pixmap.as_ref(),
             full_transform.to_skia(),
             self.state.fill_alpha as f32,
             bm,
+            mask.as_deref(),
         );
-        self.restore_clip_after_soft_mask();
 
         Ok(())
     }
@@ -1645,11 +1602,13 @@ impl<'a> RenderInterpreter<'a> {
             .concat(&self.page_transform);
 
         let bm = self.blend_mode();
+        let clip = self.state.clip.as_ref().map(SharedMask::mask);
         self.device.draw_image(
             &img_pixmap.as_ref(),
             full_transform.to_skia(),
             self.state.fill_alpha as f32,
             bm,
+            clip,
         );
 
         Ok(())
@@ -1791,7 +1750,7 @@ impl<'a> RenderInterpreter<'a> {
             resolved_dict.insert(b"Function".to_vec(), func_obj);
         }
 
-        let clip = self.device.clip_mask.as_ref();
+        let clip = self.state.clip.as_ref().map(SharedMask::mask);
         crate::shading::render_shading(
             &mut self.device.pixmap,
             &resolved_dict,
@@ -1883,11 +1842,11 @@ impl<'a> RenderInterpreter<'a> {
         }
 
         // Swap in the temp pixmap
-        let saved_clip = self.device.clip_mask.take();
         std::mem::swap(&mut self.device.pixmap, &mut temp_pixmap);
 
-        // Save state
+        // Save state; the group is drawn unclipped and clipped when composited
         self.state_stack.push(self.state.clone());
+        self.state.clip = None;
 
         // Apply form matrix if present
         if let Some(matrix_arr) = dict.get_array(b"Matrix")
@@ -1915,13 +1874,18 @@ impl<'a> RenderInterpreter<'a> {
 
         // Swap back: temp_pixmap now has the group content, device has original
         std::mem::swap(&mut self.device.pixmap, &mut temp_pixmap);
-        self.device.clip_mask = saved_clip;
 
         // Composite the group result onto the main pixmap
         let alpha = self.state.fill_alpha as f32;
         let bm = self.blend_mode();
-        self.device
-            .draw_pixmap(&temp_pixmap.as_ref(), Transform::identity(), alpha, bm);
+        let clip = self.state.clip.as_ref().map(SharedMask::mask);
+        self.device.draw_pixmap(
+            &temp_pixmap.as_ref(),
+            Transform::identity(),
+            alpha,
+            bm,
+            clip,
+        );
 
         Ok(())
     }
@@ -2082,11 +2046,11 @@ impl<'a> RenderInterpreter<'a> {
         }
 
         // Swap in the mask pixmap for rendering
-        let saved_clip = self.device.clip_mask.take();
         std::mem::swap(&mut self.device.pixmap, &mut mask_pixmap);
 
-        // Save and reset state for mask rendering
+        // Save and reset state for mask rendering, unclipped
         self.state_stack.push(self.state.clone());
+        self.state.clip = None;
 
         // Apply form matrix if present
         if let Some(matrix_arr) = form_dict.get_array(b"Matrix")
@@ -2115,11 +2079,13 @@ impl<'a> RenderInterpreter<'a> {
 
         // Swap back
         std::mem::swap(&mut self.device.pixmap, &mut mask_pixmap);
-        self.device.clip_mask = saved_clip;
 
         // Convert the rendered mask pixmap to a tiny_skia::Mask
         if let Some(mask) = self.pixmap_to_mask(&mask_pixmap, subtype) {
-            self.state.soft_mask = Some(SoftMask { mask, subtype });
+            self.state.soft_mask = Some(SoftMask {
+                mask: SharedMask::new(mask),
+                subtype,
+            });
         }
 
         Ok(())
@@ -2221,15 +2187,16 @@ impl<'a> RenderInterpreter<'a> {
         let cell_transform = pattern_matrix.concat(&scale_to_device);
 
         // Swap in the cell pixmap
-        let saved_clip = self.device.clip_mask.take();
         std::mem::swap(&mut self.device.pixmap, &mut cell_pixmap);
 
         // Save state for pattern rendering
         self.state_stack.push(self.state.clone());
         let saved_page_transform = self.page_transform;
 
-        // Set up state for rendering into the cell, without the soft mask
+        // Set up state for rendering into the cell, without the page's clip
+        // and soft mask
         self.state.ctm = Matrix::identity();
+        self.state.clip = None;
         self.state.soft_mask = None;
         self.page_transform = cell_transform;
 
@@ -2246,7 +2213,6 @@ impl<'a> RenderInterpreter<'a> {
 
         // Swap back
         std::mem::swap(&mut self.device.pixmap, &mut cell_pixmap);
-        self.device.clip_mask = saved_clip;
 
         Ok(Some(cell_pixmap))
     }
@@ -2269,6 +2235,7 @@ impl<'a> RenderInterpreter<'a> {
                 &pattern_pixmap.as_ref(),
                 Transform::identity(),
                 bm,
+                self.state.clip.as_ref().map(SharedMask::mask),
             );
             true
         } else {
@@ -2294,6 +2261,7 @@ impl<'a> RenderInterpreter<'a> {
                 &pattern_pixmap.as_ref(),
                 Transform::identity(),
                 bm,
+                self.state.clip.as_ref().map(SharedMask::mask),
             );
             true
         } else {
@@ -2402,7 +2370,7 @@ impl<'a> RenderInterpreter<'a> {
         // The effective CTM for the shading is pattern_matrix * CTM
         let effective_ctm = pattern_matrix.concat(&self.state.ctm);
 
-        let clip = self.device.clip_mask.as_ref();
+        let clip = self.state.clip.as_ref().map(SharedMask::mask);
         crate::shading::render_shading(
             &mut shading_pixmap,
             &resolved_shading,
@@ -2435,6 +2403,24 @@ struct Appearance {
     obj_ref: Option<IndirectRef>,
     dict: PdfDict,
     data: Vec<u8>,
+}
+
+/// The mask one draw is painted through: the clip, the soft mask, or their
+/// product when both are set. It is never stored, so the soft mask does not
+/// enter the clip.
+fn draw_mask(state: &GraphicsState) -> Option<Cow<'_, Mask>> {
+    let clip = state.clip.as_ref().map(SharedMask::mask);
+    let Some(soft) = state.soft_mask.as_ref().map(|s| s.mask.mask()) else {
+        return clip.map(Cow::Borrowed);
+    };
+    let Some(clip) = clip else {
+        return Some(Cow::Borrowed(soft));
+    };
+    let mut combined = clip.clone();
+    for (c, m) in combined.data_mut().iter_mut().zip(soft.data()) {
+        *c = ((*c as u16 * *m as u16) / 255) as u8;
+    }
+    Some(Cow::Owned(combined))
 }
 
 /// `[a b c d e f]` as a [`Matrix`].

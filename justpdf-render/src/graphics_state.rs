@@ -11,11 +11,36 @@ pub enum SoftMaskSubtype {
     Alpha,
 }
 
+/// A page-sized mask shared between graphics states: cloning shares it, and
+/// [`SharedMask::make_mut`] copies it only while it is shared.
+#[derive(Clone)]
+pub struct SharedMask(Arc<Mask>);
+
+impl SharedMask {
+    pub fn new(mask: Mask) -> Self {
+        Self(Arc::new(mask))
+    }
+
+    pub fn mask(&self) -> &Mask {
+        &self.0
+    }
+
+    pub fn make_mut(&mut self) -> &mut Mask {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl std::fmt::Debug for SharedMask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SharedMask({}x{})", self.0.width(), self.0.height())
+    }
+}
+
 /// A resolved soft mask ready for use during rendering.
 /// Contains a tiny_skia::Mask derived from rendering the mask form XObject.
 #[derive(Clone)]
 pub struct SoftMask {
-    pub mask: Mask,
+    pub mask: SharedMask,
     pub subtype: SoftMaskSubtype,
 }
 
@@ -261,8 +286,8 @@ pub struct GraphicsState {
     pub fill_alpha: f64,
     pub stroke_alpha: f64,
     pub blend_mode: PdfBlendMode,
-    // Clipping
-    pub has_clip: bool,
+    // Clipping path, as a mask; `None` is no clip
+    pub clip: Option<SharedMask>,
     // Soft mask (from ExtGState /SMask)
     pub soft_mask: Option<SoftMask>,
     // Fill pattern (when color space is /Pattern)
@@ -292,7 +317,7 @@ impl Default for GraphicsState {
             fill_alpha: 1.0,
             stroke_alpha: 1.0,
             blend_mode: PdfBlendMode::Normal,
-            has_clip: false,
+            clip: None,
             soft_mask: None,
             fill_pattern: None,
             stroke_pattern: None,
