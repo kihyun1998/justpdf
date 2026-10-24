@@ -2070,10 +2070,11 @@ impl<'a> RenderInterpreter<'a> {
     }
 
     /// The RGB backdrop a Luminosity soft mask's group is composited over:
-    /// the soft-mask dictionary's `/BC` in the group's `/CS`, black without
-    /// one. A group colour space whose colours cannot be converted here
-    /// (ICCBased, whose profile is not loaded, or an unknown one) is taken
-    /// from the number of `/BC` components: gray, RGB or CMYK.
+    /// the soft-mask dictionary's `/BC` in the group's `/CS` (resolved, so an
+    /// ICCBased space converts through its `/Alternate` or `/N`), black
+    /// without one. Without a usable `/CS`, or when its component count
+    /// differs from `/BC`'s, the space is taken from that count: gray, RGB or
+    /// CMYK.
     fn mask_backdrop(&self, smask: &PdfDict, form: &PdfDict) -> [f64; 3] {
         let Some(PdfObject::Array(bc)) = smask.get(b"BC").and_then(|o| self.resolved(o)) else {
             return [0.0; 3];
@@ -2081,16 +2082,9 @@ impl<'a> RenderInterpreter<'a> {
         let components: Vec<f64> = bc.iter().filter_map(PdfObject::as_f64).collect();
         let group_cs = self
             .dict_entry(form, b"Group")
-            .and_then(|group| group.get(b"CS").and_then(|cs| self.resolved(cs)))
-            .map(|cs| ColorSpace::from_pdf_object(&cs));
+            .and_then(|group| group.get(b"CS").map(|cs| ColorSpace::resolve(cs, self.doc)));
         let cs = match group_cs {
-            Some(
-                cs @ (ColorSpace::DeviceGray
-                | ColorSpace::DeviceRGB
-                | ColorSpace::DeviceCMYK
-                | ColorSpace::CalGray { .. }
-                | ColorSpace::CalRGB { .. }),
-            ) => cs,
+            Some(cs) if cs.num_components() == components.len() => cs,
             _ => match components.len() {
                 1 => ColorSpace::DeviceGray,
                 3 => ColorSpace::DeviceRGB,
