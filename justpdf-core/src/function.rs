@@ -17,6 +17,10 @@ const MAX_DEPTH: usize = 8;
 /// A resolved PDF function that can be evaluated.
 #[derive(Debug, Clone)]
 pub enum PdfFunction {
+    /// An array of functions taking the same inputs, their outputs
+    /// concatenated (a shading's `/Function` as one 1-out function per colour
+    /// component, ISO 32000-2 §8.7.4.5).
+    Array(Vec<PdfFunction>),
     /// Type 0: Sampled, interpolated linearly between samples.
     Sampled {
         domain: Vec<(f64, f64)>,
@@ -130,6 +134,13 @@ impl PdfFunction {
             PdfObject::Reference(r) => doc.resolve(r).ok()?,
             other => other.clone(),
         };
+        if let PdfObject::Array(items) = &obj {
+            let functions: Vec<Self> = items
+                .iter()
+                .map(|item| Self::resolve_at(item, doc, depth + 1))
+                .collect::<Option<_>>()?;
+            return (!functions.is_empty()).then_some(PdfFunction::Array(functions));
+        }
         let obj = match obj {
             PdfObject::Stream { dict, data } => {
                 let data = doc.decode_stream(&dict, &data).ok()?;
@@ -143,6 +154,10 @@ impl PdfFunction {
     /// The function `obj` describes, reading stitching sub-functions with
     /// `sub` and stream data as it is.
     fn from_object(obj: &PdfObject, sub: &dyn Fn(&PdfObject) -> Option<Self>) -> Option<Self> {
+        if let PdfObject::Array(items) = obj {
+            let functions: Vec<Self> = items.iter().map(sub).collect::<Option<_>>()?;
+            return (!functions.is_empty()).then_some(PdfFunction::Array(functions));
+        }
         let dict = match obj {
             PdfObject::Dict(d) => d,
             PdfObject::Stream { dict, .. } => dict,
@@ -271,6 +286,9 @@ impl PdfFunction {
     /// Returns output values.
     pub fn evaluate(&self, input: &[f64]) -> Vec<f64> {
         match self {
+            PdfFunction::Array(functions) => {
+                functions.iter().flat_map(|f| f.evaluate(input)).collect()
+            }
             PdfFunction::Sampled {
                 domain,
                 range,
