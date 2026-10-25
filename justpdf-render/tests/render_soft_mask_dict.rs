@@ -188,8 +188,9 @@ fn tr_may_be_an_indirect_postscript_function() {
 }
 
 #[test]
-fn a_filtered_tr_stream_acts_as_identity() {
-    // Filtered function streams are not decoded before parsing yet (#47).
+fn a_filtered_tr_stream_is_decoded() {
+    // A filtered Type 4 stream is decoded through the document (#47): the
+    // inverting function maps the white group to mask 0.
     let doc = masked(
         "/S /Luminosity /TR 6 0 R",
         "/DeviceGray",
@@ -199,5 +200,5 @@ fn a_filtered_tr_stream_acts_as_identity() {
             Some("7B2031206578636820737562207D>"),
         )],
     );
-    assert_eq!(rgb(&doc, 100, 100), RED);
+    assert_eq!(rgb(&doc, 100, 100), WHITE);
 }

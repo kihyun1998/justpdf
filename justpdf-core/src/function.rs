@@ -1,6 +1,7 @@
 //! PDF Function evaluator.
 //!
-//! Supports PDF function types 2, 3 and 4 (Type 0, sampled, is not implemented):
+//! Supports all four PDF function types:
+//! - Type 0: Sampled (multilinear interpolation)
 //! - Type 2: Exponential interpolation
 //! - Type 3: Stitching (piecewise)
 //! - Type 4: PostScript calculator
@@ -8,10 +9,24 @@
 //! Reference: PDF 2.0 spec, section 7.10
 
 use crate::object::{PdfDict, PdfObject};
+use crate::parser::PdfDocument;
+
+/// How deep `PdfFunction::resolve` follows stitching sub-functions.
+const MAX_DEPTH: usize = 8;
 
 /// A resolved PDF function that can be evaluated.
 #[derive(Debug, Clone)]
 pub enum PdfFunction {
+    /// Type 0: Sampled, interpolated linearly between samples.
+    Sampled {
+        domain: Vec<(f64, f64)>,
+        range: Vec<(f64, f64)>,
+        size: Vec<usize>,
+        bits_per_sample: u32,
+        encode: Vec<(f64, f64)>,
+        decode: Vec<(f64, f64)>,
+        samples: Vec<u8>,
+    },
     /// Type 2: Exponential interpolation.
     Exponential {
         domain: Vec<(f64, f64)>,
@@ -93,8 +108,41 @@ pub enum PsOp {
 }
 
 impl PdfFunction {
-    /// Parse a PDF function from a function dictionary/stream.
+    /// Parse a PDF function from a function dictionary/stream as given:
+    /// references are not followed and stream data is used undecoded. A
+    /// document's function goes through [`PdfFunction::resolve`].
     pub fn parse(obj: &PdfObject) -> Option<Self> {
+        Self::from_object(obj, &PdfFunction::parse)
+    }
+
+    /// Read a PDF function through `doc`: references are resolved, stream
+    /// data is decoded (filters and decryption), and stitching sub-functions
+    /// are read the same way, to a fixed depth.
+    pub fn resolve(obj: &PdfObject, doc: &PdfDocument) -> Option<Self> {
+        Self::resolve_at(obj, doc, 0)
+    }
+
+    fn resolve_at(obj: &PdfObject, doc: &PdfDocument, depth: usize) -> Option<Self> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
+        let obj = match obj {
+            PdfObject::Reference(r) => doc.resolve(r).ok()?,
+            other => other.clone(),
+        };
+        let obj = match obj {
+            PdfObject::Stream { dict, data } => {
+                let data = doc.decode_stream(&dict, &data).ok()?;
+                PdfObject::Stream { dict, data }
+            }
+            other => other,
+        };
+        Self::from_object(&obj, &|sub| Self::resolve_at(sub, doc, depth + 1))
+    }
+
+    /// The function `obj` describes, reading stitching sub-functions with
+    /// `sub` and stream data as it is.
+    fn from_object(obj: &PdfObject, sub: &dyn Fn(&PdfObject) -> Option<Self>) -> Option<Self> {
         let dict = match obj {
             PdfObject::Dict(d) => d,
             PdfObject::Stream { dict, .. } => dict,
@@ -106,11 +154,48 @@ impl PdfFunction {
         let range = parse_domain_range(dict, b"Range");
 
         match func_type {
+            0 => Self::parse_sampled(obj, domain, range),
             2 => Self::parse_exponential(dict, domain, range),
-            3 => Self::parse_stitching(dict, domain, range),
+            3 => Self::parse_stitching(dict, domain, range, sub),
             4 => Self::parse_postscript(obj, domain, range),
             _ => None,
         }
+    }
+
+    fn parse_sampled(
+        obj: &PdfObject,
+        domain: Vec<(f64, f64)>,
+        range: Vec<(f64, f64)>,
+    ) -> Option<Self> {
+        let PdfObject::Stream { dict, data } = obj else {
+            return None;
+        };
+        let size: Vec<usize> = dict
+            .get_array(b"Size")?
+            .iter()
+            .map(|o| o.as_i64().unwrap_or(1).max(1) as usize)
+            .collect();
+        let bits_per_sample = match dict.get_i64(b"BitsPerSample")? {
+            b @ (1 | 2 | 4 | 8 | 12 | 16 | 24 | 32) => b as u32,
+            _ => return None,
+        };
+        let encode = match parse_domain_range(dict, b"Encode") {
+            e if e.len() >= size.len() => e,
+            _ => size.iter().map(|&s| (0.0, (s - 1) as f64)).collect(),
+        };
+        let decode = match parse_domain_range(dict, b"Decode") {
+            d if d.len() >= range.len() => d,
+            _ => range.clone(),
+        };
+        Some(PdfFunction::Sampled {
+            domain,
+            range,
+            size,
+            bits_per_sample,
+            encode,
+            decode,
+            samples: data.clone(),
+        })
     }
 
     fn parse_exponential(
@@ -141,6 +226,7 @@ impl PdfFunction {
         dict: &PdfDict,
         domain: Vec<(f64, f64)>,
         range: Vec<(f64, f64)>,
+        sub: &dyn Fn(&PdfObject) -> Option<Self>,
     ) -> Option<Self> {
         let bounds = dict
             .get_array(b"Bounds")
@@ -153,7 +239,7 @@ impl PdfFunction {
 
         let functions: Vec<PdfFunction> = dict
             .get_array(b"Functions")
-            .map(|arr| arr.iter().filter_map(PdfFunction::parse).collect())
+            .map(|arr| arr.iter().filter_map(sub).collect())
             .unwrap_or_default();
 
         Some(PdfFunction::Stitching {
@@ -185,6 +271,24 @@ impl PdfFunction {
     /// Returns output values.
     pub fn evaluate(&self, input: &[f64]) -> Vec<f64> {
         match self {
+            PdfFunction::Sampled {
+                domain,
+                range,
+                size,
+                bits_per_sample,
+                encode,
+                decode,
+                samples,
+            } => evaluate_sampled(
+                input,
+                domain,
+                range,
+                size,
+                *bits_per_sample,
+                encode,
+                decode,
+                samples,
+            ),
             PdfFunction::Exponential {
                 domain,
                 range,
@@ -257,7 +361,7 @@ impl PdfFunction {
                 let mut stack: Vec<f64> = Vec::new();
                 // Push clamped inputs onto stack
                 for (i, &val) in input.iter().enumerate() {
-                    stack.push(clamp_input(val, &domain[i..i + 1]));
+                    stack.push(clamp_input(val, domain.get(i..).unwrap_or(&[])));
                 }
 
                 execute_ps_ops(&mut stack, ops);
@@ -273,20 +377,111 @@ impl PdfFunction {
     }
 }
 
-fn clamp_input(x: f64, domain: &[(f64, f64)]) -> f64 {
-    if let Some(&(lo, hi)) = domain.first() {
-        x.clamp(lo, hi)
-    } else {
-        x.clamp(0.0, 1.0)
+/// A sampled function at `input` (ISO 32000-2 §7.10.2): each input clipped
+/// to its domain, encoded into the sample table and clipped to it, the
+/// surrounding samples interpolated multilinearly, decoded and clipped to
+/// the range. Missing samples read as 0.
+#[allow(clippy::too_many_arguments)]
+fn evaluate_sampled(
+    input: &[f64],
+    domain: &[(f64, f64)],
+    range: &[(f64, f64)],
+    size: &[usize],
+    bits_per_sample: u32,
+    encode: &[(f64, f64)],
+    decode: &[(f64, f64)],
+    samples: &[u8],
+) -> Vec<f64> {
+    let (m, n) = (size.len(), range.len());
+    // 2^m surrounding samples: more inputs than this is not a usable table.
+    if m == 0 || m > 16 {
+        return vec![0.0; n];
     }
+    let interpolate = |x: f64, (x0, x1): (f64, f64), (y0, y1): (f64, f64)| {
+        if (x1 - x0).abs() < f64::EPSILON {
+            y0
+        } else {
+            y0 + (x - x0) * (y1 - y0) / (x1 - x0)
+        }
+    };
+    // The lower table index and the fraction above it, per input.
+    let mut lower = Vec::with_capacity(m);
+    let mut fraction = Vec::with_capacity(m);
+    for (i, &samples_in) in size.iter().enumerate() {
+        let d = domain.get(i).copied().unwrap_or((0.0, 1.0));
+        let x = clamp_between(input.get(i).copied().unwrap_or(d.0), d.0, d.1);
+        let last = (samples_in - 1) as f64;
+        let e = interpolate(x, d, encode.get(i).copied().unwrap_or((0.0, last))).clamp(0.0, last);
+        let lo = e.floor().min((last - 1.0).max(0.0));
+        lower.push(lo as usize);
+        fraction.push(if samples_in > 1 { e - lo } else { 0.0 });
+    }
+    let max = ((1u64 << bits_per_sample) - 1) as f64;
+    let mut out = vec![0.0; n];
+    for corner in 0..1usize << m {
+        let mut weight = 1.0;
+        let mut index = 0usize;
+        let mut stride = 1usize;
+        for i in 0..m {
+            let up = corner >> i & 1 == 1;
+            weight *= if up { fraction[i] } else { 1.0 - fraction[i] };
+            let at = (lower[i] + up as usize).min(size[i] - 1);
+            index = index.saturating_add(at.saturating_mul(stride));
+            stride = stride.saturating_mul(size[i]);
+        }
+        if weight == 0.0 {
+            continue;
+        }
+        for (j, value) in out.iter_mut().enumerate() {
+            let bit = index
+                .saturating_mul(n)
+                .saturating_add(j)
+                .saturating_mul(bits_per_sample as usize);
+            *value += weight * read_bits(samples, bit, bits_per_sample) as f64;
+        }
+    }
+    out.iter()
+        .enumerate()
+        .map(|(j, &r)| {
+            let d = decode.get(j).copied().unwrap_or((0.0, 1.0));
+            clamp_output(interpolate(r, (0.0, max), d), range, j)
+        })
+        .collect()
+}
+
+/// The `bits`-bit value starting at bit `at` of `data`, high bit first;
+/// bits past the end read as 0.
+fn read_bits(data: &[u8], at: usize, bits: u32) -> u64 {
+    let mut value = 0u64;
+    for k in 0..bits as usize {
+        let bit = at.saturating_add(k);
+        let set = data
+            .get(bit / 8)
+            .is_some_and(|b| b >> (7 - bit % 8) & 1 == 1);
+        value = value << 1 | set as u64;
+    }
+    value
+}
+
+fn clamp_input(x: f64, domain: &[(f64, f64)]) -> f64 {
+    let (lo, hi) = domain.first().copied().unwrap_or((0.0, 1.0));
+    clamp_between(x, lo, hi)
 }
 
 fn clamp_output(val: f64, range: &[(f64, f64)], idx: usize) -> f64 {
-    if let Some(&(lo, hi)) = range.get(idx) {
-        val.clamp(lo, hi)
-    } else {
-        val
+    match range.get(idx) {
+        Some(&(lo, hi)) => clamp_between(val, lo, hi),
+        None => val,
     }
+}
+
+/// `x` clamped between `a` and `b` in either order; unchanged when a bound
+/// is not a number.
+fn clamp_between(x: f64, a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        return x;
+    }
+    x.clamp(a.min(b), a.max(b))
 }
 
 fn parse_domain_range(dict: &PdfDict, key: &[u8]) -> Vec<(f64, f64)> {
