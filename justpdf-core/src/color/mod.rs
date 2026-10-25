@@ -269,9 +269,9 @@ impl ColorSpace {
                         .map(|a| Self::resolve(a, doc))
                         .unwrap_or(Self::DeviceGray),
                 ),
-                tint: resolved(3)
-                    .as_ref()
-                    .and_then(PdfFunction::parse)
+                tint: arr
+                    .get(3)
+                    .and_then(|f| PdfFunction::resolve(f, doc))
                     .map(Box::new),
             },
             Some(b"DeviceN") => Self::DeviceN {
@@ -287,9 +287,9 @@ impl ColorSpace {
                         .map(|a| Self::resolve(a, doc))
                         .unwrap_or(Self::DeviceCMYK),
                 ),
-                tint: resolved(3)
-                    .as_ref()
-                    .and_then(PdfFunction::parse)
+                tint: arr
+                    .get(3)
+                    .and_then(|f| PdfFunction::resolve(f, doc))
                     .map(Box::new),
             },
             _ => Self::from_pdf_object(&obj),

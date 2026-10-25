@@ -10,7 +10,9 @@ use crate::graphics_state::Matrix;
 
 /// Render a shading pattern into the device.
 /// `stream_data` is the decoded binary stream for mesh shadings (Type 4/5/6/7);
-/// `cs` is the shading's `/ColorSpace`, resolved.
+/// `cs` is the shading's `/ColorSpace`, resolved, and `function` its
+/// `/Function`, read through the document.
+#[allow(clippy::too_many_arguments)]
 pub fn render_shading(
     pixmap: &mut Pixmap,
     shading_dict: &PdfDict,
@@ -19,11 +21,20 @@ pub fn render_shading(
     clip_mask: Option<&Mask>,
     stream_data: Option<&[u8]>,
     cs: &ColorSpace,
+    function: Option<&PdfFunction>,
 ) {
     let shading_type = shading_dict.get_i64(b"ShadingType").unwrap_or(0);
 
     match shading_type {
-        1 => render_function_based(pixmap, shading_dict, ctm, page_transform, clip_mask, cs),
+        1 => render_function_based(
+            pixmap,
+            shading_dict,
+            ctm,
+            page_transform,
+            clip_mask,
+            cs,
+            function,
+        ),
         2 => render_axial(pixmap, shading_dict, ctm, page_transform, clip_mask, cs),
         3 => render_radial(pixmap, shading_dict, ctm, page_transform, clip_mask, cs),
         4 | 5 => render_gouraud_mesh(
@@ -59,6 +70,7 @@ fn render_function_based(
     page_transform: &Matrix,
     clip: Option<&Mask>,
     cs: &ColorSpace,
+    func: Option<&PdfFunction>,
 ) {
     // Domain defaults to [0 1 0 1]
     let domain = dict.get_array(b"Domain");
@@ -97,9 +109,6 @@ fn render_function_based(
         Matrix::identity()
     };
 
-    // Try to resolve the function
-    let func = dict.get(b"Function").and_then(PdfFunction::parse);
-
     let transform = shading_matrix.concat(ctm).concat(page_transform).to_skia();
 
     // Sample the function on a grid and render as colored rectangles
@@ -112,7 +121,7 @@ fn render_function_based(
             let sx = x0 + (ix as f64 + 0.5) * dx;
             let sy = y0 + (iy as f64 + 0.5) * dy;
 
-            let color = if let Some(ref f) = func {
+            let color = if let Some(f) = func {
                 let result = f.evaluate(&[sx, sy]);
                 components_to_color(&result, cs)
             } else {

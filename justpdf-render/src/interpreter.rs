@@ -1804,6 +1804,9 @@ impl<'a> RenderInterpreter<'a> {
 
         let mask = self.draw_mask();
         let cs = shading_colour_space(&resolved_dict, self.doc);
+        let function = resolved_dict
+            .get(b"Function")
+            .and_then(|f| PdfFunction::resolve(f, self.doc));
         crate::shading::render_shading(
             &mut self.device.pixmap,
             &resolved_dict,
@@ -1812,6 +1815,7 @@ impl<'a> RenderInterpreter<'a> {
             mask.as_ref().map(SharedMask::mask),
             stream_data.as_deref(),
             &cs,
+            function.as_ref(),
         );
 
         Ok(())
@@ -2126,8 +2130,7 @@ impl<'a> RenderInterpreter<'a> {
     /// value. `None` for `Identity`, no `/TR`, and a function that does not
     /// parse.
     fn transfer_table(&self, smask: &PdfDict) -> Option<[u8; 256]> {
-        let obj = self.resolved(smask.get(b"TR")?)?;
-        let function = PdfFunction::parse(&obj)?;
+        let function = PdfFunction::resolve(smask.get(b"TR")?, self.doc)?;
         let mut table = [0u8; 256];
         for (i, out) in table.iter_mut().enumerate() {
             let v = i as f64 / 255.0;
@@ -2471,6 +2474,9 @@ impl<'a> RenderInterpreter<'a> {
 
         let clip = self.state.clip.as_ref().map(SharedMask::mask);
         let cs = shading_colour_space(&resolved_shading, self.doc);
+        let function = resolved_shading
+            .get(b"Function")
+            .and_then(|f| PdfFunction::resolve(f, self.doc));
         crate::shading::render_shading(
             &mut shading_pixmap,
             &resolved_shading,
@@ -2479,6 +2485,7 @@ impl<'a> RenderInterpreter<'a> {
             clip,
             stream_data.as_deref(),
             &cs,
+            function.as_ref(),
         );
 
         Ok(Some(shading_pixmap))
