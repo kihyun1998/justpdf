@@ -2070,10 +2070,11 @@ impl<'a> RenderInterpreter<'a> {
     }
 
     /// The RGB backdrop a Luminosity soft mask's group is composited over:
-    /// the soft-mask dictionary's `/BC` in the group's `/CS`, black without
-    /// one. A group colour space whose colours cannot be converted here
-    /// (ICCBased, whose profile is not loaded, or an unknown one) is taken
-    /// from the number of `/BC` components: gray, RGB or CMYK.
+    /// the soft-mask dictionary's `/BC` in the group's `/CS` (resolved, so an
+    /// ICCBased space converts through its `/Alternate` or `/N`), black
+    /// without one. Without a usable `/CS`, or when its component count
+    /// differs from `/BC`'s, the space is taken from that count: gray, RGB or
+    /// CMYK.
     fn mask_backdrop(&self, smask: &PdfDict, form: &PdfDict) -> [f64; 3] {
         let Some(PdfObject::Array(bc)) = smask.get(b"BC").and_then(|o| self.resolved(o)) else {
             return [0.0; 3];
@@ -2081,16 +2082,9 @@ impl<'a> RenderInterpreter<'a> {
         let components: Vec<f64> = bc.iter().filter_map(PdfObject::as_f64).collect();
         let group_cs = self
             .dict_entry(form, b"Group")
-            .and_then(|group| group.get(b"CS").and_then(|cs| self.resolved(cs)))
-            .map(|cs| ColorSpace::from_pdf_object(&cs));
+            .and_then(|group| group.get(b"CS").map(|cs| ColorSpace::resolve(cs, self.doc)));
         let cs = match group_cs {
-            Some(
-                cs @ (ColorSpace::DeviceGray
-                | ColorSpace::DeviceRGB
-                | ColorSpace::DeviceCMYK
-                | ColorSpace::CalGray { .. }
-                | ColorSpace::CalRGB { .. }),
-            ) => cs,
+            Some(cs) if cs.num_components() == components.len() => cs,
             _ => match components.len() {
                 1 => ColorSpace::DeviceGray,
                 3 => ColorSpace::DeviceRGB,
@@ -2500,50 +2494,10 @@ fn appearance_mapping(dict: &PdfDict, rect: &justpdf_core::page::Rect) -> Option
 }
 
 fn image_to_rgba(img: &image::DecodedImage) -> Vec<u8> {
-    let pixel_count = (img.width * img.height) as usize;
-    let mut rgba = vec![255u8; pixel_count * 4];
-
-    match img.components {
-        1 => {
-            // Grayscale
-            for i in 0..pixel_count.min(img.data.len()) {
-                let g = img.data[i];
-                rgba[i * 4] = g;
-                rgba[i * 4 + 1] = g;
-                rgba[i * 4 + 2] = g;
-            }
-        }
-        3 => {
-            // RGB
-            for i in 0..pixel_count.min(img.data.len() / 3) {
-                rgba[i * 4] = img.data[i * 3];
-                rgba[i * 4 + 1] = img.data[i * 3 + 1];
-                rgba[i * 4 + 2] = img.data[i * 3 + 2];
-            }
-        }
-        4 => {
-            // CMYK → RGB
-            for i in 0..pixel_count.min(img.data.len() / 4) {
-                let c = img.data[i * 4] as f64 / 255.0;
-                let m = img.data[i * 4 + 1] as f64 / 255.0;
-                let y = img.data[i * 4 + 2] as f64 / 255.0;
-                let k = img.data[i * 4 + 3] as f64 / 255.0;
-                rgba[i * 4] = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
-                rgba[i * 4 + 1] = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
-                rgba[i * 4 + 2] = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
-            }
-        }
-        _ => {
-            // Fill with black
-            for i in 0..pixel_count {
-                rgba[i * 4] = 0;
-                rgba[i * 4 + 1] = 0;
-                rgba[i * 4 + 2] = 0;
-            }
-        }
-    }
-
-    rgba
+    img.to_rgb8()
+        .chunks_exact(3)
+        .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
+        .collect()
 }
 
 fn cs_from_name(name: &[u8]) -> ColorSpace {
