@@ -13,12 +13,13 @@ Reads the layers (OCG) and membership dictionaries (OCMD) of `/OCProperties`, de
 - `add_ocg` only creates the group and does not tag any content.
 - **The raster renderer hides OFF content** (#44): `/OC /Name BDC` looks `Name` up in the current scope's `/Properties` (forms, patterns and annotation appearances included; `optional_content::section_visible`) and skips to the matching `EMC`, nested marked content counted; a Form or image XObject whose `/OC` is hidden is not drawn (`do_xobject`); an annotation whose `/OC` is hidden is not drawn. A nested content stream starts with no hidden section open and the caller's state is restored after it (`nested_stream`), so a hidden `BDC` a form leaves open does not hide the caller's later content, and one the page leaves open does not hide its annotations (both measured by mutation). Until #44 a name was never looked up and XObject and annotation `/OC` were not checked, so OFF content was always drawn (measured 2026-10-06 and 2026-10-24: red where white is right). Pinned by `justpdf-render/tests/render_optional_content.rs` and `justpdf-core/tests/ocg_visibility.rs`.
 - **The SVG renderer hides the same content** (#218) through the same `justpdf-render/src/optional_content.rs` (`section_visible` for `BDC`, `entry_visible` for an `/OC` entry, `default_config`), which both interpreters call, so the operand-to-`/OC`-value resolution exists once: hidden `/OC` sections are skipped through the matching `EMC` in `execute_ops`, a Form or image XObject whose `/OC` is hidden is not drawn (`do_xobject`), and `render_form_xobject` starts the form with no hidden section open and restores the caller's after it. Resetting to 0 on entry cannot be observed there: a `Do` inside a hidden section is never executed and the SVG renderer draws no annotations (inferred), so only the restore is pinned (measured by mutation). Until #218 every marked-content operator was a no-op and `Do` ignored `/OC` (measured 2026-10-07 and 2026-10-25: the red fill present). `svg_and_raster_hide_the_same_content` renders each fixture both ways and compares.
-- Text extraction does not look at OC (#219: decided to leave hidden text out by default, with a caller option to include it). It can call `is_oc_visible`.
+- **Text extraction leaves hidden text out by default** (#219): the shared [Content interpreter](content-interpreter.md) flags glyphs in hidden content through `is_oc_visible` and keeps running every operator, as §8.11.3.1 asks; [Text extraction](text-extraction.md) drops the flagged ones unless `TextExtractOptions::include_hidden`. The renderers instead skip every operator in a hidden section, so state changes there are lost (measured 2026-10-25: `/OC /L BDC 1 0 0 1 50 0 cm EMC` then a fill draws at x 0 where §8.11.3.1 puts it at 50, raster and SVG).
 
 ## Code
 - `justpdf-core/src/ocg/parse.rs` — `read_oc_properties`, `is_ocg_visible`, `is_ocmd_visible`, `parse_ocmd`, `is_oc_visible`, `parse_expression`
 - `justpdf-core/src/ocg/builder.rs` — `add_ocg`, `set_ocg_visibility`, `remove_ocg`
 - `justpdf-core/src/ocg/types.rs` — `OCConfig`, `OCMembership`, `VisibilityExpression`
+- `justpdf-core/src/content/interpret.rs` — `properties_hidden`, `oc_hidden`
 - `justpdf-render/src/optional_content.rs` — `default_config`, `section_visible`, `entry_visible`
 - `justpdf-render/src/interpreter.rs` — `oc_entry_visible`, `do_xobject`, `render_annotations`, `nested_stream`
 - `justpdf-render/src/svg_device.rs` — `execute_ops`, `do_xobject`, `render_form_xobject`
@@ -32,9 +33,9 @@ ISO 32000-1 §8.11.2.2, Table 99 (read raw for #44).
 ## Blast radius
 - [Render interpreter](render-interpreter.md) — `BDC`, `Do` and the nested-stream boundary.
 - [SVG renderer](svg-renderer.md) — `BDC`, `Do` and the form boundary, through `optional_content`.
-- [Text extraction](text-extraction.md) — ignores OC.
+- [Content interpreter](content-interpreter.md), [Text extraction](text-extraction.md) — glyphs flagged hidden, left out by default.
 - [Render annotations](render-annotations.md) — annotation `/OC` checked through `is_oc_visible`.
 - [Compress unused resources](compress-unused-resources.md) — `/Properties` is not a cleanup target.
 
 ## Known holes / open
-- Tracked: #219 (text extraction)
+- The renderers drop state operators inside hidden sections (measured 2026-10-25, above); the interpreter does not.

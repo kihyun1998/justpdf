@@ -118,8 +118,11 @@ impl TextInterpreter<MapResources> {
 }
 
 impl<R: ContentResources> TextInterpreter<R> {
-    fn run(mut self, ops: &[ContentOp]) -> Vec<TextChar> {
-        let mut collector = CharCollector { chars: Vec::new() };
+    fn run(mut self, ops: &[ContentOp], options: &TextExtractOptions) -> Vec<TextChar> {
+        let mut collector = CharCollector {
+            chars: Vec::new(),
+            include_hidden: options.include_hidden,
+        };
         interpret(
             ops,
             &mut self.resources,
@@ -133,10 +136,14 @@ impl<R: ContentResources> TextInterpreter<R> {
 
 struct CharCollector {
     chars: Vec<TextChar>,
+    include_hidden: bool,
 }
 
 impl ContentVisitor for CharCollector {
     fn glyph(&mut self, glyph: &Glyph<'_>, state: &GraphicsState) {
+        if glyph.hidden && !self.include_hidden {
+            return;
+        }
         // Unicode: ToUnicode, then the font's encoding.
         let unicode = match glyph.font {
             Some(f) => {
@@ -354,8 +361,25 @@ fn decode_content_obj(doc: &PdfDocument, obj: &PdfObject) -> Result<Vec<u8>> {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Extract text from a single page.
+/// What text extraction includes.
+#[derive(Debug, Clone, Default)]
+pub struct TextExtractOptions {
+    /// Include text in optional content (layers) hidden under the document's
+    /// default configuration. Off by default: hidden text is left out.
+    pub include_hidden: bool,
+}
+
+/// Extract text from a single page, leaving out hidden optional content.
 pub fn extract_page_text(doc: &PdfDocument, page: &PageInfo) -> Result<PageText> {
+    extract_page_text_with_options(doc, page, &TextExtractOptions::default())
+}
+
+/// Extract text from a single page as `options` say.
+pub fn extract_page_text_with_options(
+    doc: &PdfDocument,
+    page: &PageInfo,
+    options: &TextExtractOptions,
+) -> Result<PageText> {
     // Get content stream data
     let content_data = get_page_content_data(doc, page)?;
 
@@ -373,7 +397,7 @@ pub fn extract_page_text(doc: &PdfDocument, page: &PageInfo) -> Result<PageText>
 
     // Run text interpreter
     let resources = DocResources::page(doc, page.resources_ref.as_ref());
-    let chars = TextInterpreter { resources }.run(&ops);
+    let chars = TextInterpreter { resources }.run(&ops, options);
 
     // Group into structure
     let words = group_into_words(&chars);
@@ -389,13 +413,22 @@ pub fn extract_page_text(doc: &PdfDocument, page: &PageInfo) -> Result<PageText>
     })
 }
 
-/// Extract text from all pages of a document.
+/// Extract text from all pages of a document, leaving out hidden optional
+/// content.
 pub fn extract_all_text(doc: &PdfDocument) -> Result<Vec<PageText>> {
+    extract_all_text_with_options(doc, &TextExtractOptions::default())
+}
+
+/// Extract text from all pages of a document as `options` say.
+pub fn extract_all_text_with_options(
+    doc: &PdfDocument,
+    options: &TextExtractOptions,
+) -> Result<Vec<PageText>> {
     let pages = collect_pages(doc)?;
     let mut results = Vec::with_capacity(pages.len());
 
     for page in &pages {
-        results.push(extract_page_text(doc, page)?);
+        results.push(extract_page_text_with_options(doc, page, options)?);
     }
 
     Ok(results)
@@ -512,7 +545,7 @@ mod tests {
         );
 
         let interpreter = TextInterpreter::new(fonts);
-        let chars = interpreter.run(&ops);
+        let chars = interpreter.run(&ops, &TextExtractOptions::default());
 
         assert_eq!(chars.len(), 5);
         assert_eq!(chars[0].unicode, "H");
@@ -571,7 +604,7 @@ mod tests {
         );
 
         let interpreter = TextInterpreter::new(fonts);
-        let chars = interpreter.run(&ops);
+        let chars = interpreter.run(&ops, &TextExtractOptions::default());
 
         assert_eq!(chars.len(), 2);
         assert_eq!(chars[0].unicode, "H");
@@ -714,7 +747,7 @@ mod tests {
         );
 
         let interpreter = TextInterpreter::new(fonts);
-        let chars = interpreter.run(&ops);
+        let chars = interpreter.run(&ops, &TextExtractOptions::default());
 
         assert_eq!(chars.len(), 10);
         // Line1 starts at y=720
@@ -818,7 +851,7 @@ mod tests {
         );
 
         let interpreter = TextInterpreter::new(fonts);
-        let chars = interpreter.run(&ops);
+        let chars = interpreter.run(&ops, &TextExtractOptions::default());
 
         assert_eq!(chars.len(), 2);
         assert_eq!(chars[0].unicode, "A");
