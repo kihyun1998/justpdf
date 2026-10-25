@@ -48,8 +48,12 @@ _Avoid_: redacted, blacked out
 Text a document carries that no page paints: metadata, bookmarks, destination names, page label prefixes, attachments, scripts, link and action targets, annotation text and form field tooltips.
 _Avoid_: hidden text, document-level text
 
+**Unseen content**:
+Content a page's content stream draws that a viewer does not show: invisible text, optional content that is off in the default configuration, and content wholly outside the crop box.
+_Avoid_: hidden text, hidden content, invisible content
+
 **Sanitized document**:
-A document from which the chosen categories of unpainted text have been removed whole, independent of any redaction area.
+A document from which the chosen categories of unpainted text and unseen content have been removed whole, independent of any redaction area.
 _Avoid_: scrubbed, cleaned, stripped
 
 ### Text extraction
