@@ -36,6 +36,7 @@
 - [Font resolution](../invariant/font-resolution.md) — `resolve_font` resolves fonts apart from text extraction.
 - [resource name scope](../invariant/resource-scope.md)
 - [Content stream recursion](../invariant/content-stream-recursion.md)
+- [Hidden content keeps its state](../invariant/hidden-content-state.md)
 
 ## Blast radius
 - [Raster device](raster-device.md) — the only output target.

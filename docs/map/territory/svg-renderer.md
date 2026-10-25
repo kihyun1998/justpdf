@@ -29,6 +29,7 @@ Outputs a page as an SVG document. It is not a device but a **second interpreter
 - [Font resolution](../invariant/font-resolution.md)
 - [Content stream recursion](../invariant/content-stream-recursion.md)
 - [resource name scope](../invariant/resource-scope.md)
+- [Hidden content keeps its state](../invariant/hidden-content-state.md)
 
 ## Blast radius
 - [Render interpreter](render-interpreter.md) — the original. Operator behaviour fixed on the raster side does not propagate here.

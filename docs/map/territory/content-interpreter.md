@@ -28,6 +28,7 @@ The graphics- and text-state interpreter in core that walks a content stream's p
 ## Cross-cutting invariants
 - [Font resolution](../invariant/font-resolution.md) — `load_font`.
 - [Resource name scope](../invariant/resource-scope.md) — `DocResources`, `Tf`.
+- [Hidden content keeps its state](../invariant/hidden-content-state.md)
 
 ## Blast radius
 - [Text extraction](text-extraction.md) — built on it; any change in position or width shows in extracted text and in [Reading order](reading-order.md), [Text output formats](text-output-formats.md) and [Text search](text-search.md).
