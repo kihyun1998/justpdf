@@ -174,6 +174,20 @@ impl ColorSpace {
         }
     }
 
+    /// The colour `cs`/`CS` set along with this space (ISO 32000-2 §8.6.8):
+    /// 0 in each component (ICCBased too, whatever its `/N`), DeviceCMYK
+    /// `0 0 0 1` (black), Indexed index 0, and Separation and DeviceN tint 1
+    /// in each colorant.
+    pub fn initial_color(&self) -> Color {
+        let components = match self {
+            Self::DeviceCMYK => vec![0.0, 0.0, 0.0, 1.0],
+            Self::Separation { .. } => vec![1.0],
+            Self::DeviceN { names, .. } => vec![1.0; names.len().max(1)],
+            _ => vec![0.0; self.num_components().max(1)],
+        };
+        Color { components }
+    }
+
     /// Number of components in this color space.
     pub fn num_components(&self) -> usize {
         match self {

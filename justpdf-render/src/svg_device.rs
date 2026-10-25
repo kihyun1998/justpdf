@@ -484,17 +484,25 @@ impl<'a> SvgRenderer<'a> {
             // --- Color operators ---
             "CS" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    self.state.stroke_cs = cs_from_name(name);
-                    if name != b"Pattern" {
-                        self.state.stroke_pattern = None;
+                    match self.colour_space(name) {
+                        Some(cs) => {
+                            self.state.stroke_color = cs.initial_color();
+                            self.state.stroke_cs = cs;
+                            self.state.stroke_pattern = None;
+                        }
+                        None => self.state.stroke_cs = ColorSpace::DeviceRGB,
                     }
                 }
             }
             "cs" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    self.state.fill_cs = cs_from_name(name);
-                    if name != b"Pattern" {
-                        self.state.fill_pattern = None;
+                    match self.colour_space(name) {
+                        Some(cs) => {
+                            self.state.fill_color = cs.initial_color();
+                            self.state.fill_cs = cs;
+                            self.state.fill_pattern = None;
+                        }
+                        None => self.state.fill_cs = ColorSpace::DeviceRGB,
                     }
                 }
             }
@@ -1188,6 +1196,23 @@ impl<'a> SvgRenderer<'a> {
         Ok(())
     }
 
+    /// The colour space `cs`/`CS` name: a device space by name, else the
+    /// `/ColorSpace` resource of that name in the current scope, resolved
+    /// (DeviceRGB when there is none). `None` for `/Pattern`.
+    fn colour_space(&self, name: &[u8]) -> Option<ColorSpace> {
+        match name {
+            b"DeviceGray" | b"G" => return Some(ColorSpace::DeviceGray),
+            b"DeviceRGB" | b"RGB" => return Some(ColorSpace::DeviceRGB),
+            b"DeviceCMYK" | b"CMYK" => return Some(ColorSpace::DeviceCMYK),
+            b"Pattern" => return None,
+            _ => {}
+        }
+        match self.resources.lookup(self.doc, b"ColorSpace", name) {
+            Ok(Some(found)) => Some(ColorSpace::resolve(&found.object, self.doc)),
+            _ => Some(ColorSpace::DeviceRGB),
+        }
+    }
+
     fn render_form_xobject(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
         let ops = parse_content_stream(data).map_err(RenderError::Core)?;
 
@@ -1299,16 +1324,6 @@ enum XObjectData {
 /// Extract operand as f64 at the given index.
 fn f(operands: &[Operand], idx: usize) -> f64 {
     operands.get(idx).and_then(|o| o.as_f64()).unwrap_or(0.0)
-}
-
-/// Map a PDF color space name to ColorSpace.
-fn cs_from_name(name: &[u8]) -> ColorSpace {
-    match name {
-        b"DeviceRGB" => ColorSpace::DeviceRGB,
-        b"DeviceCMYK" => ColorSpace::DeviceCMYK,
-        b"DeviceGray" => ColorSpace::DeviceGray,
-        _ => ColorSpace::DeviceGray,
-    }
 }
 
 /// Format a float compactly (avoid trailing zeros).

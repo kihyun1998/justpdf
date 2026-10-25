@@ -9,7 +9,7 @@ Rasterizes type 1–7 shadings (function-based, axial, radial, mesh) for the `sh
 ## Design model
 - Only function-based (type 1) uses core `PdfFunction`. Axial and radial read `C0`/`C1`/`Bounds` again by hand (type 2 and 3 functions only) — separate from what [PDF functions](pdf-functions.md) supports.
 - Patch meshes ignore the Bézier control points ("approximation").
-- Color conversion is a name-only copy (`components_to_color`, `color_space_components`) — one of the color conversion copies in [Image pixel layout](../invariant/image-pixel-layout.md).
+- **Colours convert through the shading's resolved `/ColorSpace`** (#231): `render_shading` takes a `&ColorSpace` that the interpreter resolves with `ColorSpace::resolve` (name, array or reference; DeviceRGB without one), for `sh` and shading patterns alike. `components_to_color` converts through `Color::to_rgb` and truncates each channel as before, so device spaces are unchanged (the DeviceGray control keeps its pixels), and a mesh vertex carries `num_components` values. Until #231 `/ColorSpace` was read with `as_name` only and anything but Gray/CMYK was taken as RGB (measured 2026-10-06: a Separation and an ICCBased gray shading both came out red, (27,0,0) → (231,0,0)). Pinned by `tests/render_colour_spaces.rs`.
 - An unknown type is ignored as "unsupported".
 
 ## Code

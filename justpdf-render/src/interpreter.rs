@@ -799,17 +799,25 @@ impl<'a> RenderInterpreter<'a> {
             // --- Color operators ---
             "CS" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    self.state.stroke_cs = cs_from_name(name);
-                    if name != b"Pattern" {
-                        self.state.stroke_pattern = None;
+                    match self.colour_space(name) {
+                        Some(cs) => {
+                            self.state.stroke_color = cs.initial_color();
+                            self.state.stroke_cs = cs;
+                            self.state.stroke_pattern = None;
+                        }
+                        None => self.state.stroke_cs = ColorSpace::DeviceRGB,
                     }
                 }
             }
             "cs" => {
                 if let Some(name) = operands.first().and_then(|o| o.as_name()) {
-                    self.state.fill_cs = cs_from_name(name);
-                    if name != b"Pattern" {
-                        self.state.fill_pattern = None;
+                    match self.colour_space(name) {
+                        Some(cs) => {
+                            self.state.fill_color = cs.initial_color();
+                            self.state.fill_cs = cs;
+                            self.state.fill_pattern = None;
+                        }
+                        None => self.state.fill_cs = ColorSpace::DeviceRGB,
                     }
                 }
             }
@@ -1795,6 +1803,7 @@ impl<'a> RenderInterpreter<'a> {
         }
 
         let mask = self.draw_mask();
+        let cs = shading_colour_space(&resolved_dict, self.doc);
         crate::shading::render_shading(
             &mut self.device.pixmap,
             &resolved_dict,
@@ -1802,6 +1811,7 @@ impl<'a> RenderInterpreter<'a> {
             &self.page_transform,
             mask.as_ref().map(SharedMask::mask),
             stream_data.as_deref(),
+            &cs,
         );
 
         Ok(())
@@ -1937,6 +1947,23 @@ impl<'a> RenderInterpreter<'a> {
         let product = SharedMask::new(combined);
         self.combined_mask = Some((clip, soft, product.clone()));
         Some(product)
+    }
+
+    /// The colour space `cs`/`CS` name: a device space by name, else the
+    /// `/ColorSpace` resource of that name in the current scope, resolved
+    /// (DeviceRGB when there is none). `None` for `/Pattern`.
+    fn colour_space(&self, name: &[u8]) -> Option<ColorSpace> {
+        match name {
+            b"DeviceGray" | b"G" => return Some(ColorSpace::DeviceGray),
+            b"DeviceRGB" | b"RGB" => return Some(ColorSpace::DeviceRGB),
+            b"DeviceCMYK" | b"CMYK" => return Some(ColorSpace::DeviceCMYK),
+            b"Pattern" => return None,
+            _ => {}
+        }
+        match self.resources.lookup(self.doc, b"ColorSpace", name) {
+            Ok(Some(found)) => Some(ColorSpace::resolve(&found.object, self.doc)),
+            _ => Some(ColorSpace::DeviceRGB),
+        }
     }
 
     /// `dict[key]` as a dictionary, through an indirect reference when it is
@@ -2443,6 +2470,7 @@ impl<'a> RenderInterpreter<'a> {
         let effective_ctm = pattern_matrix.concat(&self.state.ctm);
 
         let clip = self.state.clip.as_ref().map(SharedMask::mask);
+        let cs = shading_colour_space(&resolved_shading, self.doc);
         crate::shading::render_shading(
             &mut shading_pixmap,
             &resolved_shading,
@@ -2450,6 +2478,7 @@ impl<'a> RenderInterpreter<'a> {
             &self.page_transform,
             clip,
             stream_data.as_deref(),
+            &cs,
         );
 
         Ok(Some(shading_pixmap))
@@ -2477,6 +2506,13 @@ struct Appearance {
     data: Vec<u8>,
 }
 
+/// A shading dictionary's `/ColorSpace`, resolved; DeviceRGB without one.
+fn shading_colour_space(dict: &PdfDict, doc: &PdfDocument) -> ColorSpace {
+    dict.get(b"ColorSpace")
+        .map(|cs| ColorSpace::resolve(cs, doc))
+        .unwrap_or(ColorSpace::DeviceRGB)
+}
+
 /// `[a b c d e f]` as a [`Matrix`].
 fn matrix_of([a, b, c, d, e, f]: [f64; 6]) -> Matrix {
     Matrix { a, b, c, d, e, f }
@@ -2498,15 +2534,6 @@ fn image_to_rgba(img: &image::DecodedImage) -> Vec<u8> {
         .chunks_exact(3)
         .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
         .collect()
-}
-
-fn cs_from_name(name: &[u8]) -> ColorSpace {
-    match name {
-        b"DeviceGray" | b"G" => ColorSpace::DeviceGray,
-        b"DeviceRGB" | b"RGB" => ColorSpace::DeviceRGB,
-        b"DeviceCMYK" | b"CMYK" => ColorSpace::DeviceCMYK,
-        _ => ColorSpace::DeviceRGB, // fallback
-    }
 }
 
 /// Parse a CIDToGIDMap stream: 2 bytes (big-endian) per CID entry.

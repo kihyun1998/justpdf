@@ -13,7 +13,7 @@ The PDF color space model (Device*, CalGray/CalRGB, Lab, Indexed, Separation, De
 - Besides this module (`cmyk_to_rgb`), the renderer, SVG, shading and compression each keep their own copy of CMYK→RGB conversion — [Image pixel layout](../invariant/image-pixel-layout.md).
 
 ## Code
-- `justpdf-core/src/color/mod.rs` — `ColorSpace`, `resolve`, `substitute`, `from_pdf_object`, `from_array`, `num_components`, `Color`, `to_rgb`, `cmyk_to_rgb`, `rgb_to_cmyk`, `OutputIntent`, `read_output_intents`, `parse_overprint`
+- `justpdf-core/src/color/mod.rs` — `ColorSpace`, `resolve`, `substitute`, `initial_color`, `from_pdf_object`, `from_array`, `num_components`, `Color`, `to_rgb`, `cmyk_to_rgb`, `rgb_to_cmyk`, `OutputIntent`, `read_output_intents`, `parse_overprint`
 - `justpdf-core/src/color/icc.rs` — `IccProfile`, `parse_icc_profile`, `icc_to_srgb`, `RenderingIntent`
 
 ## Reference behaviour
@@ -23,8 +23,8 @@ The PDF color space model (Device*, CalGray/CalRGB, Lab, Indexed, Separation, De
 - [Image pixel layout](../invariant/image-pixel-layout.md) — the original of the color conversion copies.
 
 ## Blast radius
-- [Render interpreter](render-interpreter.md) — `cs`/`CS` use a local `cs_from_name` (names only) and bypass this module's array color spaces. Extending color space support starts there.
-- [SVG renderer](svg-renderer.md), [Render shading](render-shading.md) — each has its own name-only copy.
+- [Render interpreter](render-interpreter.md), [SVG renderer](svg-renderer.md) — `cs`/`CS` resolve resource colour spaces with `resolve` and set `initial_color` (#231).
+- [Render shading](render-shading.md) — converts shading output through `to_rgb` in the resolved space (#231).
 - [Image decoding](image-decoding.md) — resolves an image's colour space with `resolve` and converts samples with `to_rgb`.
 - [Compress images](compress-images.md) — skips CMYK; converts through `DecodedImage::to_rgb8`.
 
