@@ -12,10 +12,12 @@ use justpdf_core::font::{
 };
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
+use justpdf_core::ocg::OCConfig;
 use justpdf_core::page::PageInfo;
 
 use crate::error::{RenderError, Result};
 use crate::graphics_state::{FontKey, GraphicsState, LineCap, LineJoin, Matrix, PdfBlendMode};
+use crate::optional_content;
 use crate::resources::ResourceScopes;
 
 /// Resolved font for SVG rendering.
@@ -57,6 +59,11 @@ pub struct SvgRenderer<'a> {
     xobject_depth: u32,
     /// Form XObjects being executed, outermost first.
     running_forms: Vec<IndirectRef>,
+    /// The document's default optional content configuration.
+    oc_config: Option<OCConfig>,
+    /// Marked-content nesting inside a hidden `/OC` section; while above 0,
+    /// operators other than `BMC`/`BDC`/`EMC` are skipped.
+    oc_skip_depth: u32,
     /// Page dimensions in points.
     page_width: f64,
     page_height: f64,
@@ -85,6 +92,8 @@ impl<'a> SvgRenderer<'a> {
             clip_id_stack: Vec::new(),
             xobject_depth: 0,
             running_forms: Vec::new(),
+            oc_config: optional_content::default_config(doc),
+            oc_skip_depth: 0,
             page_width,
             page_height,
         }
@@ -270,6 +279,14 @@ impl<'a> SvgRenderer<'a> {
 
     fn execute_ops(&mut self, ops: &[ContentOp]) -> Result<()> {
         for op in ops {
+            if self.oc_skip_depth > 0 {
+                match op.operator_str() {
+                    "BMC" | "BDC" => self.oc_skip_depth += 1,
+                    "EMC" => self.oc_skip_depth -= 1,
+                    _ => {}
+                }
+                continue;
+            }
             self.execute_op(op)?;
         }
         Ok(())
@@ -699,8 +716,20 @@ impl<'a> SvgRenderer<'a> {
             // --- Inline image (skip for SVG) ---
             "BI" => {}
 
-            // --- Marked content (ignore) ---
-            "BMC" | "BDC" | "EMC" | "MP" | "DP" => {}
+            // --- Marked content: a hidden /OC section is skipped through its matching EMC ---
+            "BDC" => {
+                if let Some(config) = &self.oc_config
+                    && !optional_content::section_visible(
+                        operands,
+                        &self.resources,
+                        self.doc,
+                        config,
+                    )
+                {
+                    self.oc_skip_depth = 1;
+                }
+            }
+            "BMC" | "EMC" | "MP" | "DP" => {}
 
             // --- Shading (skip for now) ---
             "sh" => {}
@@ -1094,6 +1123,12 @@ impl<'a> SvgRenderer<'a> {
             Some(x) => x,
             None => return Ok(()),
         };
+        let dict = match &xobj {
+            XObjectData::Image { dict, .. } | XObjectData::Form { dict, .. } => dict,
+        };
+        if !optional_content::entry_visible(dict, self.doc, self.oc_config.as_ref()) {
+            return Ok(());
+        }
 
         match xobj {
             XObjectData::Image { dict, data } => {
@@ -1216,12 +1251,14 @@ impl<'a> SvgRenderer<'a> {
     fn render_form_xobject(&mut self, dict: &PdfDict, data: &[u8]) -> Result<()> {
         let ops = parse_content_stream(data).map_err(RenderError::Core)?;
 
-        // Run the form on a copy of the state, where Q cannot pop below it;
-        // afterwards unwind to the depth on entry
+        // Run the form on a copy of the state, where Q cannot pop below it,
+        // with no hidden section open; afterwards unwind to the depth on
+        // entry and restore the caller's hidden section
         let depth = self.state_stack.len();
         self.state_stack.push(self.state.clone());
         self.clip_id_stack.push(self.active_clip_id.clone());
         let floor = std::mem::replace(&mut self.state_floor, depth + 1);
+        let oc_skip = std::mem::replace(&mut self.oc_skip_depth, 0);
 
         if let Some(matrix_arr) = dict.get_array(b"Matrix")
             && matrix_arr.len() >= 6
@@ -1247,6 +1284,7 @@ impl<'a> SvgRenderer<'a> {
             self.active_clip_id = clip_id;
         }
         self.state_floor = floor;
+        self.oc_skip_depth = oc_skip;
 
         Ok(())
     }
