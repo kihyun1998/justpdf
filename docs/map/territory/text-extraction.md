@@ -36,4 +36,4 @@ Runs the [Content interpreter](content-interpreter.md) over page content for gly
 
 ## Known holes / open
 - Text inside Form XObjects is not extracted (measured 2026-10-06: a page showing `(OnPage) Tj` and drawing a form that shows `(InsideForm) Tj` extracts as `OnPage` with `justpdf-cli text`; Xpdf 4.00 `pdftotext` gives `OnPage InsideForm`).
-- Tracked: #48 (Form XObject text), #219 (hidden optional-content text, blocked by #44)
+- Tracked: #48 (Form XObject text), #219 (hidden optional-content text; `ocg::is_oc_visible` is available since #44)

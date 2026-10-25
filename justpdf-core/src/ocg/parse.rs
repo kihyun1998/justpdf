@@ -282,10 +282,14 @@ pub fn is_ocg_visible(ocg_ref: &IndirectRef, config: &OCConfig) -> bool {
     }
 }
 
-/// Determine visibility of an OCMD given a configuration.
+/// Determine visibility of an OCMD given a configuration: its `/VE`
+/// expression when it has one (ISO 32000-2 Table 99: preferred to `/OCGs` and
+/// `/P`), else `/P` over `/OCGs`. With neither it has no effect: visible.
 pub fn is_ocmd_visible(ocmd: &OCMembership, config: &OCConfig) -> bool {
+    if let Some(expression) = &ocmd.expression {
+        return is_expression_true(expression, config);
+    }
     if ocmd.groups.is_empty() {
-        // Per PDF spec, if no groups are specified, content is visible
         return true;
     }
 
@@ -297,11 +301,22 @@ pub fn is_ocmd_visible(ocmd: &OCMembership, config: &OCConfig) -> bool {
     }
 }
 
+/// A visibility expression's value: an OCG is true when ON.
+fn is_expression_true(expression: &VisibilityExpression, config: &OCConfig) -> bool {
+    match expression {
+        VisibilityExpression::Group(r) => is_ocg_visible(r, config),
+        VisibilityExpression::And(es) => es.iter().all(|e| is_expression_true(e, config)),
+        VisibilityExpression::Or(es) => es.iter().any(|e| is_expression_true(e, config)),
+        VisibilityExpression::Not(e) => !is_expression_true(e, config),
+    }
+}
+
 /// Parse an OCMD (Optional Content Membership Dictionary).
 ///
 /// An OCMD contains:
-/// - /OCGs: a single OCG reference or an array of OCG references
+/// - /OCGs: a single OCG reference or an array of OCG references (optional)
 /// - /P: visibility policy name (AllOn, AnyOn, AllOff, AnyOff)
+/// - /VE: a visibility expression (optional)
 pub fn parse_ocmd(dict: &PdfDict) -> Option<OCMembership> {
     // Verify this is an OCMD (optional check, some PDFs omit /Type)
     if let Some(type_name) = dict.get_name(b"Type")
@@ -318,7 +333,7 @@ pub fn parse_ocmd(dict: &PdfDict) -> Option<OCMembership> {
             .filter_map(|o| o.as_reference())
             .cloned()
             .collect(),
-        _ => return None,
+        _ => Vec::new(),
     };
 
     let policy = dict
@@ -326,7 +341,68 @@ pub fn parse_ocmd(dict: &PdfDict) -> Option<OCMembership> {
         .map(VisibilityPolicy::from_name)
         .unwrap_or(VisibilityPolicy::AnyOn);
 
-    Some(OCMembership { groups, policy })
+    let expression = dict.get(b"VE").and_then(parse_expression);
+
+    Some(OCMembership {
+        groups,
+        policy,
+        expression,
+    })
+}
+
+/// A `/VE` element: an OCG reference or `[operator operand…]`.
+fn parse_expression(obj: &PdfObject) -> Option<VisibilityExpression> {
+    match obj {
+        PdfObject::Reference(r) => Some(VisibilityExpression::Group(r.clone())),
+        PdfObject::Array(arr) => {
+            let operands: Vec<VisibilityExpression> =
+                arr.iter().skip(1).filter_map(parse_expression).collect();
+            match arr.first()?.as_name()? {
+                b"And" => Some(VisibilityExpression::And(operands)),
+                b"Or" => Some(VisibilityExpression::Or(operands)),
+                b"Not" => Some(VisibilityExpression::Not(Box::new(
+                    operands.into_iter().next()?,
+                ))),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Whether content whose `/OC` entry (or `/Properties` resource) is `oc` is
+/// visible under `config`: an OCG named by reference by its state, an OCMD
+/// (by reference or inline) by [`is_ocmd_visible`]. Anything else — an inline
+/// OCG, which has no reference to look up, a value that is neither, a
+/// reference that does not resolve — is visible.
+pub fn is_oc_visible(oc: &PdfObject, doc: &PdfDocument, config: &OCConfig) -> bool {
+    let (reference, dict) = match oc {
+        PdfObject::Reference(r) => match doc.resolve(r) {
+            Ok(PdfObject::Dict(d)) => (Some(r), d),
+            _ => return true,
+        },
+        PdfObject::Dict(d) => (None, d.clone()),
+        _ => return true,
+    };
+    match dict.get_name(b"Type") {
+        Some(b"OCG") => reference.is_none_or(|r| is_ocg_visible(r, config)),
+        Some(b"OCMD") | None => {
+            // /OCGs and /VE may themselves be given by reference.
+            let mut dict = dict;
+            for key in [b"OCGs".as_slice(), b"VE"] {
+                if let Some(PdfObject::Reference(r)) = dict.get(key)
+                    && let Ok(value @ PdfObject::Array(_)) = doc.resolve(r)
+                {
+                    dict.insert(key.to_vec(), value);
+                }
+            }
+            if dict.get(b"OCGs").is_none() && dict.get(b"VE").is_none() {
+                return true;
+            }
+            parse_ocmd(&dict).is_none_or(|ocmd| is_ocmd_visible(&ocmd, config))
+        }
+        Some(_) => true,
+    }
 }
 
 #[cfg(test)]
@@ -396,6 +472,7 @@ mod tests {
         let ocmd = OCMembership {
             groups: Vec::new(),
             policy: VisibilityPolicy::AllOn,
+            expression: None,
         };
         assert!(is_ocmd_visible(&ocmd, &config));
     }
@@ -406,6 +483,7 @@ mod tests {
         let ocmd = OCMembership {
             groups: vec![make_ref(1), make_ref(2)],
             policy: VisibilityPolicy::AllOn,
+            expression: None,
         };
         assert!(is_ocmd_visible(&ocmd, &config));
     }
@@ -416,6 +494,7 @@ mod tests {
         let ocmd = OCMembership {
             groups: vec![make_ref(1), make_ref(2)],
             policy: VisibilityPolicy::AllOn,
+            expression: None,
         };
         assert!(!is_ocmd_visible(&ocmd, &config));
     }
@@ -426,6 +505,7 @@ mod tests {
         let ocmd = OCMembership {
             groups: vec![make_ref(1), make_ref(2)],
             policy: VisibilityPolicy::AnyOn,
+            expression: None,
         };
         assert!(is_ocmd_visible(&ocmd, &config));
     }
@@ -436,6 +516,7 @@ mod tests {
         let ocmd = OCMembership {
             groups: vec![make_ref(1), make_ref(2)],
             policy: VisibilityPolicy::AnyOn,
+            expression: None,
         };
         assert!(!is_ocmd_visible(&ocmd, &config));
     }
@@ -446,6 +527,7 @@ mod tests {
         let ocmd = OCMembership {
             groups: vec![make_ref(1), make_ref(2)],
             policy: VisibilityPolicy::AllOff,
+            expression: None,
         };
         assert!(is_ocmd_visible(&ocmd, &config));
     }
@@ -456,6 +538,7 @@ mod tests {
         let ocmd = OCMembership {
             groups: vec![make_ref(1), make_ref(2)],
             policy: VisibilityPolicy::AllOff,
+            expression: None,
         };
         assert!(!is_ocmd_visible(&ocmd, &config));
     }
@@ -466,6 +549,7 @@ mod tests {
         let ocmd = OCMembership {
             groups: vec![make_ref(1), make_ref(2)],
             policy: VisibilityPolicy::AnyOff,
+            expression: None,
         };
         assert!(is_ocmd_visible(&ocmd, &config));
     }
@@ -476,6 +560,7 @@ mod tests {
         let ocmd = OCMembership {
             groups: vec![make_ref(1), make_ref(2)],
             policy: VisibilityPolicy::AnyOff,
+            expression: None,
         };
         assert!(!is_ocmd_visible(&ocmd, &config));
     }
@@ -513,8 +598,11 @@ mod tests {
 
     #[test]
     fn test_parse_ocmd_no_ocgs() {
-        let dict = PdfDict::new();
-        assert!(parse_ocmd(&dict).is_none());
+        // Without /OCGs (and /VE) an OCMD has no effect on visibility.
+        let ocmd = parse_ocmd(&PdfDict::new()).unwrap();
+        assert!(ocmd.groups.is_empty() && ocmd.expression.is_none());
+        let config = make_default_off_config(vec![]);
+        assert!(is_ocmd_visible(&ocmd, &config));
     }
 
     #[test]

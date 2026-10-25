@@ -19,7 +19,7 @@ After drawing the page content, draws each annotation's `/AP /N` appearance stre
 - **Clipped to `/BBox`** in form space (`clip_to_bbox`): the BBox rectangle through `/Matrix × A × CTM`, intersected with any clip already set. Popping the graphics state after each annotation restores the clip (#50). Until #50 the device clip mask was saved and restored by hand around each annotation.
 - Page-content `Do` does not map onto a `/Rect`, but since #365 it clips to `/BBox` through the same `clip_to_bbox` ([Render clipping](render-clipping.md)). An appearance is not reached through `do_xobject`, so it is clipped once.
 - The appearance form is drawn in its own `/Resources` scope, else the page's — [resource name scope](../invariant/resource-scope.md).
-- The annotation's `/OC` is not checked.
+- An annotation whose `/OC` is hidden under the default configuration is not drawn (`ocg::is_oc_visible`, #44) — [optional content](optional-content.md).
 
 ## Code
 - `justpdf-render/src/interpreter.rs` — `render_annotations`, `normal_appearance`, `clip_to_bbox`, `appearance_mapping`, `form_matrix`, `render_form_xobject`
@@ -40,4 +40,4 @@ ISO 32000-2 §12.5.5 (the algorithm mapping the appearance stream onto the annot
 
 ## Known holes / open
 - NoZoom / NoRotate, `/AP /D` and `/R`, the Print flag: not handled.
-- Tracked: #44 (annotation `/OC`), #41 (the core generator's coordinates)
+- Tracked: #41 (the core generator's coordinates)

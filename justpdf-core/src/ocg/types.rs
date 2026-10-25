@@ -88,6 +88,19 @@ pub struct OCMembership {
     pub groups: Vec<IndirectRef>,
     /// Visibility policy.
     pub policy: VisibilityPolicy,
+    /// The `/VE` visibility expression, used in preference to `groups` and
+    /// `policy` when present.
+    pub expression: Option<VisibilityExpression>,
+}
+
+/// A visibility expression (`/VE`): an OCG's state, or a boolean operator
+/// over sub-expressions.
+#[derive(Debug, Clone)]
+pub enum VisibilityExpression {
+    Group(IndirectRef),
+    And(Vec<VisibilityExpression>),
+    Or(Vec<VisibilityExpression>),
+    Not(Box<VisibilityExpression>),
 }
 
 /// Configuration for optional content.
