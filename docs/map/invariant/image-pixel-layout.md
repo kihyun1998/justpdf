@@ -3,7 +3,7 @@
 ## The fact
 What the pixel buffer `decode_image` returns means — component count, bits per component, color space, the bit packing of masks — varies with the image dictionary and the decode path (DCT/JPX/JBIG2/CCITT/raw). Every place that interprets the buffer as RGB(A) must interpret it by **the same rule**, and that rule must follow `/BitsPerComponent`, array color spaces (Indexed, ICCBased, Separation), `/Decode`, and each path's output shape (e.g. CCITT and JBIG2 give one byte per pixel).
 
-**The rule lives in `DecodedImage::to_rgb8`** (#46): the raster renderer, the SVG renderer and the compressor (recompression and grayscale) all turn samples into RGB through it, so `/BitsPerComponent`, array colour spaces and `/Decode` are read once ([Image decoding](../territory/image-decoding.md)). Still separate: shading's `components_to_color`, the renderers' `cs_from_name` for fill and stroke colours (#231), and the 1-bit mask unpacking (#42).
+**The rule lives in `DecodedImage::to_rgb8`** (#46): the raster renderer, the SVG renderer and the compressor (recompression and grayscale) all turn samples into RGB through it, so `/BitsPerComponent`, array colour spaces and `/Decode` are read once ([Image decoding](../territory/image-decoding.md)). Fill and stroke colours and shadings convert through the same core `Color::to_rgb` since #231. Still separate: the 1-bit mask unpacking (#42).
 
 ## Why it is cross-cutting
 Decoding is in one place, but **interpretation lives in several places, each its own copy**, and none calls another. For CMYK→RGB conversion alone, besides core `cmyk_to_rgb` there are copies in the renderer, SVG, shading and compression. All of them implicitly assume "8-bit, components 1/3/4, named color space". Fixing one copy leaves the rest as they were.
@@ -11,8 +11,8 @@ Decoding is in one place, but **interpretation lives in several places, each its
 ## Territories it holds in
 - [Image decoding](../territory/image-decoding.md) — the starting point (`decode_image`, reads only the color space name).
 - [Render images](../territory/render-images.md) — `image_to_rgba`, 1-bit mask unpacking (mismatched with the CCITT and JBIG2 output).
-- [SVG renderer](../territory/svg-renderer.md) — a copy of `image_to_rgba`, a copy of `cs_from_name`.
-- [Render shading](../territory/render-shading.md) — `components_to_color` (a color conversion copy).
+- [SVG renderer](../territory/svg-renderer.md) — `image_to_rgba` wraps `to_rgb8`; `cs`/`CS` resolve through core (#231).
+- [Render shading](../territory/render-shading.md) — `components_to_color` wraps `Color::to_rgb` (#231).
 - [Compress images](../territory/compress-images.md) — `to_rgb_pixels` (a CMYK copy, f32).
 - [Compress grayscale](../territory/compress-grayscale.md) — the luminosity formula (Rec.601; the renderer's masks use Rec.709).
 - [Color spaces](../territory/color-spaces.md) — the original `cmyk_to_rgb` and the unused array color space model.
@@ -30,7 +30,7 @@ Condition: with 8-bit DeviceRGB/Gray JPEG, all of it is fine — common test inp
 ## Discovery history
 No recorded incident. On 2026-09-23, while writing the map, two research agents (stream/image/color, render) reported the copies independently. All of it is inferred from reading code, and `decode_image` has no unit test.
 
-- Tracked: #42 (render: double decode, mask row padding and shape, inline images), #231 (fill and stroke colour spaces)
+- Tracked: #42 (render: double decode, mask row padding and shape, inline images)
 
 ## Where it will recur
 **A function that indexes the bytes of a `DecodedImage` or converts color components to RGB is subject to this invariant.** Before writing a new one, find the existing copies with the command above, and use the functions in [Color spaces](../territory/color-spaces.md) where possible. Unless test inputs include Indexed, 16-bit, CMYK and CCITT, this invariant is not checked.

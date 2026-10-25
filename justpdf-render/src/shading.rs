@@ -1,3 +1,4 @@
+use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::function::PdfFunction;
 use justpdf_core::object::{PdfDict, PdfObject};
 use tiny_skia::{
@@ -8,7 +9,8 @@ use tiny_skia::{
 use crate::graphics_state::Matrix;
 
 /// Render a shading pattern into the device.
-/// `stream_data` is the decoded binary stream for mesh shadings (Type 4/5/6/7).
+/// `stream_data` is the decoded binary stream for mesh shadings (Type 4/5/6/7);
+/// `cs` is the shading's `/ColorSpace`, resolved.
 pub fn render_shading(
     pixmap: &mut Pixmap,
     shading_dict: &PdfDict,
@@ -16,13 +18,14 @@ pub fn render_shading(
     page_transform: &Matrix,
     clip_mask: Option<&Mask>,
     stream_data: Option<&[u8]>,
+    cs: &ColorSpace,
 ) {
     let shading_type = shading_dict.get_i64(b"ShadingType").unwrap_or(0);
 
     match shading_type {
-        1 => render_function_based(pixmap, shading_dict, ctm, page_transform, clip_mask),
-        2 => render_axial(pixmap, shading_dict, ctm, page_transform, clip_mask),
-        3 => render_radial(pixmap, shading_dict, ctm, page_transform, clip_mask),
+        1 => render_function_based(pixmap, shading_dict, ctm, page_transform, clip_mask, cs),
+        2 => render_axial(pixmap, shading_dict, ctm, page_transform, clip_mask, cs),
+        3 => render_radial(pixmap, shading_dict, ctm, page_transform, clip_mask, cs),
         4 | 5 => render_gouraud_mesh(
             pixmap,
             shading_dict,
@@ -30,6 +33,7 @@ pub fn render_shading(
             page_transform,
             clip_mask,
             stream_data,
+            cs,
         ),
         6 | 7 => render_patch_mesh(
             pixmap,
@@ -38,6 +42,7 @@ pub fn render_shading(
             page_transform,
             clip_mask,
             stream_data,
+            cs,
         ),
         _ => {} // unsupported
     }
@@ -53,6 +58,7 @@ fn render_function_based(
     ctm: &Matrix,
     page_transform: &Matrix,
     clip: Option<&Mask>,
+    cs: &ColorSpace,
 ) {
     // Domain defaults to [0 1 0 1]
     let domain = dict.get_array(b"Domain");
@@ -72,11 +78,6 @@ fn render_function_based(
         .and_then(|a| a.get(3))
         .and_then(|o| o.as_f64())
         .unwrap_or(1.0);
-
-    let cs_name = dict
-        .get(b"ColorSpace")
-        .and_then(|o| o.as_name())
-        .unwrap_or(b"DeviceRGB");
 
     // Matrix from function domain to shading space
     let shading_matrix = if let Some(matrix_arr) = dict.get_array(b"Matrix") {
@@ -113,10 +114,10 @@ fn render_function_based(
 
             let color = if let Some(ref f) = func {
                 let result = f.evaluate(&[sx, sy]);
-                components_to_color(&result, cs_name)
+                components_to_color(&result, cs)
             } else {
                 // No function — gray fallback
-                components_to_color(&[0.5, 0.5, 0.5], cs_name)
+                components_to_color(&[0.5, 0.5, 0.5], cs)
             };
 
             let mut paint = Paint::default();
@@ -149,6 +150,7 @@ fn render_axial(
     ctm: &Matrix,
     page_transform: &Matrix,
     clip: Option<&Mask>,
+    cs: &ColorSpace,
 ) {
     let coords = match dict.get_array(b"Coords") {
         Some(arr) if arr.len() >= 4 => arr,
@@ -160,7 +162,7 @@ fn render_axial(
     let x1 = coords[2].as_f64().unwrap_or(0.0) as f32;
     let y1 = coords[3].as_f64().unwrap_or(0.0) as f32;
 
-    let stops = extract_color_stops(dict);
+    let stops = extract_color_stops(dict, cs);
     if stops.is_empty() {
         return;
     }
@@ -206,6 +208,7 @@ fn render_radial(
     ctm: &Matrix,
     page_transform: &Matrix,
     clip: Option<&Mask>,
+    cs: &ColorSpace,
 ) {
     let coords = match dict.get_array(b"Coords") {
         Some(arr) if arr.len() >= 6 => arr,
@@ -219,7 +222,7 @@ fn render_radial(
     let y1 = coords[4].as_f64().unwrap_or(0.0) as f32;
     let r1 = coords[5].as_f64().unwrap_or(0.0) as f32;
 
-    let stops = extract_color_stops(dict);
+    let stops = extract_color_stops(dict, cs);
     if stops.is_empty() {
         return;
     }
@@ -278,14 +281,11 @@ fn render_gouraud_mesh(
     page_transform: &Matrix,
     clip: Option<&Mask>,
     stream_data: Option<&[u8]>,
+    cs: &ColorSpace,
 ) {
     let shading_type = dict.get_i64(b"ShadingType").unwrap_or(4);
 
-    let cs_name = dict
-        .get(b"ColorSpace")
-        .and_then(|o| o.as_name())
-        .unwrap_or(b"DeviceRGB");
-    let n_comps = color_space_components(cs_name);
+    let n_comps = color_space_components(cs);
 
     let bits_per_coordinate = dict.get_i64(b"BitsPerCoordinate").unwrap_or(8) as u32;
     let bits_per_component = dict.get_i64(b"BitsPerComponent").unwrap_or(8) as u32;
@@ -304,7 +304,7 @@ fn render_gouraud_mesh(
         Some(d) if !d.is_empty() => d,
         _ => {
             // No stream data — fallback
-            render_mesh_fallback(pixmap, ctm, page_transform, clip, cs_name, &decode);
+            render_mesh_fallback(pixmap, ctm, page_transform, clip, cs, &decode);
             return;
         }
     };
@@ -320,7 +320,7 @@ fn render_gouraud_mesh(
             bits_per_component,
             n_comps,
             &decode,
-            cs_name,
+            cs,
         );
 
         for tri in &triangles {
@@ -358,7 +358,7 @@ fn render_gouraud_mesh(
             bits_per_component,
             n_comps,
             &decode,
-            cs_name,
+            cs,
         );
 
         // Build triangles from lattice grid
@@ -410,14 +410,11 @@ fn render_patch_mesh(
     page_transform: &Matrix,
     clip: Option<&Mask>,
     stream_data: Option<&[u8]>,
+    cs: &ColorSpace,
 ) {
     let shading_type = dict.get_i64(b"ShadingType").unwrap_or(6);
 
-    let cs_name = dict
-        .get(b"ColorSpace")
-        .and_then(|o| o.as_name())
-        .unwrap_or(b"DeviceRGB");
-    let n_comps = color_space_components(cs_name);
+    let n_comps = color_space_components(cs);
 
     let bits_per_coordinate = dict.get_i64(b"BitsPerCoordinate").unwrap_or(8) as u32;
     let bits_per_component = dict.get_i64(b"BitsPerComponent").unwrap_or(8) as u32;
@@ -431,7 +428,7 @@ fn render_patch_mesh(
     let data = match stream_data {
         Some(d) if !d.is_empty() => d,
         _ => {
-            render_mesh_fallback(pixmap, ctm, page_transform, clip, cs_name, &decode);
+            render_mesh_fallback(pixmap, ctm, page_transform, clip, cs, &decode);
             return;
         }
     };
@@ -449,7 +446,7 @@ fn render_patch_mesh(
         n_comps,
         points_per_patch,
         &decode,
-        cs_name,
+        cs,
     );
 
     // Subdivide each patch into triangles and rasterize
@@ -465,7 +462,7 @@ fn render_mesh_fallback(
     ctm: &Matrix,
     page_transform: &Matrix,
     clip: Option<&Mask>,
-    cs_name: &[u8],
+    cs: &ColorSpace,
     decode: &[f64],
 ) {
     let x_min = decode.first().copied().unwrap_or(0.0) as f32;
@@ -474,7 +471,7 @@ fn render_mesh_fallback(
     let y_max = decode.get(3).copied().unwrap_or(1.0) as f32;
 
     // Use mid-range colors as fallback
-    let n_comps = color_space_components(cs_name);
+    let n_comps = color_space_components(cs);
     let mut mid_comps = Vec::new();
     for i in 0..n_comps {
         let idx = 4 + i * 2;
@@ -483,7 +480,7 @@ fn render_mesh_fallback(
         mid_comps.push((cmin + cmax) / 2.0);
     }
 
-    let color = components_to_color(&mid_comps, cs_name);
+    let color = components_to_color(&mid_comps, cs);
     let transform = ctm.concat(page_transform).to_skia();
 
     let mut paint = Paint::default();
@@ -584,7 +581,7 @@ pub fn parse_gouraud_triangles(
     bits_per_component: u32,
     n_components: usize,
     decode: &[f64],
-    cs_name: &[u8],
+    cs: &ColorSpace,
 ) -> Vec<[Vertex; 3]> {
     let mut reader = BitReader::new(data);
     let mut vertices: Vec<Vertex> = Vec::new();
@@ -641,7 +638,7 @@ pub fn parse_gouraud_triangles(
             break;
         }
 
-        let color = components_to_color(&comps, cs_name);
+        let color = components_to_color(&comps, cs);
         let [r, g, b, _] = color_to_rgba8(color);
 
         let vertex = Vertex { x, y, r, g, b };
@@ -695,7 +692,7 @@ pub fn parse_lattice_vertices(
     bits_per_component: u32,
     n_components: usize,
     decode: &[f64],
-    cs_name: &[u8],
+    cs: &ColorSpace,
 ) -> Vec<Vertex> {
     let mut reader = BitReader::new(data);
     let mut vertices: Vec<Vertex> = Vec::new();
@@ -740,7 +737,7 @@ pub fn parse_lattice_vertices(
             break;
         }
 
-        let color = components_to_color(&comps, cs_name);
+        let color = components_to_color(&comps, cs);
         let [r, g, b, _] = color_to_rgba8(color);
         vertices.push(Vertex { x, y, r, g, b });
     }
@@ -767,7 +764,7 @@ pub fn parse_patch_mesh(
     n_components: usize,
     points_per_patch: usize,
     decode: &[f64],
-    cs_name: &[u8],
+    cs: &ColorSpace,
 ) -> Vec<Patch> {
     let mut reader = BitReader::new(data);
     let mut patches: Vec<Patch> = Vec::new();
@@ -850,7 +847,7 @@ pub fn parse_patch_mesh(
             if !ok {
                 break;
             }
-            let color = components_to_color(&comps, cs_name);
+            let color = components_to_color(&comps, cs);
             let [r, g, b, a] = color_to_rgba8(color);
             colors.push([r, g, b, a]);
         }
@@ -1052,20 +1049,15 @@ impl<'a> BitReader<'a> {
 // Color stop extraction (for Type 2/3 shadings)
 // ---------------------------------------------------------------------------
 
-fn extract_color_stops(dict: &PdfDict) -> Vec<GradientStop> {
-    let cs_name = dict
-        .get(b"ColorSpace")
-        .and_then(|o| o.as_name())
-        .unwrap_or(b"DeviceRGB");
-
+fn extract_color_stops(dict: &PdfDict, cs: &ColorSpace) -> Vec<GradientStop> {
     if let Some(func_obj) = dict.get(b"Function") {
         if let PdfObject::Dict(func) = func_obj {
-            return extract_stops_from_function(func, cs_name);
+            return extract_stops_from_function(func, cs);
         }
         if let PdfObject::Array(funcs) = func_obj
             && let Some(PdfObject::Dict(func)) = funcs.first()
         {
-            return extract_stops_from_function(func, cs_name);
+            return extract_stops_from_function(func, cs);
         }
     }
 
@@ -1075,7 +1067,7 @@ fn extract_color_stops(dict: &PdfDict) -> Vec<GradientStop> {
     ]
 }
 
-fn extract_stops_from_function(func: &PdfDict, cs_name: &[u8]) -> Vec<GradientStop> {
+fn extract_stops_from_function(func: &PdfDict, cs: &ColorSpace) -> Vec<GradientStop> {
     let func_type = func.get_i64(b"FunctionType").unwrap_or(0);
 
     if func_type == 2 {
@@ -1097,8 +1089,8 @@ fn extract_stops_from_function(func: &PdfDict, cs_name: &[u8]) -> Vec<GradientSt
             .unwrap_or_else(|| vec![1.0]);
 
         vec![
-            GradientStop::new(0.0, components_to_color(&c0, cs_name)),
-            GradientStop::new(1.0, components_to_color(&c1, cs_name)),
+            GradientStop::new(0.0, components_to_color(&c0, cs)),
+            GradientStop::new(1.0, components_to_color(&c1, cs)),
         ]
     } else if func_type == 3 {
         let bounds = func
@@ -1111,7 +1103,7 @@ fn extract_stops_from_function(func: &PdfDict, cs_name: &[u8]) -> Vec<GradientSt
 
         for (i, sub_func) in functions.iter().enumerate() {
             if let PdfObject::Dict(sub) = sub_func {
-                let sub_colors = extract_colors_from_function(sub, cs_name);
+                let sub_colors = extract_colors_from_function(sub, cs);
                 let t_start = if i == 0 {
                     0.0
                 } else {
@@ -1150,7 +1142,7 @@ fn extract_stops_from_function(func: &PdfDict, cs_name: &[u8]) -> Vec<GradientSt
     }
 }
 
-fn extract_colors_from_function(func: &PdfDict, cs_name: &[u8]) -> Vec<Color> {
+fn extract_colors_from_function(func: &PdfDict, cs: &ColorSpace) -> Vec<Color> {
     let c0 = func
         .get_array(b"C0")
         .map(|a| {
@@ -1168,47 +1160,29 @@ fn extract_colors_from_function(func: &PdfDict, cs_name: &[u8]) -> Vec<Color> {
         })
         .unwrap_or_else(|| vec![1.0]);
 
-    vec![
-        components_to_color(&c0, cs_name),
-        components_to_color(&c1, cs_name),
-    ]
+    vec![components_to_color(&c0, cs), components_to_color(&c1, cs)]
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn components_to_color(comps: &[f64], cs_name: &[u8]) -> Color {
-    match cs_name {
-        b"DeviceGray" | b"CalGray" | b"G" => {
-            let g = (comps.first().copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
-            Color::from_rgba8(g, g, g, 255)
-        }
-        b"DeviceCMYK" | b"CMYK" => {
-            let c = comps.first().copied().unwrap_or(0.0);
-            let m = comps.get(1).copied().unwrap_or(0.0);
-            let y = comps.get(2).copied().unwrap_or(0.0);
-            let k = comps.get(3).copied().unwrap_or(0.0);
-            let r = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
-            let g = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
-            let b = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
-            Color::from_rgba8(r, g, b, 255)
-        }
-        _ => {
-            let r = (comps.first().copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
-            let g = (comps.get(1).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
-            let b = (comps.get(2).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0) as u8;
-            Color::from_rgba8(r, g, b, 255)
-        }
+/// `comps` in `cs` as an opaque 8-bit colour, each channel truncated.
+fn components_to_color(comps: &[f64], cs: &ColorSpace) -> Color {
+    let [r, g, b] = PdfColor {
+        components: comps.to_vec(),
     }
+    .to_rgb(cs)
+    .map(|c| (c.clamp(0.0, 1.0) * 255.0) as u8);
+    Color::from_rgba8(r, g, b, 255)
 }
 
-fn color_space_components(cs_name: &[u8]) -> usize {
-    match cs_name {
-        b"DeviceGray" | b"CalGray" | b"G" => 1,
-        b"DeviceRGB" | b"CalRGB" | b"RGB" => 3,
-        b"DeviceCMYK" | b"CMYK" => 4,
-        _ => 3,
+/// The number of components a mesh vertex carries in `cs` (3 for a space
+/// with none known).
+fn color_space_components(cs: &ColorSpace) -> usize {
+    match cs.num_components() {
+        0 => 3,
+        n => n,
     }
 }
 
@@ -1253,7 +1227,7 @@ mod tests {
 
     #[test]
     fn test_components_to_color_rgb() {
-        let c = components_to_color(&[1.0, 0.0, 0.5], b"DeviceRGB");
+        let c = components_to_color(&[1.0, 0.0, 0.5], &ColorSpace::DeviceRGB);
         assert_eq!(c.red(), 1.0);
         assert_eq!(c.green(), 0.0);
         assert!((c.blue() - 0.5).abs() < 0.01);
@@ -1261,7 +1235,7 @@ mod tests {
 
     #[test]
     fn test_components_to_color_gray() {
-        let c = components_to_color(&[0.5], b"DeviceGray");
+        let c = components_to_color(&[0.5], &ColorSpace::DeviceGray);
         assert!((c.red() - c.green()).abs() < 0.01);
         assert!((c.green() - c.blue()).abs() < 0.01);
     }
