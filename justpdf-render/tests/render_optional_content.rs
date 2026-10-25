@@ -287,6 +287,20 @@ fn fixtures() -> Vec<(&'static str, justpdf_core::PdfDocument, bool)> {
             true,
         ),
         (
+            "form drawn inside a hidden section",
+            doc_with(
+                false,
+                "<< /Properties << /L 5 0 R >> /XObject << /X0 6 0 R >> >>",
+                "/OC /L BDC /X0 Do EMC",
+                "",
+                vec![Stream(
+                    "/Type /XObject /Subtype /Form /BBox [0 0 100 100]",
+                    RED_FILL,
+                )],
+            ),
+            false,
+        ),
+        (
             "hidden section left open in a form",
             doc_with(
                 false,
@@ -357,4 +371,93 @@ fn svg_an_image_xobject_in_a_hidden_layer_is_not_drawn() {
     };
     assert!(!svg(&image("/OC 5 0 R")).contains("<image"));
     assert!(svg(&image("")).contains("<image"));
+}
+
+// ---- state inside hidden content --------------------------------------------------
+
+/// ISO 32000-1 §8.11.3.1: inside hidden content nothing is drawn, but state
+/// operators still apply and text still advances. Each case is a page with
+/// `/L` OFF drawing `hidden` inside `/OC /L BDC … EMC` and then `after`; it
+/// renders as `reference` followed by `after`, raster and SVG alike.
+fn assert_hidden_like(hidden: &str, reference: &str, after: &str) {
+    let resources = "<< /Properties << /L 5 0 R >> /Font << /F1 6 0 R >> >>";
+    let font = || {
+        vec![Plain(
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        )]
+    };
+    let doc = doc_with(
+        false,
+        resources,
+        &format!("/OC /L BDC {hidden} EMC {after}"),
+        "",
+        font(),
+    );
+    let expected = doc_with(
+        false,
+        resources,
+        &format!("{reference} {after}"),
+        "",
+        font(),
+    );
+    let raster = |d: &justpdf_core::PdfDocument| {
+        justpdf_render::render_page_to_pixmap(d, 0, &justpdf_render::RenderOptions::default())
+            .unwrap()
+            .data
+    };
+    assert!(raster(&doc) == raster(&expected), "raster: {hidden:?}");
+    assert_eq!(svg(&doc), svg(&expected), "svg: {hidden:?}");
+}
+
+const BLUE_SQUARE: &str = "0 0 1 rg 0 0 10 10 re f";
+
+#[test]
+fn a_transform_inside_hidden_content_still_applies() {
+    assert_hidden_like("1 0 0 1 50 0 cm", "1 0 0 1 50 0 cm", BLUE_SQUARE);
+    assert_hidden_like(
+        "q 1 0 0 1 50 0 cm",
+        "q 1 0 0 1 50 0 cm",
+        &format!("{BLUE_SQUARE} Q"),
+    );
+}
+
+#[test]
+fn a_colour_inside_hidden_content_still_applies() {
+    assert_hidden_like("0 0 1 rg", "0 0 1 rg", "0 0 50 50 re f");
+}
+
+#[test]
+fn a_clip_inside_hidden_content_still_applies() {
+    assert_hidden_like("0 0 50 100 re W n", "0 0 50 100 re W n", RED_FILL);
+}
+
+#[test]
+fn a_path_painted_inside_hidden_content_is_consumed_but_not_drawn() {
+    assert_hidden_like("0 0 100 100 re f", "", BLUE_SQUARE);
+    assert_hidden_like("0 0 100 100 re B", "", BLUE_SQUARE);
+}
+
+#[test]
+fn hidden_text_still_advances() {
+    assert_hidden_like(
+        "BT /F1 24 Tf 10 50 Td (Hidden) Tj",
+        "BT /F1 24 Tf 10 50 Td 3 Tr (Hidden) Tj 0 Tr",
+        "(V) Tj ET",
+    );
+}
+
+#[test]
+fn a_shading_inside_hidden_content_is_not_drawn() {
+    let resources = "<< /Properties << /L 5 0 R >> /Shading << /Sh0 << /ShadingType 2 \
+                     /ColorSpace /DeviceRGB /Coords [0 0 100 0] /Function << /FunctionType 2 \
+                     /Domain [0 1] /C0 [1 0 0] /C1 [1 0 0] /N 1 >> /Extend [true true] >> >> >>";
+    let content = "/OC /L BDC /Sh0 sh EMC";
+    assert_eq!(
+        rgb(&doc_with(false, resources, content, "", vec![]), 50, 50),
+        WHITE
+    );
+    assert_eq!(
+        rgb(&doc_with(true, resources, content, "", vec![]), 50, 50),
+        RED
+    );
 }

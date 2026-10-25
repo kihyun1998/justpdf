@@ -78,8 +78,8 @@ pub struct RenderInterpreter<'a> {
     glyph_cache: GlyphCache,
     /// Optional content configuration for layer visibility.
     oc_config: Option<OCConfig>,
-    /// Marked content skip depth: when > 0, all drawing ops are skipped
-    /// until the matching EMC reduces it back to 0.
+    /// Marked-content nesting inside a hidden `/OC` section: while above 0
+    /// nothing is drawn, until the matching EMC reduces it back to 0.
     oc_skip_depth: u32,
 }
 
@@ -491,13 +491,18 @@ impl<'a> RenderInterpreter<'a> {
         for op in ops {
             let operator = op.operator_str();
 
-            // Handle OCG skip: when inside a hidden layer, only track
-            // BMC/BDC/EMC nesting to know when to resume.
+            // Inside a hidden layer: marked content is counted to find the
+            // section's EMC, painting operators consume the path and draw
+            // nothing, and every other operator runs.
             if self.oc_skip_depth > 0 {
                 match operator {
                     "BMC" | "BDC" => self.oc_skip_depth += 1,
                     "EMC" => self.oc_skip_depth -= 1,
-                    _ => {}
+                    "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" => {
+                        self.path_builder = None
+                    }
+                    "Do" | "BI" | "sh" => {}
+                    _ => self.execute_op(op)?,
                 }
                 continue;
             }
@@ -950,7 +955,7 @@ impl<'a> RenderInterpreter<'a> {
             // --- Marked content / Optional Content ---
             "BMC" => {}
             "BDC" => {
-                // A hidden /OC section is skipped through its matching EMC.
+                // A hidden /OC section draws nothing through its matching EMC.
                 if let Some(config) = &self.oc_config
                     && !optional_content::section_visible(
                         operands,
@@ -1171,7 +1176,7 @@ impl<'a> RenderInterpreter<'a> {
             let width = widths[i];
             let w0 = width / 1000.0;
 
-            if render_mode != 3 {
+            if render_mode != 3 && self.oc_skip_depth == 0 {
                 self.render_glyph(
                     w0 * font_size,
                     font_size,

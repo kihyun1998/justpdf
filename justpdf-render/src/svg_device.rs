@@ -62,7 +62,9 @@ pub struct SvgRenderer<'a> {
     /// The document's default optional content configuration.
     oc_config: Option<OCConfig>,
     /// Marked-content nesting inside a hidden `/OC` section; while above 0,
-    /// operators other than `BMC`/`BDC`/`EMC` are skipped.
+    /// painting operators consume the path and draw nothing, text advances
+    /// without being drawn, and XObjects, inline images and shadings are
+    /// skipped.
     oc_skip_depth: u32,
     /// Page dimensions in points.
     page_width: f64,
@@ -283,7 +285,9 @@ impl<'a> SvgRenderer<'a> {
                 match op.operator_str() {
                     "BMC" | "BDC" => self.oc_skip_depth += 1,
                     "EMC" => self.oc_skip_depth -= 1,
-                    _ => {}
+                    "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" => self.path_data = None,
+                    "Do" | "BI" | "sh" => {}
+                    _ => self.execute_op(op)?,
                 }
                 continue;
             }
@@ -716,7 +720,7 @@ impl<'a> SvgRenderer<'a> {
             // --- Inline image (skip for SVG) ---
             "BI" => {}
 
-            // --- Marked content: a hidden /OC section is skipped through its matching EMC ---
+            // --- Marked content: a hidden /OC section draws nothing through its matching EMC ---
             "BDC" => {
                 if let Some(config) = &self.oc_config
                     && !optional_content::section_visible(
@@ -1008,7 +1012,7 @@ impl<'a> SvgRenderer<'a> {
             let width = widths[i];
             let w0 = width / 1000.0;
 
-            if render_mode != 3 {
+            if render_mode != 3 && self.oc_skip_depth == 0 {
                 // Try to get Unicode text
                 let text_char = if let Some(cm) = cmap {
                     cm.lookup(*code)
