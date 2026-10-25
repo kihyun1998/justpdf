@@ -13,6 +13,7 @@ pub mod glyph;
 pub mod glyph_cache;
 pub mod graphics_state;
 pub mod interpreter;
+mod optional_content;
 pub mod render;
 mod resources;
 pub mod shading;

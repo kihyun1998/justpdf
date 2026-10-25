@@ -204,3 +204,157 @@ fn a_hidden_section_left_open_by_the_page_does_not_hide_its_annotations() {
     );
     assert_eq!(rgb(&doc, 50, 50), RED);
 }
+
+// ---- SVG (#218) -------------------------------------------------------------------
+
+const SVG_RED: &str = "fill=\"rgb(255,0,0)\"";
+
+fn svg(doc: &justpdf_core::PdfDocument) -> String {
+    justpdf_render::render_page_to_svg(doc, 0).unwrap()
+}
+
+fn svg_has_red(doc: &justpdf_core::PdfDocument) -> bool {
+    svg(doc).contains(SVG_RED)
+}
+
+/// Each fixture with whether its red fill is visible: the raster and SVG
+/// renderers agree on it.
+fn fixtures() -> Vec<(&'static str, justpdf_core::PdfDocument, bool)> {
+    let props = "<< /Properties << /L 5 0 R >> >>";
+    let section = format!("/OC /L BDC {RED_FILL} EMC");
+    let ocmd = |p: &str| {
+        let ocmd: &'static str =
+            Box::leak(format!("<< /Type /OCMD /OCGs [5 0 R] /P /{p} >>").into_boxed_str());
+        doc_with(
+            false,
+            "<< /Properties << /M 6 0 R >> >>",
+            &format!("/OC /M BDC {RED_FILL} EMC"),
+            "",
+            vec![Plain(ocmd)],
+        )
+    };
+    vec![
+        (
+            "section OFF",
+            doc_with(false, props, &section, "", vec![]),
+            false,
+        ),
+        (
+            "section ON",
+            doc_with(true, props, &section, "", vec![]),
+            true,
+        ),
+        (
+            "name in the form's own /Properties",
+            doc_with(
+                false,
+                "<< /XObject << /X0 6 0 R >> >>",
+                "/X0 Do",
+                "",
+                vec![Stream(
+                    "/Type /XObject /Subtype /Form /BBox [0 0 100 100] \
+                     /Resources << /Properties << /L 5 0 R >> >>",
+                    &section,
+                )],
+            ),
+            false,
+        ),
+        (
+            "form /OC OFF",
+            doc_with(
+                false,
+                "<< /XObject << /X0 6 0 R >> >>",
+                "/X0 Do",
+                "",
+                vec![Stream(
+                    "/Type /XObject /Subtype /Form /BBox [0 0 100 100] /OC 5 0 R",
+                    RED_FILL,
+                )],
+            ),
+            false,
+        ),
+        ("OCMD AllOff", ocmd("AllOff"), true),
+        ("OCMD AnyOn", ocmd("AnyOn"), false),
+        (
+            "OCMD /VE [/Not 5 0 R]",
+            doc_with(
+                false,
+                "<< /Properties << /M 6 0 R >> >>",
+                &format!("/OC /M BDC {RED_FILL} EMC"),
+                "",
+                vec![Plain("<< /Type /OCMD /VE [/Not 5 0 R] >>")],
+            ),
+            true,
+        ),
+        (
+            "hidden section left open in a form",
+            doc_with(
+                false,
+                "<< /XObject << /X0 6 0 R >> >>",
+                &format!("/X0 Do {RED_FILL}"),
+                "",
+                vec![Stream(
+                    "/Type /XObject /Subtype /Form /BBox [0 0 100 100] \
+                     /Resources << /Properties << /L 5 0 R >> >>",
+                    "/OC /L BDC",
+                )],
+            ),
+            true,
+        ),
+    ]
+}
+
+#[test]
+fn svg_hides_what_is_hidden() {
+    for (name, doc, visible) in fixtures() {
+        assert_eq!(svg_has_red(&doc), visible, "{name}: {}", svg(&doc));
+    }
+}
+
+#[test]
+fn svg_and_raster_hide_the_same_content() {
+    for (name, doc, _) in fixtures() {
+        let raster = rgb(&doc, 50, 50) == RED;
+        assert_eq!(svg_has_red(&doc), raster, "{name}");
+    }
+}
+
+#[test]
+fn svg_an_on_section_nested_in_an_off_section_stays_hidden() {
+    // /On (object 6) is not in /D /OFF, so it is ON. Inside the OFF /L
+    // section: an /On section with red, then a red fill; after /L's EMC, blue.
+    let content =
+        format!("/OC /L BDC /OC /On BDC {RED_FILL} EMC {RED_FILL} EMC 0 0 1 rg 0 0 50 50 re f");
+    let doc = doc_with(
+        false,
+        "<< /Properties << /L 5 0 R /On 6 0 R >> >>",
+        &content,
+        "",
+        vec![Plain("<< /Type /OCG /Name (On) >>")],
+    );
+    let out = svg(&doc);
+    assert!(!out.contains(SVG_RED), "{out}");
+    assert!(out.contains("fill=\"rgb(0,0,255)\""), "{out}");
+}
+
+#[test]
+fn svg_an_image_xobject_in_a_hidden_layer_is_not_drawn() {
+    let image = |oc: &str| {
+        let dict: &'static str = Box::leak(
+            format!(
+                "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB \
+                 /BitsPerComponent 8 {oc} /Filter /ASCIIHexDecode"
+            )
+            .into_boxed_str(),
+        );
+        doc_with(
+            false,
+            "<< /XObject << /Im0 6 0 R >> >>",
+            "q 100 0 0 100 0 0 cm /Im0 Do Q",
+            "",
+            vec![Stream(dict, "FF0000>")],
+        )
+    };
+    assert!(!svg(&image("/OC 5 0 R")).contains("<image"));
+    assert!(svg(&image("")).contains("<image"));
+}

@@ -13,7 +13,7 @@ use justpdf_core::font::{
 use justpdf_core::function::PdfFunction;
 use justpdf_core::image;
 use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
-use justpdf_core::ocg::{self, OCConfig};
+use justpdf_core::ocg::OCConfig;
 use justpdf_core::page::PageInfo;
 use justpdf_core::ttf_parser;
 use tiny_skia::{FillRule, Mask, PathBuilder, Pixmap, Transform};
@@ -25,6 +25,7 @@ use crate::graphics_state::{
     FontKey, GraphicsState, LineCap, LineJoin, Matrix, PatternSelection, PdfBlendMode, SharedMask,
     SoftMask, SoftMaskSubtype,
 };
+use crate::optional_content;
 use crate::resources::ResourceScopes;
 
 /// Resolved font for rendering.
@@ -85,10 +86,7 @@ pub struct RenderInterpreter<'a> {
 impl<'a> RenderInterpreter<'a> {
     pub fn new(doc: &'a PdfDocument, device: &'a mut PixmapDevice, page_transform: Matrix) -> Self {
         // Load optional content config for layer visibility
-        let oc_config = ocg::read_oc_properties(doc)
-            .ok()
-            .flatten()
-            .and_then(|props| props.default_config);
+        let oc_config = optional_content::default_config(doc);
 
         Self {
             doc,
@@ -242,66 +240,9 @@ impl<'a> RenderInterpreter<'a> {
         self.intersect_clip(&path, FillRule::Winding, transform);
     }
 
-    /// Whether an `/OC` marked-content section is visible: its properties
-    /// operand is an inline dictionary, or a name looked up in the current
-    /// scope's `/Properties`, evaluated by `ocg::is_oc_visible`. A name that
-    /// does not resolve is visible.
-    fn check_oc_visibility(&self, operands: &[Operand], config: &OCConfig) -> bool {
-        let oc = match operands.get(1) {
-            Some(Operand::Name(name)) => {
-                match self.resources.lookup(self.doc, b"Properties", name) {
-                    Ok(Some(found)) => match found.obj_ref {
-                        Some(r) => PdfObject::Reference(r),
-                        None => found.object,
-                    },
-                    _ => return true,
-                }
-            }
-            Some(Operand::Dict(dict)) => PdfObject::Dict(self.operand_dict_to_pdf_dict(dict)),
-            _ => return true,
-        };
-        ocg::is_oc_visible(&oc, self.doc, config)
-    }
-
-    /// Whether an object with the `/OC` entry of `dict` is visible: always
-    /// when there is no entry or no optional content configuration.
+    /// Whether an object with the `/OC` entry of `dict` is visible.
     fn oc_entry_visible(&self, dict: &PdfDict) -> bool {
-        match (dict.get(b"OC"), &self.oc_config) {
-            (Some(oc), Some(config)) => ocg::is_oc_visible(oc, self.doc, config),
-            _ => true,
-        }
-    }
-
-    /// Convert operand dict entries to a PdfDict for OCG/OCMD parsing.
-    fn operand_dict_to_pdf_dict(&self, entries: &[(Vec<u8>, Operand)]) -> PdfDict {
-        let mut dict = PdfDict::new();
-        for (key, value) in entries {
-            dict.insert(key.clone(), Self::operand_to_pdf_object(value));
-        }
-        dict
-    }
-
-    /// Convert an Operand to a PdfObject (best-effort for OCG dict parsing).
-    fn operand_to_pdf_object(op: &Operand) -> PdfObject {
-        match op {
-            Operand::Integer(v) => PdfObject::Integer(*v),
-            Operand::Real(v) => PdfObject::Real(*v),
-            Operand::Bool(v) => PdfObject::Bool(*v),
-            Operand::Null => PdfObject::Null,
-            Operand::Name(n) => PdfObject::Name(n.clone()),
-            Operand::String(s) => PdfObject::String(s.clone()),
-            Operand::Array(arr) => {
-                PdfObject::Array(arr.iter().map(Self::operand_to_pdf_object).collect())
-            }
-            Operand::Dict(entries) => {
-                let mut dict = PdfDict::new();
-                for (k, v) in entries {
-                    dict.insert(k.clone(), Self::operand_to_pdf_object(v));
-                }
-                PdfObject::Dict(dict)
-            }
-            Operand::InlineImage { .. } => PdfObject::Null,
-        }
+        optional_content::entry_visible(dict, self.doc, self.oc_config.as_ref())
     }
 
     /// Selects the font named `name` in the current resource scope,
@@ -1009,18 +950,16 @@ impl<'a> RenderInterpreter<'a> {
             // --- Marked content / Optional Content ---
             "BMC" => {}
             "BDC" => {
-                // Check if this is an OC (Optional Content) marked content
-                // BDC operands: tag properties
-                // If tag is /OC and properties is a dict with /OCGS or /OCGs,
-                // check visibility against the OCG config.
-                if let Some(config) = &self.oc_config {
-                    let tag = operands.first().and_then(|o| o.as_name());
-                    if tag == Some(b"OC") {
-                        let visible = self.check_oc_visibility(operands, config);
-                        if !visible {
-                            self.oc_skip_depth = 1;
-                        }
-                    }
+                // A hidden /OC section is skipped through its matching EMC.
+                if let Some(config) = &self.oc_config
+                    && !optional_content::section_visible(
+                        operands,
+                        &self.resources,
+                        self.doc,
+                        config,
+                    )
+                {
+                    self.oc_skip_depth = 1;
                 }
             }
             "EMC" => {}
