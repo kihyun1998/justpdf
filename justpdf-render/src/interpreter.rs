@@ -161,8 +161,10 @@ impl<'a> RenderInterpreter<'a> {
             };
 
             // Skip hidden/no-view annotations
-            if justpdf_core::annot::placement::is_hidden(&annot_dict) {
-                // Hidden or NoView
+            if justpdf_core::annot::placement::is_hidden(&annot_dict)
+                || !self.oc_entry_visible(&annot_dict)
+            {
+                // Hidden, NoView, or in hidden optional content
                 continue;
             }
 
@@ -240,59 +242,33 @@ impl<'a> RenderInterpreter<'a> {
         self.intersect_clip(&path, FillRule::Winding, transform);
     }
 
-    /// Check if an OC (Optional Content) marked content block is visible.
-    ///
-    /// BDC operands for OC are: /OC <properties>
-    /// The properties can be:
-    /// - An inline dict with /Type /OCG and we check the OCG ref
-    /// - An inline dict with /Type /OCMD and we check the membership
-    /// - A name referencing a Properties resource (indirect OCG/OCMD)
+    /// Whether an `/OC` marked-content section is visible: its properties
+    /// operand is an inline dictionary, or a name looked up in the current
+    /// scope's `/Properties`, evaluated by `ocg::is_oc_visible`. A name that
+    /// does not resolve is visible.
     fn check_oc_visibility(&self, operands: &[Operand], config: &OCConfig) -> bool {
-        // The second operand is the properties dict or name
-        let props = match operands.get(1) {
-            Some(o) => o,
-            None => return true,
+        let oc = match operands.get(1) {
+            Some(Operand::Name(name)) => {
+                match self.resources.lookup(self.doc, b"Properties", name) {
+                    Ok(Some(found)) => match found.obj_ref {
+                        Some(r) => PdfObject::Reference(r),
+                        None => found.object,
+                    },
+                    _ => return true,
+                }
+            }
+            Some(Operand::Dict(dict)) => PdfObject::Dict(self.operand_dict_to_pdf_dict(dict)),
+            _ => return true,
         };
-
-        match props {
-            Operand::Dict(dict) => {
-                let pdf_dict = self.operand_dict_to_pdf_dict(dict);
-                self.check_oc_dict_visibility(&pdf_dict, config)
-            }
-            Operand::Name(_name) => {
-                // Name references a Properties resource — resolve it
-                // TODO: look up in page /Resources /Properties dict
-                true
-            }
-            _ => true,
-        }
+        ocg::is_oc_visible(&oc, self.doc, config)
     }
 
-    /// Check visibility of an OC dictionary (OCG or OCMD).
-    fn check_oc_dict_visibility(&self, dict: &PdfDict, config: &OCConfig) -> bool {
-        let type_name = dict.get_name(b"Type").unwrap_or(b"");
-
-        if type_name == b"OCG" {
-            // Direct OCG reference — check if this OCG is visible
-            // We need the IndirectRef, but inline dicts don't have one.
-            // OCGs in BDC are usually referenced via Properties resource.
-            // For inline OCG dicts, check by name against the config's groups.
-            true
-        } else if type_name == b"OCMD" {
-            // OCMD — parse and check visibility
-            if let Some(ocmd) = ocg::parse_ocmd(dict) {
-                ocg::is_ocmd_visible(&ocmd, config)
-            } else {
-                true
-            }
-        } else {
-            // Check if it has /OCGs key (OCMD without /Type)
-            if dict.get(b"OCGs").is_some()
-                && let Some(ocmd) = ocg::parse_ocmd(dict)
-            {
-                return ocg::is_ocmd_visible(&ocmd, config);
-            }
-            true
+    /// Whether an object with the `/OC` entry of `dict` is visible: always
+    /// when there is no entry or no optional content configuration.
+    fn oc_entry_visible(&self, dict: &PdfDict) -> bool {
+        match (dict.get(b"OC"), &self.oc_config) {
+            (Some(oc), Some(config)) => ocg::is_oc_visible(oc, self.doc, config),
+            _ => true,
         }
     }
 
@@ -1437,6 +1413,13 @@ impl<'a> RenderInterpreter<'a> {
             None => return Ok(()),
         };
 
+        let dict = match &xobj {
+            XObjectData::Image { dict, .. } | XObjectData::Form { dict, .. } => dict,
+        };
+        if !self.oc_entry_visible(dict) {
+            return Ok(());
+        }
+
         match xobj {
             XObjectData::Image { dict, data } => {
                 let _ = self.render_image(&dict, &data); // skip broken images
@@ -1893,7 +1876,8 @@ impl<'a> RenderInterpreter<'a> {
     }
 
     /// Runs `f` as a nested content stream: on a copy of the graphics state
-    /// with no current path, where `Q` cannot pop below the state on entry.
+    /// with no current path and no hidden optional-content section open,
+    /// where `Q` cannot pop below the state on entry.
     /// Afterwards the stack is unwound to its depth on entry and the caller's
     /// state and path are restored, whatever `f` returned.
     fn nested_stream<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
@@ -1901,7 +1885,9 @@ impl<'a> RenderInterpreter<'a> {
         self.state_stack.push(self.state.clone());
         let floor = std::mem::replace(&mut self.state_floor, depth + 1);
         let path = self.path_builder.take();
+        let oc_skip = std::mem::replace(&mut self.oc_skip_depth, 0);
         let out = f(self);
+        self.oc_skip_depth = oc_skip;
         self.state_stack.truncate(depth + 1);
         if let Some(s) = self.state_stack.pop() {
             self.state = s;
