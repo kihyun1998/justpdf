@@ -15,6 +15,7 @@ use crate::font::{
     resolve_font_entries, type0_encoding_cmap,
 };
 use crate::object::{IndirectRef, PdfDict, PdfObject};
+use crate::ocg::{self, OCConfig};
 use crate::parser::PdfDocument;
 
 // ---------------------------------------------------------------------------
@@ -221,6 +222,8 @@ pub(crate) struct FormXObject<'r> {
     pub(crate) matrix: Matrix,
     /// The resources names inside the form resolve against.
     pub(crate) resources: Box<dyn ContentResources + 'r>,
+    /// The form's `/OC` is hidden under the default configuration.
+    pub(crate) hidden: bool,
 }
 
 /// Where the interpreter looks up resource names.
@@ -235,6 +238,11 @@ pub(crate) trait ContentResources {
     /// The Form XObject named `name` in the `/XObject` category. `None` for
     /// an image, a missing name or a stream that does not decode.
     fn form(&mut self, name: &[u8]) -> Option<FormXObject<'_>>;
+
+    /// Whether optional content tagged with the `/Properties` entry `name`
+    /// is hidden under the default configuration; `false` when there is no
+    /// configuration or `name` does not resolve.
+    fn properties_hidden(&mut self, name: &[u8]) -> bool;
 }
 
 /// Resources read from a document: a page's `/Resources`, and inside a Form
@@ -246,6 +254,8 @@ pub(crate) struct DocResources<'d> {
     fonts_by_ref: Rc<RefCell<HashMap<IndirectRef, Option<Rc<ResolvedFont>>>>>,
     /// What each font name resolved to in this scope chain.
     fonts_by_name: HashMap<Vec<u8>, Option<Rc<ResolvedFont>>>,
+    /// The document's default optional content configuration.
+    oc_config: Rc<Option<OCConfig>>,
 }
 
 impl<'d> DocResources<'d> {
@@ -255,11 +265,16 @@ impl<'d> DocResources<'d> {
         if let Some(dict) = resources.and_then(|o| resolve_dict(doc, o)) {
             scopes.push(dict);
         }
+        let oc_config = ocg::read_oc_properties(doc)
+            .ok()
+            .flatten()
+            .and_then(|props| props.default_config);
         Self {
             doc,
             scopes,
             fonts_by_ref: Rc::default(),
             fonts_by_name: HashMap::new(),
+            oc_config: Rc::new(oc_config),
         }
     }
 
@@ -271,6 +286,7 @@ impl<'d> DocResources<'d> {
             scopes,
             fonts_by_ref: Rc::clone(&self.fonts_by_ref),
             fonts_by_name: HashMap::new(),
+            oc_config: Rc::clone(&self.oc_config),
         }
     }
 
@@ -285,6 +301,14 @@ impl<'d> DocResources<'d> {
                 _ => None,
             })
             .clone()
+    }
+
+    /// Whether an `/OC` value is hidden under the default configuration.
+    fn oc_hidden(&self, oc: &PdfObject) -> bool {
+        match self.oc_config.as_ref() {
+            Some(config) => !ocg::is_oc_visible(oc, self.doc, config),
+            None => false,
+        }
     }
 
     /// The entry `name` in resource category `category`, innermost scope first.
@@ -341,12 +365,19 @@ impl ContentResources for DocResources<'_> {
         let form_resources = dict
             .get(b"Resources")
             .and_then(|o| resolve_dict(self.doc, o));
+        let hidden = dict.get(b"OC").is_some_and(|oc| self.oc_hidden(oc));
         Some(FormXObject {
             id,
             ops,
             matrix,
             resources: Box::new(self.child(form_resources)),
+            hidden,
         })
+    }
+
+    fn properties_hidden(&mut self, name: &[u8]) -> bool {
+        self.lookup(b"Properties", name)
+            .is_some_and(|oc| self.oc_hidden(&oc))
     }
 }
 
@@ -458,6 +489,10 @@ pub(crate) struct Glyph<'a> {
     /// upper-left.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) quad: [(f64, f64); 4],
+    /// Inside optional content hidden under the default configuration: an
+    /// `/OC` marked-content section, or a form whose `/OC` is hidden, at any
+    /// level of nesting.
+    pub(crate) hidden: bool,
 }
 
 /// Why a `Do` naming a Form XObject was not entered.
@@ -518,6 +553,9 @@ pub(crate) fn interpret(
         tlm: Matrix::identity(),
         options,
         active_forms: Vec::new(),
+        marked_depth: 0,
+        hidden_at: None,
+        hidden_outside: false,
     };
     interpreter.run(ops, resources, visitor);
 }
@@ -535,6 +573,12 @@ struct Interpreter {
     options: InterpretOptions,
     /// Forms being interpreted, outermost first.
     active_forms: Vec<IndirectRef>,
+    /// Marked-content sections open in the current stream.
+    marked_depth: usize,
+    /// The `marked_depth` of the outermost open hidden `/OC` section.
+    hidden_at: Option<usize>,
+    /// The current stream is drawn from hidden optional content.
+    hidden_outside: bool,
 }
 
 impl Interpreter {
@@ -683,6 +727,24 @@ impl Interpreter {
                 }
             }
 
+            b"BMC" | b"BDC" => {
+                self.marked_depth += 1;
+                if self.hidden_at.is_none()
+                    && op.operator == b"BDC"
+                    && op.operands.first().and_then(|o| o.as_name()) == Some(b"OC")
+                    && let Some(name) = op.operands.get(1).and_then(|o| o.as_name())
+                    && resources.properties_hidden(name)
+                {
+                    self.hidden_at = Some(self.marked_depth);
+                }
+            }
+            b"EMC" => {
+                if self.hidden_at == Some(self.marked_depth) {
+                    self.hidden_at = None;
+                }
+                self.marked_depth = self.marked_depth.saturating_sub(1);
+            }
+
             b"Do" if self.options.enter_forms => {
                 if let Some(name) = op.operands.first().and_then(|o| o.as_name()) {
                     self.do_form(name, index, resources, visitor);
@@ -726,8 +788,12 @@ impl Interpreter {
         let saved_stack_len = self.gs_stack.len();
         let saved_floor = self.stack_floor;
         let (saved_tm, saved_tlm) = (self.tm, self.tlm);
+        let saved_marked = (self.marked_depth, self.hidden_at, self.hidden_outside);
 
         self.gs.ctm = form.matrix.concat(&self.gs.ctm);
+        self.hidden_outside = self.is_hidden() || form.hidden;
+        self.marked_depth = 0;
+        self.hidden_at = None;
         self.stack_floor = saved_stack_len;
         self.active_forms.push(form.id.clone());
         visitor.enter_form(op_index, &form.id);
@@ -741,6 +807,11 @@ impl Interpreter {
         self.gs = saved_gs;
         self.tm = saved_tm;
         self.tlm = saved_tlm;
+        (self.marked_depth, self.hidden_at, self.hidden_outside) = saved_marked;
+    }
+
+    fn is_hidden(&self) -> bool {
+        self.hidden_outside || self.hidden_at.is_some()
     }
 
     fn show_string(
@@ -798,6 +869,7 @@ impl Interpreter {
                     width: w0,
                     trm,
                     quad,
+                    hidden: self.is_hidden(),
                 },
                 &self.gs,
             );
@@ -865,6 +937,8 @@ pub(crate) struct MapResources {
     /// Forms by name: object, operations, `/Matrix`, own fonts (`None` to
     /// inherit the caller's).
     pub(crate) forms: HashMap<Vec<u8>, MapForm>,
+    /// `/Properties` names whose optional content is hidden.
+    pub(crate) hidden_properties: Vec<Vec<u8>>,
 }
 
 #[cfg(test)]
@@ -874,6 +948,7 @@ pub(crate) struct MapForm {
     pub(crate) ops: Vec<ContentOp>,
     pub(crate) matrix: Matrix,
     pub(crate) fonts: Option<HashMap<Vec<u8>, Rc<ResolvedFont>>>,
+    pub(crate) hidden: bool,
 }
 
 #[cfg(test)]
@@ -897,8 +972,14 @@ impl ContentResources for MapResources {
             resources: Box::new(MapResources {
                 fonts,
                 forms: self.forms.clone(),
+                hidden_properties: self.hidden_properties.clone(),
             }),
+            hidden: form.hidden,
         })
+    }
+
+    fn properties_hidden(&mut self, name: &[u8]) -> bool {
+        self.hidden_properties.iter().any(|n| n == name)
     }
 }
 
@@ -960,6 +1041,7 @@ mod tests {
                 .map(|(n, f)| (n.as_bytes().to_vec(), Rc::clone(f)))
                 .collect(),
             forms: HashMap::new(),
+            hidden_properties: Vec::new(),
         }
     }
 
@@ -976,6 +1058,7 @@ mod tests {
         ctm: Matrix,
         render_mode: i64,
         form_depth: usize,
+        hidden: bool,
     }
 
     #[derive(Default)]
@@ -1004,6 +1087,7 @@ mod tests {
                 ctm: state.ctm,
                 render_mode: state.text.render_mode,
                 form_depth: self.depth,
+                hidden: g.hidden,
             });
         }
         fn enter_form(&mut self, op_index: usize, id: &IndirectRef) {
@@ -1255,6 +1339,7 @@ mod tests {
                         .map(|(n, f)| (n.as_bytes().to_vec(), Rc::clone(f)))
                         .collect()
                 }),
+                hidden: false,
             },
         );
         res
@@ -1385,6 +1470,7 @@ mod tests {
                     ops: vec![op("Do", vec![name(&format!("F{}", i + 1))])],
                     matrix: Matrix::identity(),
                     fonts: None,
+                    hidden: false,
                 },
             );
         }
@@ -1551,5 +1637,215 @@ mod tests {
         assert_eq!(widths, vec![10.0, 5.0, 5.0]);
         assert_point(rec.glyphs[1].quad[0], (100.0, -2.5));
         assert_point(rec.glyphs[2].quad[0], (100.0, 47.5));
+    }
+
+    // ---- optional content ---------------------------------------------------
+
+    fn hidden_flags(rec: &Recorder) -> Vec<bool> {
+        rec.glyphs.iter().map(|g| g.hidden).collect()
+    }
+
+    fn bdc_oc(n: &str) -> ContentOp {
+        op("BDC", vec![name("OC"), name(n)])
+    }
+
+    /// Resources with `/F1` and `/Off` naming hidden optional content.
+    fn oc_resources() -> MapResources {
+        let mut res = resources(&[("F1", font(500.0, None))]);
+        res.hidden_properties.push(b"Off".to_vec());
+        res
+    }
+
+    #[test]
+    fn glyphs_in_hidden_optional_content_are_reported_and_flagged() {
+        // (a) in /Off; (b) in /On nested in /Off; (c) after /Span BMC … EMC
+        // still in /Off; (d) after the matching EMC; (e) in /On only.
+        let ops = [
+            op("BT", vec![]),
+            op("Tf", vec![name("F1"), int(10)]),
+            bdc_oc("Off"),
+            op("Tj", vec![string("a")]),
+            bdc_oc("On"),
+            op("Tj", vec![string("b")]),
+            op("EMC", vec![]),
+            op("BMC", vec![name("Span")]),
+            op("EMC", vec![]),
+            op("Tj", vec![string("c")]),
+            op("EMC", vec![]),
+            op("Tj", vec![string("d")]),
+            bdc_oc("On"),
+            op("Tj", vec![string("e")]),
+            op("EMC", vec![]),
+        ];
+        let rec = run(&ops, &mut oc_resources(), InterpretOptions::default());
+        assert_eq!(hidden_flags(&rec), [true, true, true, false, false]);
+    }
+
+    #[test]
+    fn a_hidden_section_nested_in_a_visible_one_ends_at_its_own_emc() {
+        let ops = [
+            op("BT", vec![]),
+            op("Tf", vec![name("F1"), int(10)]),
+            bdc_oc("On"),
+            bdc_oc("Off"),
+            op("Tj", vec![string("a")]),
+            op("EMC", vec![]),
+            op("Tj", vec![string("b")]),
+            op("EMC", vec![]),
+        ];
+        let rec = run(&ops, &mut oc_resources(), InterpretOptions::default());
+        assert_eq!(hidden_flags(&rec), [true, false]);
+    }
+
+    #[test]
+    fn hidden_optional_content_still_changes_the_state() {
+        // ISO 32000-1 §8.11.3.1: cm inside a hidden section still applies.
+        let ops = [
+            bdc_oc("Off"),
+            op("cm", vec![int(1), int(0), int(0), int(1), int(50), int(0)]),
+            op("EMC", vec![]),
+            op("BT", vec![]),
+            op("Tf", vec![name("F1"), int(10)]),
+            op("Tj", vec![string("a")]),
+        ];
+        let rec = run(&ops, &mut oc_resources(), InterpretOptions::default());
+        assert_point(rec.glyphs[0].trm_origin, (50.0, 0.0));
+        assert_eq!(hidden_flags(&rec), [false]);
+    }
+
+    fn tj_form(hidden: bool, form_ops: Vec<ContentOp>) -> MapResources {
+        let mut res = form_resources(form_ops, Matrix::identity(), None);
+        res.hidden_properties.push(b"Off".to_vec());
+        res.forms.get_mut(&b"Fm"[..]).unwrap().hidden = hidden;
+        res
+    }
+
+    fn form_tj() -> Vec<ContentOp> {
+        vec![
+            op("BT", vec![]),
+            op("Tf", vec![name("F1"), int(10)]),
+            op("Tj", vec![string("x")]),
+        ]
+    }
+
+    #[test]
+    fn a_form_whose_oc_is_hidden_reports_its_glyphs_hidden() {
+        let options = InterpretOptions { enter_forms: true };
+        let ops = [
+            op("Do", vec![name("Fm")]),
+            op("BT", vec![]),
+            op("Tf", vec![name("F1"), int(10)]),
+            op("Tj", vec![string("y")]),
+        ];
+        let rec = run(&ops, &mut tj_form(true, form_tj()), options);
+        assert_eq!(hidden_flags(&rec), [true, false]);
+        let rec = run(&ops, &mut tj_form(false, form_tj()), options);
+        assert_eq!(hidden_flags(&rec), [false, false]);
+    }
+
+    #[test]
+    fn a_form_drawn_inside_a_hidden_section_is_hidden() {
+        let options = InterpretOptions { enter_forms: true };
+        let ops = [bdc_oc("Off"), op("Do", vec![name("Fm")]), op("EMC", vec![])];
+        let rec = run(&ops, &mut tj_form(false, form_tj()), options);
+        assert_eq!(hidden_flags(&rec), [true]);
+    }
+
+    #[test]
+    fn a_hidden_section_left_open_in_a_form_stays_in_the_form() {
+        let options = InterpretOptions { enter_forms: true };
+        let mut form_ops = vec![bdc_oc("Off")];
+        form_ops.extend(form_tj());
+        let ops = [
+            op("BT", vec![]),
+            op("Tf", vec![name("F1"), int(10)]),
+            op("Do", vec![name("Fm")]),
+            op("Tj", vec![string("y")]),
+        ];
+        let rec = run(&ops, &mut tj_form(false, form_ops), options);
+        assert_eq!(hidden_flags(&rec), [true, false]);
+    }
+
+    #[test]
+    fn an_emc_in_a_form_does_not_close_the_callers_hidden_section() {
+        let options = InterpretOptions { enter_forms: true };
+        let ops = [
+            bdc_oc("Off"),
+            op("Do", vec![name("Fm")]),
+            op("BT", vec![]),
+            op("Tf", vec![name("F1"), int(10)]),
+            op("Tj", vec![string("y")]),
+            op("EMC", vec![]),
+        ];
+        let rec = run(&ops, &mut tj_form(false, vec![op("EMC", vec![])]), options);
+        assert_eq!(hidden_flags(&rec), [true]);
+    }
+
+    #[test]
+    fn a_hidden_section_nested_in_a_hidden_one_does_not_end_the_outer() {
+        let ops = [
+            op("BT", vec![]),
+            op("Tf", vec![name("F1"), int(10)]),
+            bdc_oc("Off"),
+            bdc_oc("Off"),
+            op("Tj", vec![string("a")]),
+            op("EMC", vec![]),
+            op("Tj", vec![string("b")]),
+            op("EMC", vec![]),
+            op("Tj", vec![string("c")]),
+        ];
+        let rec = run(&ops, &mut oc_resources(), InterpretOptions::default());
+        assert_eq!(hidden_flags(&rec), [true, true, false]);
+    }
+
+    /// A one-page document: OCG 5 OFF in `/D`, the page's `/Properties`
+    /// maps `/L` to it, and `/Fm` is a form (object 6) with `form_dict`
+    /// entries showing `(x)` in `/F1` (object 4).
+    fn oc_document(form_dict: &str) -> PdfDocument {
+        let form = "BT /F1 10 Tf (x) Tj ET";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R] /D << /OFF [5 0 R] >> >> >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /Font << /F1 4 0 R >> /Properties << /L 5 0 R >> /XObject << /Fm 6 0 R >> >> >>".to_string(),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+            "<< /Type /OCG /Name (L) >>".to_string(),
+            format!(
+                "<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] {form_dict} /Length {} >>\nstream\n{form}\nendstream",
+                form.len()
+            ),
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", i + 1).as_bytes());
+        }
+        let xref_at = out.len();
+        out.extend_from_slice(b"xref\n0 7\n0000000000 65535 f \n");
+        for off in offsets {
+            out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!("trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n").as_bytes(),
+        );
+        PdfDocument::from_bytes(out).unwrap()
+    }
+
+    fn doc_hidden_flags(doc: &PdfDocument, ops: &[ContentOp]) -> Vec<bool> {
+        let page = crate::page::get_page(doc, 0).unwrap();
+        let mut res = DocResources::page(doc, page.resources_ref.as_ref());
+        let mut rec = Recorder::default();
+        let options = InterpretOptions { enter_forms: true };
+        interpret(ops, &mut res, Matrix::identity(), options, &mut rec);
+        hidden_flags(&rec)
+    }
+
+    #[test]
+    fn document_resources_resolve_properties_and_form_oc() {
+        let draw = [op("Do", vec![name("Fm")])];
+        assert_eq!(doc_hidden_flags(&oc_document("/OC 5 0 R"), &draw), [true]);
+        assert_eq!(doc_hidden_flags(&oc_document(""), &draw), [false]);
+        let in_section = [bdc_oc("L"), op("Do", vec![name("Fm")]), op("EMC", vec![])];
+        assert_eq!(doc_hidden_flags(&oc_document(""), &in_section), [true]);
     }
 }
