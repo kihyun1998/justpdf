@@ -1794,13 +1794,7 @@ impl<'a> RenderInterpreter<'a> {
             _ => return Ok(()),
         };
 
-        // Resolve function if it's a reference
-        let mut resolved_dict = sh_dict;
-        if let Some(PdfObject::Reference(func_ref)) = resolved_dict.get(b"Function").cloned()
-            && let Ok(func_obj) = self.doc.resolve(&func_ref)
-        {
-            resolved_dict.insert(b"Function".to_vec(), func_obj);
-        }
+        let resolved_dict = sh_dict;
 
         let mask = self.draw_mask();
         let cs = shading_colour_space(&resolved_dict, self.doc);
@@ -2435,13 +2429,7 @@ impl<'a> RenderInterpreter<'a> {
             _ => return Ok(None),
         };
 
-        // Resolve function references within the shading dict
-        let mut resolved_shading = shading_dict;
-        if let Some(PdfObject::Reference(func_ref)) = resolved_shading.get(b"Function").cloned()
-            && let Ok(func_obj) = self.doc.resolve(&func_ref)
-        {
-            resolved_shading.insert(b"Function".to_vec(), func_obj);
-        }
+        let resolved_shading = shading_dict;
 
         let w = self.device.pixmap.width();
         let h = self.device.pixmap.height();

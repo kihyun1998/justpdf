@@ -216,3 +216,13 @@ fn a_reversed_domain_or_range_does_not_panic() {
     .unwrap();
     assert_eq!(f.evaluate(&[0.5]).len(), 1);
 }
+
+#[test]
+fn an_array_of_functions_concatenates_their_outputs() {
+    let f = function(&[
+        b"[<< /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> 5 0 R]".to_vec(),
+        b"<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>".to_vec(),
+    ])
+    .unwrap();
+    assert!(close(&f.evaluate(&[0.25]), &[0.25, 0.75]));
+}

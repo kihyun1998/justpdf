@@ -1,6 +1,6 @@
 use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::function::PdfFunction;
-use justpdf_core::object::{PdfDict, PdfObject};
+use justpdf_core::object::PdfDict;
 use tiny_skia::{
     Color, FillRule, GradientStop, LinearGradient, Mask, Paint, PathBuilder, Pixmap,
     RadialGradient, SpreadMode, Transform,
@@ -35,8 +35,24 @@ pub fn render_shading(
             cs,
             function,
         ),
-        2 => render_axial(pixmap, shading_dict, ctm, page_transform, clip_mask, cs),
-        3 => render_radial(pixmap, shading_dict, ctm, page_transform, clip_mask, cs),
+        2 => render_axial(
+            pixmap,
+            shading_dict,
+            ctm,
+            page_transform,
+            clip_mask,
+            cs,
+            function,
+        ),
+        3 => render_radial(
+            pixmap,
+            shading_dict,
+            ctm,
+            page_transform,
+            clip_mask,
+            cs,
+            function,
+        ),
         4 | 5 => render_gouraud_mesh(
             pixmap,
             shading_dict,
@@ -45,6 +61,7 @@ pub fn render_shading(
             clip_mask,
             stream_data,
             cs,
+            function,
         ),
         6 | 7 => render_patch_mesh(
             pixmap,
@@ -54,6 +71,7 @@ pub fn render_shading(
             clip_mask,
             stream_data,
             cs,
+            function,
         ),
         _ => {} // unsupported
     }
@@ -160,6 +178,7 @@ fn render_axial(
     page_transform: &Matrix,
     clip: Option<&Mask>,
     cs: &ColorSpace,
+    function: Option<&PdfFunction>,
 ) {
     let coords = match dict.get_array(b"Coords") {
         Some(arr) if arr.len() >= 4 => arr,
@@ -171,7 +190,7 @@ fn render_axial(
     let x1 = coords[2].as_f64().unwrap_or(0.0) as f32;
     let y1 = coords[3].as_f64().unwrap_or(0.0) as f32;
 
-    let stops = extract_color_stops(dict, cs);
+    let stops = function_stops(dict, cs, function);
     if stops.is_empty() {
         return;
     }
@@ -218,6 +237,7 @@ fn render_radial(
     page_transform: &Matrix,
     clip: Option<&Mask>,
     cs: &ColorSpace,
+    function: Option<&PdfFunction>,
 ) {
     let coords = match dict.get_array(b"Coords") {
         Some(arr) if arr.len() >= 6 => arr,
@@ -231,7 +251,7 @@ fn render_radial(
     let y1 = coords[4].as_f64().unwrap_or(0.0) as f32;
     let r1 = coords[5].as_f64().unwrap_or(0.0) as f32;
 
-    let stops = extract_color_stops(dict, cs);
+    let stops = function_stops(dict, cs, function);
     if stops.is_empty() {
         return;
     }
@@ -283,6 +303,7 @@ pub struct Vertex {
     b: u8,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_gouraud_mesh(
     pixmap: &mut Pixmap,
     dict: &PdfDict,
@@ -291,10 +312,15 @@ fn render_gouraud_mesh(
     clip: Option<&Mask>,
     stream_data: Option<&[u8]>,
     cs: &ColorSpace,
+    function: Option<&PdfFunction>,
 ) {
     let shading_type = dict.get_i64(b"ShadingType").unwrap_or(4);
 
-    let n_comps = color_space_components(cs);
+    let n_comps = if function.is_some() {
+        1
+    } else {
+        color_space_components(cs)
+    };
 
     let bits_per_coordinate = dict.get_i64(b"BitsPerCoordinate").unwrap_or(8) as u32;
     let bits_per_component = dict.get_i64(b"BitsPerComponent").unwrap_or(8) as u32;
@@ -308,6 +334,9 @@ fn render_gouraud_mesh(
         .get_array(b"Decode")
         .map(|a| a.iter().filter_map(|o| o.as_f64()).collect::<Vec<_>>())
         .unwrap_or_default();
+
+    let (lut, to_rgba) = mesh_colours(function, &decode, cs);
+    let lut = lut.as_ref();
 
     let data = match stream_data {
         Some(d) if !d.is_empty() => d,
@@ -329,7 +358,7 @@ fn render_gouraud_mesh(
             bits_per_component,
             n_comps,
             &decode,
-            cs,
+            &to_rgba,
         );
 
         for tri in &triangles {
@@ -352,6 +381,7 @@ fn render_gouraud_mesh(
                 ),
                 transform,
                 clip,
+                lut,
             );
         }
     } else {
@@ -367,7 +397,7 @@ fn render_gouraud_mesh(
             bits_per_component,
             n_comps,
             &decode,
-            cs,
+            &to_rgba,
         );
 
         // Build triangles from lattice grid
@@ -393,6 +423,7 @@ fn render_gouraud_mesh(
                         (v2.x as f32, v2.y as f32, [v2.r, v2.g, v2.b, 255]),
                         transform,
                         clip,
+                        lut,
                     );
                     rasterize_triangle(
                         pixmap,
@@ -401,6 +432,7 @@ fn render_gouraud_mesh(
                         (v2.x as f32, v2.y as f32, [v2.r, v2.g, v2.b, 255]),
                         transform,
                         clip,
+                        lut,
                     );
                 }
             }
@@ -412,6 +444,7 @@ fn render_gouraud_mesh(
 // Type 6/7: Coons / Tensor-product patch mesh
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn render_patch_mesh(
     pixmap: &mut Pixmap,
     dict: &PdfDict,
@@ -420,10 +453,15 @@ fn render_patch_mesh(
     clip: Option<&Mask>,
     stream_data: Option<&[u8]>,
     cs: &ColorSpace,
+    function: Option<&PdfFunction>,
 ) {
     let shading_type = dict.get_i64(b"ShadingType").unwrap_or(6);
 
-    let n_comps = color_space_components(cs);
+    let n_comps = if function.is_some() {
+        1
+    } else {
+        color_space_components(cs)
+    };
 
     let bits_per_coordinate = dict.get_i64(b"BitsPerCoordinate").unwrap_or(8) as u32;
     let bits_per_component = dict.get_i64(b"BitsPerComponent").unwrap_or(8) as u32;
@@ -433,6 +471,9 @@ fn render_patch_mesh(
         .get_array(b"Decode")
         .map(|a| a.iter().filter_map(|o| o.as_f64()).collect::<Vec<_>>())
         .unwrap_or_default();
+
+    let (lut, to_rgba) = mesh_colours(function, &decode, cs);
+    let lut = lut.as_ref();
 
     let data = match stream_data {
         Some(d) if !d.is_empty() => d,
@@ -455,12 +496,12 @@ fn render_patch_mesh(
         n_comps,
         points_per_patch,
         &decode,
-        cs,
+        &to_rgba,
     );
 
     // Subdivide each patch into triangles and rasterize
     for patch in &patches {
-        subdivide_and_rasterize_patch(pixmap, patch, transform, clip, 3);
+        subdivide_and_rasterize_patch(pixmap, patch, transform, clip, 3, lut);
     }
 }
 
@@ -517,6 +558,7 @@ pub fn rasterize_triangle(
     v2: (f32, f32, [u8; 4]),
     transform: Transform,
     clip: Option<&Mask>,
+    lut: Option<&FunctionTable>,
 ) {
     // Transform vertices to pixel coordinates
     let p0 = transform_point(transform, v0.0, v0.1);
@@ -553,10 +595,13 @@ pub fn rasterize_triangle(
                 // Note: clip mask check for mesh triangles is not implemented
                 let _ = clip;
 
-                let r = (w0 * v0.2[0] as f32 + w1 * v1.2[0] as f32 + w2 * v2.2[0] as f32) as u8;
-                let g = (w0 * v0.2[1] as f32 + w1 * v1.2[1] as f32 + w2 * v2.2[1] as f32) as u8;
-                let b = (w0 * v0.2[2] as f32 + w1 * v1.2[2] as f32 + w2 * v2.2[2] as f32) as u8;
-                let a = (w0 * v0.2[3] as f32 + w1 * v1.2[3] as f32 + w2 * v2.2[3] as f32) as u8;
+                let channel =
+                    |c: usize| w0 * v0.2[c] as f32 + w1 * v1.2[c] as f32 + w2 * v2.2[c] as f32;
+                // With a function table, the first channel carries t's index.
+                let [r, g, b, a] = match lut {
+                    Some(lut) => lut[channel(0).round().clamp(0.0, 255.0) as usize],
+                    None => [0, 1, 2, 3].map(|c| channel(c) as u8),
+                };
 
                 let idx = (y * width + x) as usize;
                 if idx < pixels.len() {
@@ -590,10 +635,11 @@ pub fn parse_gouraud_triangles(
     bits_per_component: u32,
     n_components: usize,
     decode: &[f64],
-    cs: &ColorSpace,
+    to_rgba: &dyn Fn(&[f64]) -> [u8; 4],
 ) -> Vec<[Vertex; 3]> {
     let mut reader = BitReader::new(data);
-    let mut vertices: Vec<Vertex> = Vec::new();
+    let mut starting: Vec<Vertex> = Vec::new();
+    let mut last: Option<[Vertex; 3]> = None;
     let mut triangles: Vec<[Vertex; 3]> = Vec::new();
 
     let (x_min, x_max) = (
@@ -647,46 +693,33 @@ pub fn parse_gouraud_triangles(
             break;
         }
 
-        let color = components_to_color(&comps, cs);
-        let [r, g, b, _] = color_to_rgba8(color);
+        let [r, g, b, _] = to_rgba(&comps);
 
         let vertex = Vertex { x, y, r, g, b };
 
-        match flag {
-            0 => {
-                // New triangle: need 3 vertices
-                vertices.clear();
-                vertices.push(vertex);
+        // A flag-0 vertex starts a triangle; the next two vertices complete
+        // it whatever their flags. Then flag 1 continues from side (vb, vc)
+        // and flag 2 from side (va, vc).
+        if !starting.is_empty() {
+            starting.push(vertex);
+            if let [a, b, c] = starting[..] {
+                triangles.push([a, b, c]);
+                last = Some([a, b, c]);
+                starting.clear();
             }
-            1 => {
-                // Continue from last 2 vertices
-                if vertices.len() >= 2 {
-                    let v_prev1 = vertices[vertices.len() - 2];
-                    let v_prev2 = vertices[vertices.len() - 1];
-                    vertices.push(vertex);
-                    triangles.push([v_prev2, vertices.last().copied().unwrap(), v_prev1]);
-                } else {
-                    vertices.push(vertex);
-                }
-            }
-            2
-                // Continue from first and last vertex
-                if vertices.len() >= 2 => {
-                    let v_first = vertices[0];
-                    let v_last = vertices[vertices.len() - 1];
-                    vertices.push(vertex);
-                    triangles.push([v_last, vertices.last().copied().unwrap(), v_first]);
-                }
-            _ => {
-                vertices.push(vertex);
-            }
+            continue;
         }
-
-        // When we have 3 vertices with flag=0, form a triangle
-        if flag == 0 && vertices.len() == 3 {
-            triangles.push([vertices[0], vertices[1], vertices[2]]);
-        } else if flag == 0 && vertices.len() < 3 {
-            continue; // need more vertices
+        match (flag, last) {
+            (0, _) => starting.push(vertex),
+            (1, Some([_, b, c])) => {
+                triangles.push([b, c, vertex]);
+                last = Some([b, c, vertex]);
+            }
+            (2, Some([a, _, c])) => {
+                triangles.push([a, c, vertex]);
+                last = Some([a, c, vertex]);
+            }
+            _ => {}
         }
     }
 
@@ -701,7 +734,7 @@ pub fn parse_lattice_vertices(
     bits_per_component: u32,
     n_components: usize,
     decode: &[f64],
-    cs: &ColorSpace,
+    to_rgba: &dyn Fn(&[f64]) -> [u8; 4],
 ) -> Vec<Vertex> {
     let mut reader = BitReader::new(data);
     let mut vertices: Vec<Vertex> = Vec::new();
@@ -746,8 +779,7 @@ pub fn parse_lattice_vertices(
             break;
         }
 
-        let color = components_to_color(&comps, cs);
-        let [r, g, b, _] = color_to_rgba8(color);
+        let [r, g, b, _] = to_rgba(&comps);
         vertices.push(Vertex { x, y, r, g, b });
     }
 
@@ -773,7 +805,7 @@ pub fn parse_patch_mesh(
     n_components: usize,
     points_per_patch: usize,
     decode: &[f64],
-    cs: &ColorSpace,
+    to_rgba: &dyn Fn(&[f64]) -> [u8; 4],
 ) -> Vec<Patch> {
     let mut reader = BitReader::new(data);
     let mut patches: Vec<Patch> = Vec::new();
@@ -856,9 +888,7 @@ pub fn parse_patch_mesh(
             if !ok {
                 break;
             }
-            let color = components_to_color(&comps, cs);
-            let [r, g, b, a] = color_to_rgba8(color);
-            colors.push([r, g, b, a]);
+            colors.push(to_rgba(&comps));
         }
         if !ok {
             break;
@@ -926,6 +956,7 @@ fn subdivide_and_rasterize_patch(
     transform: Transform,
     clip: Option<&Mask>,
     subdivisions: usize,
+    lut: Option<&FunctionTable>,
 ) {
     let n = subdivisions.max(1);
     let step = 1.0 / n as f64;
@@ -955,6 +986,7 @@ fn subdivide_and_rasterize_patch(
                 (p01.0 as f32, p01.1 as f32, c01),
                 transform,
                 clip,
+                lut,
             );
             rasterize_triangle(
                 pixmap,
@@ -963,6 +995,7 @@ fn subdivide_and_rasterize_patch(
                 (p01.0 as f32, p01.1 as f32, c01),
                 transform,
                 clip,
+                lut,
             );
         }
     }
@@ -1058,123 +1091,81 @@ impl<'a> BitReader<'a> {
 // Color stop extraction (for Type 2/3 shadings)
 // ---------------------------------------------------------------------------
 
-fn extract_color_stops(dict: &PdfDict, cs: &ColorSpace) -> Vec<GradientStop> {
-    if let Some(func_obj) = dict.get(b"Function") {
-        if let PdfObject::Dict(func) = func_obj {
-            return extract_stops_from_function(func, cs);
-        }
-        if let PdfObject::Array(funcs) = func_obj
-            && let Some(PdfObject::Dict(func)) = funcs.first()
-        {
-            return extract_stops_from_function(func, cs);
-        }
-    }
-
-    vec![
-        GradientStop::new(0.0, Color::BLACK),
-        GradientStop::new(1.0, Color::WHITE),
-    ]
-}
-
-fn extract_stops_from_function(func: &PdfDict, cs: &ColorSpace) -> Vec<GradientStop> {
-    let func_type = func.get_i64(b"FunctionType").unwrap_or(0);
-
-    if func_type == 2 {
-        let c0 = func
-            .get_array(b"C0")
-            .map(|a| {
-                a.iter()
-                    .map(|o| o.as_f64().unwrap_or(0.0))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| vec![0.0]);
-        let c1 = func
-            .get_array(b"C1")
-            .map(|a| {
-                a.iter()
-                    .map(|o| o.as_f64().unwrap_or(0.0))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| vec![1.0]);
-
-        vec![
-            GradientStop::new(0.0, components_to_color(&c0, cs)),
-            GradientStop::new(1.0, components_to_color(&c1, cs)),
-        ]
-    } else if func_type == 3 {
-        let bounds = func
-            .get_array(b"Bounds")
-            .map(|a| a.iter().filter_map(|o| o.as_f64()).collect::<Vec<_>>())
-            .unwrap_or_default();
-        let functions = func.get_array(b"Functions").unwrap_or(&[]);
-
-        let mut color_stops: Vec<(f32, Color)> = Vec::new();
-
-        for (i, sub_func) in functions.iter().enumerate() {
-            if let PdfObject::Dict(sub) = sub_func {
-                let sub_colors = extract_colors_from_function(sub, cs);
-                let t_start = if i == 0 {
-                    0.0
-                } else {
-                    bounds.get(i - 1).copied().unwrap_or(0.0) as f32
-                };
-                let t_end = if i < bounds.len() {
-                    bounds[i] as f32
-                } else {
-                    1.0
-                };
-
-                if let Some(c) = sub_colors.first() {
-                    color_stops.push((t_start.clamp(0.0, 1.0), *c));
-                }
-                if let Some(c) = sub_colors.last() {
-                    color_stops.push((t_end.clamp(0.0, 1.0), *c));
-                }
-            }
-        }
-
-        color_stops.dedup_by(|a, b| (a.0 - b.0).abs() < 0.001);
-
-        if color_stops.len() < 2 {
-            color_stops = vec![(0.0, Color::BLACK), (1.0, Color::WHITE)];
-        }
-
-        color_stops
-            .into_iter()
-            .map(|(pos, color)| GradientStop::new(pos, color))
-            .collect()
-    } else {
-        vec![
+/// Gradient stops for an axial or radial shading: its function sampled
+/// across `/Domain` (default `[0 1]`), or black to white without one.
+fn function_stops(
+    dict: &PdfDict,
+    cs: &ColorSpace,
+    function: Option<&PdfFunction>,
+) -> Vec<GradientStop> {
+    let Some(function) = function else {
+        return vec![
             GradientStop::new(0.0, Color::BLACK),
             GradientStop::new(1.0, Color::WHITE),
-        ]
+        ];
+    };
+    let domain = dict.get_array(b"Domain");
+    let t0 = domain
+        .and_then(|d| d.first())
+        .and_then(|o| o.as_f64())
+        .unwrap_or(0.0);
+    let t1 = domain
+        .and_then(|d| d.get(1))
+        .and_then(|o| o.as_f64())
+        .unwrap_or(1.0);
+    (0..STOPS)
+        .map(|i| {
+            let s = i as f32 / (STOPS - 1) as f32;
+            let t = t0 + (t1 - t0) * s as f64;
+            GradientStop::new(s, components_to_color(&function.evaluate(&[t]), cs))
+        })
+        .collect()
+}
+
+/// How many stops `function_stops` samples.
+const STOPS: usize = 64;
+
+/// A mesh function's colours for the 256 indices of `t`.
+pub type FunctionTable = [[u8; 4]; 256];
+
+/// A vertex's components to the colour its rasterizer interpolates.
+type ToRgba<'a> = Box<dyn Fn(&[f64]) -> [u8; 4] + 'a>;
+
+/// How a mesh turns a vertex's components into the colour its rasterizer
+/// interpolates. Without a function: the colour in `cs`. With one, each
+/// vertex carries one parametric value `t` in the last `/Decode` pair; its
+/// index in that range (0–255) goes into the first channel, and the table
+/// maps the interpolated index through the function, so `t` is interpolated
+/// before the function is applied.
+fn mesh_colours<'a>(
+    function: Option<&'a PdfFunction>,
+    decode: &[f64],
+    cs: &'a ColorSpace,
+) -> (Option<FunctionTable>, ToRgba<'a>) {
+    let Some(function) = function else {
+        return (
+            None,
+            Box::new(move |comps: &[f64]| color_to_rgba8(components_to_color(comps, cs))),
+        );
+    };
+    let t0 = decode.get(4).copied().unwrap_or(0.0);
+    let t1 = decode.get(5).copied().unwrap_or(1.0);
+    let mut lut: FunctionTable = [[0u8; 4]; 256];
+    for (i, entry) in lut.iter_mut().enumerate() {
+        let t = t0 + (t1 - t0) * i as f64 / 255.0;
+        *entry = color_to_rgba8(components_to_color(&function.evaluate(&[t]), cs));
     }
+    let index = move |comps: &[f64]| {
+        let t = comps.first().copied().unwrap_or(t0);
+        let at = if (t1 - t0).abs() < f64::EPSILON {
+            0.0
+        } else {
+            (t - t0) / (t1 - t0) * 255.0
+        };
+        [at.round().clamp(0.0, 255.0) as u8, 0, 0, 255]
+    };
+    (Some(lut), Box::new(index))
 }
-
-fn extract_colors_from_function(func: &PdfDict, cs: &ColorSpace) -> Vec<Color> {
-    let c0 = func
-        .get_array(b"C0")
-        .map(|a| {
-            a.iter()
-                .map(|o| o.as_f64().unwrap_or(0.0))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| vec![0.0]);
-    let c1 = func
-        .get_array(b"C1")
-        .map(|a| {
-            a.iter()
-                .map(|o| o.as_f64().unwrap_or(0.0))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| vec![1.0]);
-
-    vec![components_to_color(&c0, cs), components_to_color(&c1, cs)]
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /// `comps` in `cs` as an opaque 8-bit colour, each channel truncated.
 fn components_to_color(comps: &[f64], cs: &ColorSpace) -> Color {
@@ -1258,6 +1249,7 @@ mod tests {
             (9.0, 1.0, [0, 255, 0, 255]),
             (5.0, 9.0, [0, 0, 255, 255]),
             Transform::identity(),
+            None,
             None,
         );
 
