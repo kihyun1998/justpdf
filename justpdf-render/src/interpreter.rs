@@ -2222,9 +2222,10 @@ impl<'a> RenderInterpreter<'a> {
     // --- Pattern rendering ---
 
     /// Render a tiling pattern cell and return the pixmap.
-    /// Render a tiling pattern's cell, pattern space [0, XStep) × [0, YStep)
-    /// at device resolution, with the shader transform from cell pixels to
-    /// the paint's user space.
+    /// Render one period of a tiling pattern, pattern space [llx, llx + XStep)
+    /// × [lly, lly + YStep) from the `/BBox` corner, at device resolution:
+    /// each copy of the cell that reaches it, clipped to its box. Returned
+    /// with the shader transform from its pixels to the paint's user space.
     fn render_tiling_pattern(
         &mut self,
         pattern_dict: &PdfDict,
@@ -2263,6 +2264,17 @@ impl<'a> RenderInterpreter<'a> {
             Matrix::identity()
         };
 
+        let bbox = pattern_dict
+            .get_array(b"BBox")
+            .and_then(justpdf_core::page::Rect::from_pdf_array)
+            .map(|r| r.normalized())
+            .unwrap_or(justpdf_core::page::Rect {
+                llx: 0.0,
+                lly: 0.0,
+                urx: xstep,
+                ury: ystep,
+            });
+
         // Pattern space -> the stream's default space, the current user
         // space, and device space
         let base = pattern_matrix.concat(&self.stream_ctm);
@@ -2290,10 +2302,21 @@ impl<'a> RenderInterpreter<'a> {
 
         // Pattern space -> cell pixels, and back through the pattern matrix
         let cell_transform = Matrix::scale(cell_w as f64 / xstep, cell_h as f64 / ystep);
-        let to_user = base.to_skia().post_concat(from_user).pre_scale(
-            (xstep / cell_w as f64) as f32,
-            (ystep / cell_h as f64) as f32,
-        );
+        let to_user = base
+            .to_skia()
+            .post_concat(from_user)
+            .pre_translate(bbox.llx as f32, bbox.lly as f32)
+            .pre_scale(
+                (xstep / cell_w as f64) as f32,
+                (ystep / cell_h as f64) as f32,
+            );
+
+        // The copies of the box that reach the period: those moved 0, -1, ...
+        // steps, as many as the box is steps wide or high
+        let copies =
+            |extent: f64, step: f64| ((extent / step).ceil() as i64).clamp(0, MAX_TILE_COPIES);
+        let (nx, ny) = (copies(bbox.width(), xstep), copies(bbox.height(), ystep));
+        let ops = parse_content_stream(pattern_data).unwrap_or_default();
 
         // Swap in the cell pixmap
         std::mem::swap(&mut self.device.pixmap, &mut cell_pixmap);
@@ -2302,15 +2325,33 @@ impl<'a> RenderInterpreter<'a> {
         // clip and soft mask
         let saved_page_transform = self.page_transform;
         self.page_transform = cell_transform;
-        self.nested_stream(|this| {
-            this.state.ctm = Matrix::identity();
-            this.stream_ctm = Matrix::identity();
-            this.state.clip = None;
-            this.state.soft_mask = None;
-            if let Ok(ops) = parse_content_stream(pattern_data) {
-                let _ = this.execute_ops(&ops);
+        for j in (1 - ny)..=0 {
+            for i in (1 - nx)..=0 {
+                let copy =
+                    Matrix::translate(i as f64 * xstep - bbox.llx, j as f64 * ystep - bbox.lly);
+                self.nested_stream(|this| {
+                    this.state.ctm = copy;
+                    this.stream_ctm = Matrix::translate(-bbox.llx, -bbox.lly);
+                    this.state.clip = None;
+                    this.state.soft_mask = None;
+                    let mut pb = PathBuilder::new();
+                    if let Some(rect) = tiny_skia::Rect::from_ltrb(
+                        bbox.llx as f32,
+                        bbox.lly as f32,
+                        bbox.urx as f32,
+                        bbox.ury as f32,
+                    ) {
+                        pb.push_rect(rect);
+                    }
+                    let Some(box_path) = pb.finish() else {
+                        return;
+                    };
+                    let transform = this.effective_transform();
+                    this.intersect_clip(&box_path, FillRule::Winding, transform);
+                    let _ = this.execute_ops(&ops);
+                });
             }
-        });
+        }
         self.page_transform = saved_page_transform;
 
         // Swap back
@@ -2547,6 +2588,9 @@ fn row_span(row: &[u8]) -> (usize, usize) {
     let right = row.iter().rposition(|&m| m != 0).unwrap_or(0);
     (left, right)
 }
+
+/// The most copies of a tiling cell drawn into one period, per axis.
+const MAX_TILE_COPIES: i64 = 16;
 
 /// How far a stroke of `gs` can reach from its path, in user space: half the
 /// line width, times the miter limit for miter joins and at least the square
