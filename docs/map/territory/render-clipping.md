@@ -31,6 +31,7 @@ ISO 32000-1 §8.5.4 (read raw for #50); §8.10.1 for the form `/BBox` clip. The 
 
 ## Blast radius
 - [Raster device](raster-device.md) — draws through the mask it is given.
+- [Render shading](render-shading.md) — mesh triangles bypass tiny-skia and read the mask's coverage themselves (`rasterize_triangle`).
 - [Render transparency](render-transparency.md) — `draw_mask` combines the soft mask with the clip per draw.
 - [Render interpreter](render-interpreter.md) — the q/Q stack.
 

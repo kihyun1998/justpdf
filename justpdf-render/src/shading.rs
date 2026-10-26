@@ -682,6 +682,14 @@ pub fn rasterize_triangle(
     }
     let inv_area = 1.0 / area;
 
+    let coverage = match clip {
+        Some(mask) if mask.width() != pixmap.width() || mask.height() != pixmap.height() => {
+            return;
+        }
+        Some(mask) => Some(mask.data()),
+        None => None,
+    };
+
     let width = pixmap.width() as i32;
     let pixels = pixmap.pixels_mut();
 
@@ -691,14 +699,19 @@ pub fn rasterize_triangle(
             let py = y as f32 + 0.5;
             let p = (px, py);
 
-            let w0 = edge_function(p1, p2, p) * inv_area;
-            let w1 = edge_function(p2, p0, p) * inv_area;
-            let w2 = edge_function(p0, p1, p) * inv_area;
+            let w0 = shared_edge_function(p1, p2, p) * inv_area;
+            let w1 = shared_edge_function(p2, p0, p) * inv_area;
+            let w2 = shared_edge_function(p0, p1, p) * inv_area;
 
-            if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
-                // Check clip mask
-                // Note: clip mask check for mesh triangles is not implemented
-                let _ = clip;
+            let covers = |w: f32, a: (f32, f32), b: (f32, f32)| {
+                w > 0.0 || (w == 0.0 && owns_edge(a, b, area > 0.0))
+            };
+            if covers(w0, p1, p2) && covers(w1, p2, p0) && covers(w2, p0, p1) {
+                let idx = (y * width + x) as usize;
+                let m = coverage.map_or(255, |c| c.get(idx).copied().unwrap_or(0));
+                if m == 0 {
+                    continue;
+                }
 
                 let channel =
                     |c: usize| w0 * v0.2[c] as f32 + w1 * v1.2[c] as f32 + w2 * v2.2[c] as f32;
@@ -708,16 +721,57 @@ pub fn rasterize_triangle(
                     None => [0, 1, 2, 3].map(|c| channel(c) as u8),
                 };
 
-                let idx = (y * width + x) as usize;
                 if idx < pixels.len() {
                     // Premultiply alpha for tiny-skia
                     if let Some(color) = tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, a) {
-                        pixels[idx] = color;
+                        pixels[idx] = if m == 255 {
+                            color
+                        } else {
+                            mask_over(color, pixels[idx], m)
+                        };
                     }
                 }
             }
         }
     }
+}
+
+/// `src` over `dst` at mask coverage `m` (0–255), both premultiplied:
+/// `src · m + dst · (1 − m)`, the coverage a masked fill gives one pixel.
+fn mask_over(
+    src: tiny_skia::PremultipliedColorU8,
+    dst: tiny_skia::PremultipliedColorU8,
+    m: u8,
+) -> tiny_skia::PremultipliedColorU8 {
+    let m = m as u32;
+    let mix = |s: u8, d: u8| ((s as u32 * m + d as u32 * (255 - m) + 127) / 255) as u8;
+    let a = mix(src.alpha(), dst.alpha());
+    let r = mix(src.red(), dst.red()).min(a);
+    let g = mix(src.green(), dst.green()).min(a);
+    let b = mix(src.blue(), dst.blue()).min(a);
+    tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, a).unwrap_or(dst)
+}
+
+/// `edge_function(a, b, c)`, evaluated with the edge's endpoints in a fixed
+/// order, so two triangles sharing the edge get exactly opposite values.
+fn shared_edge_function(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
+    if a <= b {
+        edge_function(a, b, c)
+    } else {
+        -edge_function(b, a, c)
+    }
+}
+
+/// Whether a pixel centre lying exactly on the edge `a → b` belongs to the
+/// triangle the edge bounds (`positive`: the triangle's area is positive).
+/// Of two triangles sharing an edge, exactly one owns it.
+fn owns_edge(a: (f32, f32), b: (f32, f32), positive: bool) -> bool {
+    let (dx, dy) = if positive {
+        (b.0 - a.0, b.1 - a.1)
+    } else {
+        (a.0 - b.0, a.1 - b.1)
+    };
+    dy > 0.0 || (dy == 0.0 && dx < 0.0)
 }
 
 fn edge_function(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
