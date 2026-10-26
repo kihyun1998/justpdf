@@ -2213,11 +2213,14 @@ impl<'a> RenderInterpreter<'a> {
     // --- Pattern rendering ---
 
     /// Render a tiling pattern cell and return the pixmap.
+    /// Render a tiling pattern's cell, pattern space [0, XStep) × [0, YStep)
+    /// at device resolution, with the shader transform from cell pixels to
+    /// the paint's user space.
     fn render_tiling_pattern(
         &mut self,
         pattern_dict: &PdfDict,
         pattern_data: &[u8],
-    ) -> Result<Option<Pixmap>> {
+    ) -> Result<Option<(Pixmap, Transform)>> {
         let xstep = pattern_dict
             .get(b"XStep")
             .and_then(|o| o.as_f64())
@@ -2232,26 +2235,6 @@ impl<'a> RenderInterpreter<'a> {
         if xstep < 1.0 || ystep < 1.0 {
             return Ok(None);
         }
-
-        // Compute effective scale from CTM + page transform
-        let effective = self.state.ctm.concat(&self.page_transform);
-        let sx = (effective.a * effective.a + effective.b * effective.b)
-            .sqrt()
-            .abs();
-        let sy = (effective.c * effective.c + effective.d * effective.d)
-            .sqrt()
-            .abs();
-
-        // Pattern cell size in device pixels
-        #[allow(clippy::manual_clamp)]
-        let cell_w = (xstep * sx).ceil().max(1.0).min(2048.0) as u32;
-        #[allow(clippy::manual_clamp)]
-        let cell_h = (ystep * sy).ceil().max(1.0).min(2048.0) as u32;
-
-        let mut cell_pixmap = match Pixmap::new(cell_w, cell_h) {
-            Some(p) => p,
-            None => return Ok(None),
-        };
 
         // Pattern matrix (from pattern dict)
         let pattern_matrix = if let Some(matrix_arr) = pattern_dict.get_array(b"Matrix") {
@@ -2271,10 +2254,34 @@ impl<'a> RenderInterpreter<'a> {
             Matrix::identity()
         };
 
-        // Build the transform for rendering the pattern cell:
-        // Pattern coords -> pattern matrix -> scale to device pixels
-        let scale_to_device = Matrix::scale(cell_w as f64 / xstep, cell_h as f64 / ystep);
-        let cell_transform = pattern_matrix.concat(&scale_to_device);
+        // Compute effective scale from the pattern matrix, CTM and page transform
+        let effective = pattern_matrix
+            .concat(&self.state.ctm)
+            .concat(&self.page_transform);
+        let sx = (effective.a * effective.a + effective.b * effective.b)
+            .sqrt()
+            .abs();
+        let sy = (effective.c * effective.c + effective.d * effective.d)
+            .sqrt()
+            .abs();
+
+        // Pattern cell size in device pixels
+        #[allow(clippy::manual_clamp)]
+        let cell_w = (xstep * sx).ceil().max(1.0).min(2048.0) as u32;
+        #[allow(clippy::manual_clamp)]
+        let cell_h = (ystep * sy).ceil().max(1.0).min(2048.0) as u32;
+
+        let mut cell_pixmap = match Pixmap::new(cell_w, cell_h) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        // Pattern space -> cell pixels, and back through the pattern matrix
+        let cell_transform = Matrix::scale(cell_w as f64 / xstep, cell_h as f64 / ystep);
+        let to_user = pattern_matrix.to_skia().pre_scale(
+            (xstep / cell_w as f64) as f32,
+            (ystep / cell_h as f64) as f32,
+        );
 
         // Swap in the cell pixmap
         std::mem::swap(&mut self.device.pixmap, &mut cell_pixmap);
@@ -2296,7 +2303,7 @@ impl<'a> RenderInterpreter<'a> {
         // Swap back
         std::mem::swap(&mut self.device.pixmap, &mut cell_pixmap);
 
-        Ok(Some(cell_pixmap))
+        Ok(Some((cell_pixmap, to_user)))
     }
 
     /// Try to fill a path using the current fill pattern, if one is set.
@@ -2393,7 +2400,7 @@ impl<'a> RenderInterpreter<'a> {
                             })
                         })
                         .unwrap_or(Ok(None))
-                        .map(|cell| cell.map(|cell| Some((cell, Transform::identity()))))
+                        .map(|cell| cell.map(Some))
                     }
                     2 => self.render_shading_pattern(dict, area, transform),
                     _ => Ok(None),
