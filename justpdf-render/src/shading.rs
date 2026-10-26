@@ -214,14 +214,7 @@ fn render_axial(
 
     let transform = ctm.concat(page_transform).to_skia();
 
-    let mut pb = PathBuilder::new();
-    pb.move_to(-10000.0, -10000.0);
-    pb.line_to(20000.0, -10000.0);
-    pb.line_to(20000.0, 20000.0);
-    pb.line_to(-10000.0, 20000.0);
-    pb.close();
-
-    if let Some(path) = pb.finish() {
+    if let Some(path) = axial_region(x0, y0, x1, y1, extend(dict)) {
         pixmap.fill_path(&path, &paint, FillRule::Winding, transform, clip);
     }
 }
@@ -246,7 +239,7 @@ fn render_radial(
 
     let x0 = coords[0].as_f64().unwrap_or(0.0) as f32;
     let y0 = coords[1].as_f64().unwrap_or(0.0) as f32;
-    let _r0 = coords[2].as_f64().unwrap_or(0.0) as f32;
+    let r0 = coords[2].as_f64().unwrap_or(0.0) as f32;
     let x1 = coords[3].as_f64().unwrap_or(0.0) as f32;
     let y1 = coords[4].as_f64().unwrap_or(0.0) as f32;
     let r1 = coords[5].as_f64().unwrap_or(0.0) as f32;
@@ -276,16 +269,128 @@ fn render_radial(
 
     let transform = ctm.concat(page_transform).to_skia();
 
-    let mut pb = PathBuilder::new();
-    pb.move_to(-10000.0, -10000.0);
-    pb.line_to(20000.0, -10000.0);
-    pb.line_to(20000.0, 20000.0);
-    pb.line_to(-10000.0, 20000.0);
-    pb.close();
-
-    if let Some(path) = pb.finish() {
+    let region = if extend(dict).1 {
+        far_square()
+    } else {
+        disks_hull((x0, y0, r0), (x1, y1, r1))
+    };
+    if let Some(path) = region {
         pixmap.fill_path(&path, &paint, FillRule::Winding, transform, clip);
     }
+}
+
+/// `/Extend`: whether the shading paints before its start and after its end.
+fn extend(dict: &PdfDict) -> (bool, bool) {
+    let flag = |i: usize| {
+        dict.get_array(b"Extend")
+            .and_then(|a| a.get(i))
+            .and_then(|o| o.as_bool())
+            .unwrap_or(false)
+    };
+    (flag(0), flag(1))
+}
+
+/// How far, in shading space, a painted region reaches where it is unbounded.
+const FAR: f32 = 20000.0;
+
+/// A square reaching `FAR` in every direction.
+fn far_square() -> Option<tiny_skia::Path> {
+    let mut pb = PathBuilder::new();
+    pb.move_to(-FAR, -FAR);
+    pb.line_to(FAR, -FAR);
+    pb.line_to(FAR, FAR);
+    pb.line_to(-FAR, FAR);
+    pb.close();
+    pb.finish()
+}
+
+/// The band an axial shading from (x0, y0) to (x1, y1) paints: between the
+/// lines through its ends perpendicular to its axis, reaching `FAR` past an
+/// end it extends. The whole square for a zero-length axis.
+fn axial_region(
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    (extend_start, extend_end): (bool, bool),
+) -> Option<tiny_skia::Path> {
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len == 0.0 || !len.is_finite() {
+        return far_square();
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let (nx, ny) = (-uy * FAR, ux * FAR);
+    let (sx, sy) = if extend_start {
+        (x0 - ux * FAR, y0 - uy * FAR)
+    } else {
+        (x0, y0)
+    };
+    let (ex, ey) = if extend_end {
+        (x1 + ux * FAR, y1 + uy * FAR)
+    } else {
+        (x1, y1)
+    };
+    let mut pb = PathBuilder::new();
+    pb.move_to(sx + nx, sy + ny);
+    pb.line_to(ex + nx, ey + ny);
+    pb.line_to(ex - nx, ey - ny);
+    pb.line_to(sx - nx, sy - ny);
+    pb.close();
+    pb.finish()
+}
+
+/// How many points `disks_hull` takes on each circle.
+const HULL_POINTS: usize = 128;
+
+/// The convex hull of two disks (x, y, r), as a polygon through
+/// `HULL_POINTS` points on each circle: the region a radial shading sweeps
+/// from its start circle to its end circle.
+fn disks_hull(a: (f32, f32, f32), b: (f32, f32, f32)) -> Option<tiny_skia::Path> {
+    let mut points: Vec<(f32, f32)> = [a, b]
+        .into_iter()
+        .flat_map(|(x, y, r)| {
+            let r = r.max(0.0);
+            (0..HULL_POINTS).map(move |i| {
+                let angle = i as f32 * std::f32::consts::TAU / HULL_POINTS as f32;
+                (x + r * angle.cos(), y + r * angle.sin())
+            })
+        })
+        .collect();
+    points.sort_by(|p, q| p.partial_cmp(q).unwrap_or(std::cmp::Ordering::Equal));
+    points.dedup();
+    let hull = convex_hull(&points);
+    let (first, rest) = hull.split_first()?;
+    let mut pb = PathBuilder::new();
+    pb.move_to(first.0, first.1);
+    for &(x, y) in rest {
+        pb.line_to(x, y);
+    }
+    pb.close();
+    pb.finish()
+}
+
+/// The convex hull of `points`, sorted by (x, y): Andrew's monotone chain,
+/// the lower chain then the upper.
+fn convex_hull(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    fn turns_left(o: (f32, f32), a: (f32, f32), b: (f32, f32)) -> bool {
+        (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0) > 0.0
+    }
+    fn chain<'a>(points: impl Iterator<Item = &'a (f32, f32)>) -> Vec<(f32, f32)> {
+        let mut chain: Vec<(f32, f32)> = Vec::new();
+        for &p in points {
+            while chain.len() >= 2 && !turns_left(chain[chain.len() - 2], chain[chain.len() - 1], p)
+            {
+                chain.pop();
+            }
+            chain.push(p);
+        }
+        chain.pop();
+        chain
+    }
+    let mut hull = chain(points.iter());
+    hull.extend(chain(points.iter().rev()));
+    hull
 }
 
 // ---------------------------------------------------------------------------
