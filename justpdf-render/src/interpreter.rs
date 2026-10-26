@@ -61,6 +61,9 @@ pub struct RenderInterpreter<'a> {
     resources: ResourceScopes,
     /// Transform from PDF user space to device (pixel) space.
     page_transform: Matrix,
+    /// The CTM at the start of the content stream being executed: the
+    /// default space its patterns are placed in.
+    stream_ctm: Matrix,
     /// Current path being constructed.
     path_builder: Option<PathBuilder>,
     /// Form XObject recursion depth limit.
@@ -96,6 +99,7 @@ impl<'a> RenderInterpreter<'a> {
             fonts: HashMap::new(),
             resources: ResourceScopes::default(),
             page_transform,
+            stream_ctm: Matrix::identity(),
             path_builder: None,
             xobject_depth: 0,
             state_floor: 0,
@@ -1828,6 +1832,7 @@ impl<'a> RenderInterpreter<'a> {
             this.state.clip = None;
             this.reset_transparency();
             this.state.ctm = form_matrix(dict).concat(&this.state.ctm);
+            this.stream_ctm = this.state.ctm;
             let _ = this.execute_ops(&ops);
         });
         std::mem::swap(&mut self.device.pixmap, &mut temp_pixmap);
@@ -1852,6 +1857,7 @@ impl<'a> RenderInterpreter<'a> {
         let ops = parse_content_stream(data).map_err(RenderError::Core)?;
         self.nested_stream(|this| {
             this.state.ctm = form_matrix(dict).concat(&this.state.ctm);
+            this.stream_ctm = this.state.ctm;
             this.execute_ops(&ops)
         })
     }
@@ -1867,7 +1873,9 @@ impl<'a> RenderInterpreter<'a> {
         let floor = std::mem::replace(&mut self.state_floor, depth + 1);
         let path = self.path_builder.take();
         let oc_skip = std::mem::replace(&mut self.oc_skip_depth, 0);
+        let stream_ctm = self.stream_ctm;
         let out = f(self);
+        self.stream_ctm = stream_ctm;
         self.oc_skip_depth = oc_skip;
         self.state_stack.truncate(depth + 1);
         if let Some(s) = self.state_stack.pop() {
@@ -2157,6 +2165,7 @@ impl<'a> RenderInterpreter<'a> {
             this.state.clip = None;
             this.reset_transparency();
             this.state.ctm = form_matrix(form_dict).concat(&this.state.ctm);
+            this.stream_ctm = this.state.ctm;
             if let Ok(ops) = parse_content_stream(form_data) {
                 let _ = this.execute_ops(&ops);
             }
@@ -2254,10 +2263,13 @@ impl<'a> RenderInterpreter<'a> {
             Matrix::identity()
         };
 
-        // Compute effective scale from the pattern matrix, CTM and page transform
-        let effective = pattern_matrix
-            .concat(&self.state.ctm)
-            .concat(&self.page_transform);
+        // Pattern space -> the stream's default space, the current user
+        // space, and device space
+        let base = pattern_matrix.concat(&self.stream_ctm);
+        let Some(from_user) = self.state.ctm.to_skia().invert() else {
+            return Ok(None);
+        };
+        let effective = base.concat(&self.page_transform);
         let sx = (effective.a * effective.a + effective.b * effective.b)
             .sqrt()
             .abs();
@@ -2278,7 +2290,7 @@ impl<'a> RenderInterpreter<'a> {
 
         // Pattern space -> cell pixels, and back through the pattern matrix
         let cell_transform = Matrix::scale(cell_w as f64 / xstep, cell_h as f64 / ystep);
-        let to_user = pattern_matrix.to_skia().pre_scale(
+        let to_user = base.to_skia().post_concat(from_user).pre_scale(
             (xstep / cell_w as f64) as f32,
             (ystep / cell_h as f64) as f32,
         );
@@ -2292,6 +2304,7 @@ impl<'a> RenderInterpreter<'a> {
         self.page_transform = cell_transform;
         self.nested_stream(|this| {
             this.state.ctm = Matrix::identity();
+            this.stream_ctm = Matrix::identity();
             this.state.clip = None;
             this.state.soft_mask = None;
             if let Ok(ops) = parse_content_stream(pattern_data) {
@@ -2481,8 +2494,9 @@ impl<'a> RenderInterpreter<'a> {
             Matrix::identity()
         };
 
-        // The effective CTM for the shading is pattern_matrix * CTM
-        let effective_ctm = pattern_matrix.concat(&self.state.ctm);
+        // The effective CTM for the shading is pattern_matrix * the stream's
+        // default space
+        let effective_ctm = pattern_matrix.concat(&self.stream_ctm);
 
         let cs = shading_colour_space(&resolved_shading, self.doc);
         let function = resolved_shading
