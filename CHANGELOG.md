@@ -55,6 +55,7 @@ All notable changes to this project will be documented in this file.
 - `PageBuilder::set_font_name(&str, f64)` (the old string `set_font`, renamed), `PageBuilder::add_font(&str, &str)` and `DocumentBuilder::embed_truetype_font` — use a `Font` from `add_standard_font` or `add_font`, selected with `set_font`. Their behaviour is unchanged (#173)
 
 ### Fixed
+- **A tiling pattern with `/XStep` or `/YStep` below 1 painted the fill colour** — any finite positive step now tiles, since the steps are in pattern space and `/Matrix` scales them (#402)
 - **A tiling pattern's `/BBox` was ignored** — the cell is now its bounding box, clipped to it and repeated every `/XStep` and `/YStep`: content left of or below the pattern origin is drawn, a box larger than the step overlaps its neighbours, and content outside a smaller box is cut off (#399)
 - **A `cm` before a pattern fill or stroke moved and scaled the pattern** — tiling and shading patterns are now placed in the default space of the content stream they are painted in (the page's, or the form's matrix and the CTM at `Do`), as ISO 32000 §8.7.3.1 requires, so a transformation inside the stream no longer moves them (#397)
 - **Tiling patterns were drawn at the wrong size at any resolution but 72 dpi, and ignored the translation and scale of `/Matrix`** — a tiling pattern's cell now lands in pattern space at every resolution (it went through the page transform twice, so cells doubled at 144 dpi) and `/Matrix` moves and scales the tiling instead of the cell's content (#396)
