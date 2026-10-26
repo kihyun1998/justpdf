@@ -2242,7 +2242,7 @@ impl<'a> RenderInterpreter<'a> {
             .unwrap_or(1.0)
             .abs();
 
-        if xstep < 1.0 || ystep < 1.0 {
+        if !(xstep.is_finite() && ystep.is_finite() && xstep > 0.0 && ystep > 0.0) {
             return Ok(None);
         }
 
