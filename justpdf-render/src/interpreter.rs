@@ -16,7 +16,7 @@ use justpdf_core::object::{IndirectRef, PdfDict, PdfObject};
 use justpdf_core::ocg::OCConfig;
 use justpdf_core::page::PageInfo;
 use justpdf_core::ttf_parser;
-use tiny_skia::{FillRule, Mask, PathBuilder, Pixmap, Transform};
+use tiny_skia::{FillRule, IntRect, Mask, PathBuilder, Pixmap, Transform};
 
 use crate::device::PixmapDevice;
 use crate::error::{RenderError, Result};
@@ -1731,31 +1731,38 @@ impl<'a> RenderInterpreter<'a> {
         let alpha = self.state.fill_alpha as f32;
         let bm = self.blend_mode();
 
-        // Painted straight onto the page when opaque and Normal, otherwise
-        // into its own pixmap, composited once with the alpha and blend mode
-        if alpha >= 1.0 && bm == tiny_skia::BlendMode::SourceOver {
+        // Painted straight onto the page through the mask when opaque and
+        // Normal and the mask's nonzero pixels cover half the page or more,
+        // otherwise into a pixmap covering them, composited once with the
+        // mask, alpha and blend mode
+        let mask_ref = mask.as_ref().map(SharedMask::mask);
+        let Some(area) = self.draw_area(None, mask_ref) else {
+            return Ok(());
+        };
+        let page = self.device.pixmap.width() as u64 * self.device.pixmap.height() as u64;
+        let covered = area.width() as u64 * area.height() as u64;
+        if alpha >= 1.0 && bm == tiny_skia::BlendMode::SourceOver && covered * 2 >= page {
             crate::shading::render_shading(
                 &mut self.device.pixmap,
                 &resolved_dict,
                 &self.state.ctm,
                 &self.page_transform,
-                mask.as_ref().map(SharedMask::mask),
+                mask_ref,
                 stream_data.as_deref(),
                 &cs,
                 function.as_ref(),
             );
             return Ok(());
         }
-        let Some(mut shading_pixmap) =
-            Pixmap::new(self.device.pixmap.width(), self.device.pixmap.height())
-        else {
+        let Some(mut shading_pixmap) = Pixmap::new(area.width(), area.height()) else {
             return Ok(());
         };
+        let to_area = Matrix::translate(-area.x() as f64, -area.y() as f64);
         crate::shading::render_shading(
             &mut shading_pixmap,
             &resolved_dict,
             &self.state.ctm,
-            &self.page_transform,
+            &self.page_transform.concat(&to_area),
             None,
             stream_data.as_deref(),
             &cs,
@@ -1763,7 +1770,7 @@ impl<'a> RenderInterpreter<'a> {
         );
         self.device.draw_pixmap(
             &shading_pixmap.as_ref(),
-            Transform::identity(),
+            Transform::from_translate(area.x() as f32, area.y() as f32),
             alpha,
             bm,
             mask.as_ref().map(SharedMask::mask),
@@ -1878,6 +1885,27 @@ impl<'a> RenderInterpreter<'a> {
         self.state.fill_alpha = 1.0;
         self.state.stroke_alpha = 1.0;
         self.state.soft_mask = None;
+    }
+
+    /// The device pixels a draw can change: the page, cut to `rect` (device
+    /// space, grown by a pixel each way) and to the nonzero pixels of `mask`.
+    /// `None` when that leaves nothing.
+    fn draw_area(&self, rect: Option<tiny_skia::Rect>, mask: Option<&Mask>) -> Option<IntRect> {
+        let pixmap = &self.device.pixmap;
+        let mut area = IntRect::from_xywh(0, 0, pixmap.width(), pixmap.height())?;
+        if let Some(rect) = rect {
+            let grown = tiny_skia::Rect::from_ltrb(
+                rect.left() - 1.0,
+                rect.top() - 1.0,
+                rect.right() + 1.0,
+                rect.bottom() + 1.0,
+            )?;
+            area = area.intersect(&grown.round_out()?)?;
+        }
+        if let Some(mask) = mask {
+            area = area.intersect(&mask_bounds(mask)?)?;
+        }
+        Some(area)
     }
 
     /// The mask one draw is painted through: the clip, the soft mask, or their
@@ -2279,24 +2307,29 @@ impl<'a> RenderInterpreter<'a> {
             None => return false,
         };
 
-        if let Ok(Some(pattern_pixmap)) = self.render_pattern(&pattern) {
-            let transform = self.effective_transform();
+        let transform = self.effective_transform();
+        let mask = self.draw_mask();
+        let area = self.draw_area(
+            path.bounds().transform(transform),
+            mask.as_ref().map(SharedMask::mask),
+        );
+        let Ok(Some(painted)) = self.render_pattern(&pattern, area, transform) else {
+            return false;
+        };
+        if let Some((pattern_pixmap, pattern_transform)) = painted {
             let bm = self.blend_mode();
-            let mask = self.draw_mask();
             self.device.fill_path_with_pattern(
                 path,
                 rule,
                 transform,
                 &pattern_pixmap.as_ref(),
-                Transform::identity(),
+                pattern_transform,
                 pattern_alpha(&pattern, self.state.fill_alpha),
                 bm,
                 mask.as_ref().map(SharedMask::mask),
             );
-            true
-        } else {
-            false
         }
+        true
     }
 
     /// Try to stroke a path using the current stroke pattern, if one is set.
@@ -2307,28 +2340,42 @@ impl<'a> RenderInterpreter<'a> {
             None => return false,
         };
 
-        if let Ok(Some(pattern_pixmap)) = self.render_pattern(&pattern) {
-            let transform = self.effective_transform();
+        let transform = self.effective_transform();
+        let mask = self.draw_mask();
+        let reach = stroke_reach(&self.state);
+        let outline = path.bounds().outset(reach, reach);
+        let area = self.draw_area(
+            outline.and_then(|r| r.transform(transform)),
+            mask.as_ref().map(SharedMask::mask),
+        );
+        let Ok(Some(painted)) = self.render_pattern(&pattern, area, transform) else {
+            return false;
+        };
+        if let Some((pattern_pixmap, pattern_transform)) = painted {
             let bm = self.blend_mode();
-            let mask = self.draw_mask();
             self.device.stroke_path_with_pattern(
                 path,
                 transform,
                 &self.state,
                 &pattern_pixmap.as_ref(),
-                Transform::identity(),
+                pattern_transform,
                 pattern_alpha(&pattern, self.state.stroke_alpha),
                 bm,
                 mask.as_ref().map(SharedMask::mask),
             );
-            true
-        } else {
-            false
         }
+        true
     }
 
-    /// Render a selected pattern. Handles both tiling and shading patterns.
-    fn render_pattern(&mut self, pattern: &PatternSelection) -> Result<Option<Pixmap>> {
+    /// Render a selected pattern for a paint drawn with `transform`, with the
+    /// shader transform to paint it with. A shading pattern covers `area`
+    /// only, and paints nothing (`Some(None)`) when there is none.
+    fn render_pattern(
+        &mut self,
+        pattern: &PatternSelection,
+        area: Option<IntRect>,
+        transform: Transform,
+    ) -> Result<Option<Option<(Pixmap, Transform)>>> {
         let pattern_ref = pattern.obj_ref.as_ref();
         match &*pattern.object {
             PdfObject::Stream { dict, data } => {
@@ -2346,18 +2393,16 @@ impl<'a> RenderInterpreter<'a> {
                             })
                         })
                         .unwrap_or(Ok(None))
+                        .map(|cell| cell.map(|cell| Some((cell, Transform::identity()))))
                     }
-                    2 => {
-                        // Shading pattern: render shading into a temp pixmap
-                        self.render_shading_pattern(dict)
-                    }
+                    2 => self.render_shading_pattern(dict, area, transform),
                     _ => Ok(None),
                 }
             }
             PdfObject::Dict(dict) => {
                 let pattern_type = dict.get_i64(b"PatternType").unwrap_or(0);
                 if pattern_type == 2 {
-                    self.render_shading_pattern(dict)
+                    self.render_shading_pattern(dict, area, transform)
                 } else {
                     Ok(None)
                 }
@@ -2366,8 +2411,15 @@ impl<'a> RenderInterpreter<'a> {
         }
     }
 
-    /// Render a shading pattern (PatternType 2) into a pixmap.
-    fn render_shading_pattern(&mut self, pattern_dict: &PdfDict) -> Result<Option<Pixmap>> {
+    /// Render a shading pattern (PatternType 2) into a pixmap covering
+    /// `area`, with the shader transform that puts it there under a paint
+    /// drawn with `transform`.
+    fn render_shading_pattern(
+        &mut self,
+        pattern_dict: &PdfDict,
+        area: Option<IntRect>,
+        transform: Transform,
+    ) -> Result<Option<Option<(Pixmap, Transform)>>> {
         // Get the shading dict from the pattern
         let shading_obj = match pattern_dict.get(b"Shading") {
             Some(PdfObject::Reference(r)) => {
@@ -2393,10 +2445,13 @@ impl<'a> RenderInterpreter<'a> {
 
         let resolved_shading = shading_dict;
 
-        let w = self.device.pixmap.width();
-        let h = self.device.pixmap.height();
-
-        let mut shading_pixmap = match Pixmap::new(w, h) {
+        let Some(area) = area else {
+            return Ok(Some(None));
+        };
+        let Some(to_device) = transform.invert() else {
+            return Ok(Some(None));
+        };
+        let mut shading_pixmap = match Pixmap::new(area.width(), area.height()) {
             Some(p) => p,
             None => return Ok(None),
         };
@@ -2422,24 +2477,70 @@ impl<'a> RenderInterpreter<'a> {
         // The effective CTM for the shading is pattern_matrix * CTM
         let effective_ctm = pattern_matrix.concat(&self.state.ctm);
 
-        let clip = self.state.clip.as_ref().map(SharedMask::mask);
         let cs = shading_colour_space(&resolved_shading, self.doc);
         let function = resolved_shading
             .get(b"Function")
             .and_then(|f| PdfFunction::resolve(f, self.doc));
+        let to_area = Matrix::translate(-area.x() as f64, -area.y() as f64);
         crate::shading::render_shading(
             &mut shading_pixmap,
             &resolved_shading,
             &effective_ctm,
-            &self.page_transform,
-            clip,
+            &self.page_transform.concat(&to_area),
+            None,
             stream_data.as_deref(),
             &cs,
             function.as_ref(),
         );
+        let placed =
+            to_device.pre_concat(Transform::from_translate(area.x() as f32, area.y() as f32));
 
-        Ok(Some(shading_pixmap))
+        Ok(Some(Some((shading_pixmap, placed))))
     }
+}
+
+/// The smallest rectangle holding every nonzero pixel of `mask`; `None` when
+/// it has none.
+fn mask_bounds(mask: &Mask) -> Option<IntRect> {
+    let width = mask.width() as usize;
+    let data = mask.data();
+    let mut rows = data
+        .chunks_exact(width)
+        .enumerate()
+        .filter(|(_, row)| row.iter().any(|&m| m != 0));
+    let (top, first) = rows.next()?;
+    let (mut left, mut right) = row_span(first);
+    let mut bottom = top;
+    for (y, row) in rows {
+        let (l, r) = row_span(row);
+        left = left.min(l);
+        right = right.max(r);
+        bottom = y;
+    }
+    IntRect::from_ltrb(left as i32, top as i32, right as i32 + 1, bottom as i32 + 1)
+}
+
+/// The first and last nonzero columns of a row that has one.
+fn row_span(row: &[u8]) -> (usize, usize) {
+    let left = row.iter().position(|&m| m != 0).unwrap_or(0);
+    let right = row.iter().rposition(|&m| m != 0).unwrap_or(0);
+    (left, right)
+}
+
+/// How far a stroke of `gs` can reach from its path, in user space: half the
+/// line width, times the miter limit for miter joins and at least the square
+/// root of 2 for the corners of square caps.
+fn stroke_reach(gs: &GraphicsState) -> f32 {
+    let half = gs.line_width.abs() as f32 / 2.0;
+    let joins = match gs.line_join {
+        LineJoin::Miter => gs.miter_limit.max(1.0) as f32,
+        _ => 1.0,
+    };
+    let caps = match gs.line_cap {
+        LineCap::Square => std::f32::consts::SQRT_2,
+        _ => 1.0,
+    };
+    half * joins.max(caps)
 }
 
 /// The opacity a pattern's pixmap is painted with: `alpha` for a shading
@@ -2523,4 +2624,34 @@ fn parse_cid_gid_stream(data: &[u8]) -> Vec<u16> {
 /// Get f64 from operands at index.
 fn f(operands: &[Operand], idx: usize) -> f64 {
     operands.get(idx).and_then(|o| o.as_f64()).unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mask_with(width: u32, height: u32, set: &[(u32, u32)]) -> Mask {
+        let mut mask = Mask::new(width, height).unwrap();
+        for &(x, y) in set {
+            mask.data_mut()[(y * width + x) as usize] = 1;
+        }
+        mask
+    }
+
+    #[test]
+    fn an_empty_mask_has_no_bounds() {
+        assert_eq!(mask_bounds(&mask_with(8, 6, &[])), None);
+    }
+
+    #[test]
+    fn mask_bounds_hold_every_nonzero_pixel() {
+        let mask = mask_with(8, 6, &[(5, 1), (2, 3), (6, 4)]);
+        assert_eq!(mask_bounds(&mask), IntRect::from_ltrb(2, 1, 7, 5));
+    }
+
+    #[test]
+    fn mask_bounds_reach_the_last_row_and_column() {
+        let mask = mask_with(8, 6, &[(7, 5)]);
+        assert_eq!(mask_bounds(&mask), IntRect::from_ltrb(7, 5, 8, 6));
+    }
 }
