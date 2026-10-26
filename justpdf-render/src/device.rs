@@ -139,6 +139,7 @@ impl PixmapDevice {
         transform: Transform,
         pattern_pixmap: &tiny_skia::PixmapRef,
         pattern_transform: Transform,
+        alpha: f32,
         blend_mode: BlendMode,
         clip: Option<&Mask>,
     ) {
@@ -149,7 +150,7 @@ impl PixmapDevice {
                 *pattern_pixmap,
                 tiny_skia::SpreadMode::Repeat,
                 tiny_skia::FilterQuality::Bilinear,
-                1.0,
+                alpha,
                 pattern_transform,
             ),
             ..Default::default()
@@ -168,6 +169,7 @@ impl PixmapDevice {
         gs: &graphics_state::GraphicsState,
         pattern_pixmap: &tiny_skia::PixmapRef,
         pattern_transform: Transform,
+        alpha: f32,
         blend_mode: BlendMode,
         clip: Option<&Mask>,
     ) {
@@ -178,7 +180,7 @@ impl PixmapDevice {
                 *pattern_pixmap,
                 tiny_skia::SpreadMode::Repeat,
                 tiny_skia::FilterQuality::Bilinear,
-                1.0,
+                alpha,
                 pattern_transform,
             ),
             ..Default::default()

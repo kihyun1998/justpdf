@@ -1728,15 +1728,45 @@ impl<'a> RenderInterpreter<'a> {
         let function = resolved_dict
             .get(b"Function")
             .and_then(|f| PdfFunction::resolve(f, self.doc));
+        let alpha = self.state.fill_alpha as f32;
+        let bm = self.blend_mode();
+
+        // Painted straight onto the page when opaque and Normal, otherwise
+        // into its own pixmap, composited once with the alpha and blend mode
+        if alpha >= 1.0 && bm == tiny_skia::BlendMode::SourceOver {
+            crate::shading::render_shading(
+                &mut self.device.pixmap,
+                &resolved_dict,
+                &self.state.ctm,
+                &self.page_transform,
+                mask.as_ref().map(SharedMask::mask),
+                stream_data.as_deref(),
+                &cs,
+                function.as_ref(),
+            );
+            return Ok(());
+        }
+        let Some(mut shading_pixmap) =
+            Pixmap::new(self.device.pixmap.width(), self.device.pixmap.height())
+        else {
+            return Ok(());
+        };
         crate::shading::render_shading(
-            &mut self.device.pixmap,
+            &mut shading_pixmap,
             &resolved_dict,
             &self.state.ctm,
             &self.page_transform,
-            mask.as_ref().map(SharedMask::mask),
+            None,
             stream_data.as_deref(),
             &cs,
             function.as_ref(),
+        );
+        self.device.draw_pixmap(
+            &shading_pixmap.as_ref(),
+            Transform::identity(),
+            alpha,
+            bm,
+            mask.as_ref().map(SharedMask::mask),
         );
 
         Ok(())
@@ -2259,6 +2289,7 @@ impl<'a> RenderInterpreter<'a> {
                 transform,
                 &pattern_pixmap.as_ref(),
                 Transform::identity(),
+                pattern_alpha(&pattern, self.state.fill_alpha),
                 bm,
                 mask.as_ref().map(SharedMask::mask),
             );
@@ -2286,6 +2317,7 @@ impl<'a> RenderInterpreter<'a> {
                 &self.state,
                 &pattern_pixmap.as_ref(),
                 Transform::identity(),
+                pattern_alpha(&pattern, self.state.stroke_alpha),
                 bm,
                 mask.as_ref().map(SharedMask::mask),
             );
@@ -2407,6 +2439,20 @@ impl<'a> RenderInterpreter<'a> {
         );
 
         Ok(Some(shading_pixmap))
+    }
+}
+
+/// The opacity a pattern's pixmap is painted with: `alpha` for a shading
+/// pattern, 1 for a tiling pattern, whose cell is drawn with it.
+fn pattern_alpha(pattern: &PatternSelection, alpha: f64) -> f32 {
+    let dict = match &*pattern.object {
+        PdfObject::Stream { dict, .. } | PdfObject::Dict(dict) => dict,
+        _ => return 1.0,
+    };
+    if dict.get_i64(b"PatternType") == Some(2) {
+        alpha as f32
+    } else {
+        1.0
     }
 }
 
