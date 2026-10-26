@@ -61,9 +61,9 @@ pub struct RenderInterpreter<'a> {
     resources: ResourceScopes,
     /// Transform from PDF user space to device (pixel) space.
     page_transform: Matrix,
-    /// The CTM at the start of the content stream being executed: the
-    /// default space its patterns are placed in.
-    stream_ctm: Matrix,
+    /// The state at the start of the content stream being executed, which
+    /// its patterns are placed in and their cells run with.
+    stream_start: StreamStart,
     /// Current path being constructed.
     path_builder: Option<PathBuilder>,
     /// Form XObject recursion depth limit.
@@ -99,7 +99,7 @@ impl<'a> RenderInterpreter<'a> {
             fonts: HashMap::new(),
             resources: ResourceScopes::default(),
             page_transform,
-            stream_ctm: Matrix::identity(),
+            stream_start: StreamStart::of(&GraphicsState::default()),
             path_builder: None,
             xobject_depth: 0,
             state_floor: 0,
@@ -1832,7 +1832,7 @@ impl<'a> RenderInterpreter<'a> {
             this.state.clip = None;
             this.reset_transparency();
             this.state.ctm = form_matrix(dict).concat(&this.state.ctm);
-            this.stream_ctm = this.state.ctm;
+            this.stream_start = StreamStart::of(&this.state);
             let _ = this.execute_ops(&ops);
         });
         std::mem::swap(&mut self.device.pixmap, &mut temp_pixmap);
@@ -1857,7 +1857,7 @@ impl<'a> RenderInterpreter<'a> {
         let ops = parse_content_stream(data).map_err(RenderError::Core)?;
         self.nested_stream(|this| {
             this.state.ctm = form_matrix(dict).concat(&this.state.ctm);
-            this.stream_ctm = this.state.ctm;
+            this.stream_start = StreamStart::of(&this.state);
             this.execute_ops(&ops)
         })
     }
@@ -1873,9 +1873,9 @@ impl<'a> RenderInterpreter<'a> {
         let floor = std::mem::replace(&mut self.state_floor, depth + 1);
         let path = self.path_builder.take();
         let oc_skip = std::mem::replace(&mut self.oc_skip_depth, 0);
-        let stream_ctm = self.stream_ctm;
+        let stream_start = self.stream_start;
         let out = f(self);
-        self.stream_ctm = stream_ctm;
+        self.stream_start = stream_start;
         self.oc_skip_depth = oc_skip;
         self.state_stack.truncate(depth + 1);
         if let Some(s) = self.state_stack.pop() {
@@ -2165,7 +2165,7 @@ impl<'a> RenderInterpreter<'a> {
             this.state.clip = None;
             this.reset_transparency();
             this.state.ctm = form_matrix(form_dict).concat(&this.state.ctm);
-            this.stream_ctm = this.state.ctm;
+            this.stream_start = StreamStart::of(&this.state);
             if let Ok(ops) = parse_content_stream(form_data) {
                 let _ = this.execute_ops(&ops);
             }
@@ -2277,7 +2277,7 @@ impl<'a> RenderInterpreter<'a> {
 
         // Pattern space -> the stream's default space, the current user
         // space, and device space
-        let base = pattern_matrix.concat(&self.stream_ctm);
+        let base = pattern_matrix.concat(&self.stream_start.ctm);
         let Some(from_user) = self.state.ctm.to_skia().invert() else {
             return Ok(None);
         };
@@ -2322,7 +2322,9 @@ impl<'a> RenderInterpreter<'a> {
         std::mem::swap(&mut self.device.pixmap, &mut cell_pixmap);
 
         // Render the pattern content stream into the cell, without the page's
-        // clip and soft mask
+        // clip and soft mask, with the alpha constants and blend mode the
+        // stream started with
+        let start = self.stream_start;
         let saved_page_transform = self.page_transform;
         self.page_transform = cell_transform;
         for j in (1 - ny)..=0 {
@@ -2331,7 +2333,13 @@ impl<'a> RenderInterpreter<'a> {
                     Matrix::translate(i as f64 * xstep - bbox.llx, j as f64 * ystep - bbox.lly);
                 self.nested_stream(|this| {
                     this.state.ctm = copy;
-                    this.stream_ctm = Matrix::translate(-bbox.llx, -bbox.lly);
+                    this.state.fill_alpha = start.fill_alpha;
+                    this.state.stroke_alpha = start.stroke_alpha;
+                    this.state.blend_mode = start.blend_mode;
+                    this.stream_start = StreamStart {
+                        ctm: Matrix::translate(-bbox.llx, -bbox.lly),
+                        ..start
+                    };
                     this.state.clip = None;
                     this.state.soft_mask = None;
                     let mut pb = PathBuilder::new();
@@ -2385,7 +2393,7 @@ impl<'a> RenderInterpreter<'a> {
                 transform,
                 &pattern_pixmap.as_ref(),
                 pattern_transform,
-                pattern_alpha(&pattern, self.state.fill_alpha),
+                self.state.fill_alpha as f32,
                 bm,
                 mask.as_ref().map(SharedMask::mask),
             );
@@ -2420,7 +2428,7 @@ impl<'a> RenderInterpreter<'a> {
                 &self.state,
                 &pattern_pixmap.as_ref(),
                 pattern_transform,
-                pattern_alpha(&pattern, self.state.stroke_alpha),
+                self.state.stroke_alpha as f32,
                 bm,
                 mask.as_ref().map(SharedMask::mask),
             );
@@ -2537,7 +2545,7 @@ impl<'a> RenderInterpreter<'a> {
 
         // The effective CTM for the shading is pattern_matrix * the stream's
         // default space
-        let effective_ctm = pattern_matrix.concat(&self.stream_ctm);
+        let effective_ctm = pattern_matrix.concat(&self.stream_start.ctm);
 
         let cs = shading_colour_space(&resolved_shading, self.doc);
         let function = resolved_shading
@@ -2608,17 +2616,23 @@ fn stroke_reach(gs: &GraphicsState) -> f32 {
     half * joins.max(caps)
 }
 
-/// The opacity a pattern's pixmap is painted with: `alpha` for a shading
-/// pattern, 1 for a tiling pattern, whose cell is drawn with it.
-fn pattern_alpha(pattern: &PatternSelection, alpha: f64) -> f32 {
-    let dict = match &*pattern.object {
-        PdfObject::Stream { dict, .. } | PdfObject::Dict(dict) => dict,
-        _ => return 1.0,
-    };
-    if dict.get_i64(b"PatternType") == Some(2) {
-        alpha as f32
-    } else {
-        1.0
+/// The CTM, alpha constants and blend mode at the start of a content stream.
+#[derive(Clone, Copy)]
+struct StreamStart {
+    ctm: Matrix,
+    fill_alpha: f64,
+    stroke_alpha: f64,
+    blend_mode: PdfBlendMode,
+}
+
+impl StreamStart {
+    fn of(state: &GraphicsState) -> Self {
+        Self {
+            ctm: state.ctm,
+            fill_alpha: state.fill_alpha,
+            stroke_alpha: state.stroke_alpha,
+            blend_mode: state.blend_mode,
+        }
     }
 }
 
