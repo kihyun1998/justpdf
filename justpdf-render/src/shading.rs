@@ -2,8 +2,8 @@ use justpdf_core::color::{Color as PdfColor, ColorSpace};
 use justpdf_core::function::PdfFunction;
 use justpdf_core::object::PdfDict;
 use tiny_skia::{
-    Color, FillRule, GradientStop, LinearGradient, Mask, Paint, PathBuilder, Pixmap,
-    RadialGradient, SpreadMode, Transform,
+    Color, FillRule, GradientStop, LinearGradient, Mask, Paint, PathBuilder, Pixmap, SpreadMode,
+    Transform,
 };
 
 use crate::graphics_state::Matrix;
@@ -223,6 +223,9 @@ fn render_axial(
 // Type 3: Radial gradient
 // ---------------------------------------------------------------------------
 
+/// A radial shading, drawn pixel by pixel: each pixel takes the colour of
+/// the largest `s` whose circle passes through its centre (`radial_s`), and
+/// a pixel no circle reaches is left as it is.
 fn render_radial(
     pixmap: &mut Pixmap,
     dict: &PdfDict,
@@ -236,47 +239,123 @@ fn render_radial(
         Some(arr) if arr.len() >= 6 => arr,
         _ => return,
     };
-
-    let x0 = coords[0].as_f64().unwrap_or(0.0) as f32;
-    let y0 = coords[1].as_f64().unwrap_or(0.0) as f32;
-    let r0 = coords[2].as_f64().unwrap_or(0.0) as f32;
-    let x1 = coords[3].as_f64().unwrap_or(0.0) as f32;
-    let y1 = coords[4].as_f64().unwrap_or(0.0) as f32;
-    let r1 = coords[5].as_f64().unwrap_or(0.0) as f32;
-
-    let stops = function_stops(dict, cs, function);
-    if stops.is_empty() {
+    let c = |i: usize| coords[i].as_f64().unwrap_or(0.0);
+    let circles = Circles {
+        x0: c(0),
+        y0: c(1),
+        r0: c(2),
+        x1: c(3),
+        y1: c(4),
+        r1: c(5),
+    };
+    if circles.r0 < 0.0 || circles.r1 < 0.0 {
         return;
     }
+    let extend = extend(dict);
 
-    let gradient = match RadialGradient::new(
-        tiny_skia::Point::from_xy(x0, y0),
-        tiny_skia::Point::from_xy(x1, y1),
-        r1,
-        stops,
-        SpreadMode::Pad,
-        Transform::identity(),
-    ) {
-        Some(g) => g,
-        None => return,
+    let (width, height) = (pixmap.width(), pixmap.height());
+    let coverage = match clip {
+        Some(mask) if mask.width() != width || mask.height() != height => return,
+        Some(mask) => Some(mask.data()),
+        None => None,
     };
-
-    let paint = Paint {
-        shader: gradient,
-        anti_alias: true,
-        ..Default::default()
+    let Some(to_shading) = ctm.concat(page_transform).to_skia().invert() else {
+        return;
     };
+    let table = radial_table(dict, cs, function);
 
-    let transform = ctm.concat(page_transform).to_skia();
-
-    let region = if extend(dict).1 {
-        far_square()
-    } else {
-        disks_hull((x0, y0, r0), (x1, y1, r1))
-    };
-    if let Some(path) = region {
-        pixmap.fill_path(&path, &paint, FillRule::Winding, transform, clip);
+    let pixels = pixmap.pixels_mut();
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) as usize;
+            let m = coverage.map_or(255, |c| c[idx]);
+            if m == 0 {
+                continue;
+            }
+            let (px, py) = transform_point(to_shading, x as f32 + 0.5, y as f32 + 0.5);
+            let Some(s) = radial_s(&circles, px as f64, py as f64, extend) else {
+                continue;
+            };
+            let color = table[(s.clamp(0.0, 1.0) * 255.0).round() as usize];
+            pixels[idx] = if m == 255 {
+                color
+            } else {
+                mask_over(color, pixels[idx], m)
+            };
+        }
     }
+}
+
+/// A radial shading's start and end circles, in shading space.
+struct Circles {
+    x0: f64,
+    y0: f64,
+    r0: f64,
+    x1: f64,
+    y1: f64,
+    r1: f64,
+}
+
+/// The largest `s` whose circle — centre and radius interpolated from the
+/// start (`s` = 0) to the end (`s` = 1) — passes through (`px`, `py`), among
+/// those with a radius of at least 0 and in [0, 1], past 0 or 1 where
+/// `extend` says (ISO 32000-2 §8.7.4.5.4). `None` when there is none.
+fn radial_s(c: &Circles, px: f64, py: f64, extend: (bool, bool)) -> Option<f64> {
+    // |p - c0 - s·dc| = r0 + s·dr, squared: a·s² - 2b·s + k = 0
+    let (dx, dy, dr) = (c.x1 - c.x0, c.y1 - c.y0, c.r1 - c.r0);
+    let (qx, qy) = (px - c.x0, py - c.y0);
+    let a = dx * dx + dy * dy - dr * dr;
+    let b = qx * dx + qy * dy + c.r0 * dr;
+    let k = qx * qx + qy * qy - c.r0 * c.r0;
+    let allowed = |s: f64| {
+        s.is_finite() && c.r0 + s * dr >= 0.0 && (extend.0 || s >= 0.0) && (extend.1 || s <= 1.0)
+    };
+    let roots = if a.abs() < 1e-9 {
+        if b.abs() < 1e-12 {
+            return None;
+        }
+        [k / (2.0 * b), f64::NAN]
+    } else {
+        let disc = b * b - a * k;
+        if disc < 0.0 {
+            return None;
+        }
+        let root = disc.sqrt();
+        [(b + root) / a, (b - root) / a]
+    };
+    roots
+        .into_iter()
+        .filter(|&s| allowed(s))
+        .fold(None, |best: Option<f64>, s| {
+            Some(best.map_or(s, |b| b.max(s)))
+        })
+}
+
+/// A radial shading's colours for 256 steps of `s` over [0, 1]: its
+/// function across `/Domain` (default `[0 1]`), or black to white without
+/// one.
+fn radial_table(
+    dict: &PdfDict,
+    cs: &ColorSpace,
+    function: Option<&PdfFunction>,
+) -> [tiny_skia::PremultipliedColorU8; 256] {
+    let domain = dict.get_array(b"Domain");
+    let t0 = domain
+        .and_then(|d| d.first())
+        .and_then(|o| o.as_f64())
+        .unwrap_or(0.0);
+    let t1 = domain
+        .and_then(|d| d.get(1))
+        .and_then(|o| o.as_f64())
+        .unwrap_or(1.0);
+    std::array::from_fn(|i| {
+        let s = i as f64 / 255.0;
+        let color = match function {
+            Some(f) => components_to_color(&f.evaluate(&[t0 + (t1 - t0) * s]), cs),
+            None => Color::from_rgba(s as f32, s as f32, s as f32, 1.0).unwrap_or(Color::BLACK),
+        };
+        color.premultiply().to_color_u8()
+    })
 }
 
 /// `/Extend`: whether the shading paints before its start and after its end.
@@ -338,59 +417,6 @@ fn axial_region(
     pb.line_to(sx - nx, sy - ny);
     pb.close();
     pb.finish()
-}
-
-/// How many points `disks_hull` takes on each circle.
-const HULL_POINTS: usize = 128;
-
-/// The convex hull of two disks (x, y, r), as a polygon through
-/// `HULL_POINTS` points on each circle: the region a radial shading sweeps
-/// from its start circle to its end circle.
-fn disks_hull(a: (f32, f32, f32), b: (f32, f32, f32)) -> Option<tiny_skia::Path> {
-    let mut points: Vec<(f32, f32)> = [a, b]
-        .into_iter()
-        .flat_map(|(x, y, r)| {
-            let r = r.max(0.0);
-            (0..HULL_POINTS).map(move |i| {
-                let angle = i as f32 * std::f32::consts::TAU / HULL_POINTS as f32;
-                (x + r * angle.cos(), y + r * angle.sin())
-            })
-        })
-        .collect();
-    points.sort_by(|p, q| p.partial_cmp(q).unwrap_or(std::cmp::Ordering::Equal));
-    points.dedup();
-    let hull = convex_hull(&points);
-    let (first, rest) = hull.split_first()?;
-    let mut pb = PathBuilder::new();
-    pb.move_to(first.0, first.1);
-    for &(x, y) in rest {
-        pb.line_to(x, y);
-    }
-    pb.close();
-    pb.finish()
-}
-
-/// The convex hull of `points`, sorted by (x, y): Andrew's monotone chain,
-/// the lower chain then the upper.
-fn convex_hull(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
-    fn turns_left(o: (f32, f32), a: (f32, f32), b: (f32, f32)) -> bool {
-        (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0) > 0.0
-    }
-    fn chain<'a>(points: impl Iterator<Item = &'a (f32, f32)>) -> Vec<(f32, f32)> {
-        let mut chain: Vec<(f32, f32)> = Vec::new();
-        for &p in points {
-            while chain.len() >= 2 && !turns_left(chain[chain.len() - 2], chain[chain.len() - 1], p)
-            {
-                chain.pop();
-            }
-            chain.push(p);
-        }
-        chain.pop();
-        chain
-    }
-    let mut hull = chain(points.iter());
-    hull.extend(chain(points.iter().rev()));
-    hull
 }
 
 // ---------------------------------------------------------------------------
