@@ -9,6 +9,7 @@ The writer-side rule lives in `PdfWriter`'s `generations` (non-zero generations 
 A generation appears separately in the reference (a copied value) and in the definition (the header, xref and key the writer creates anew), and the code that keeps the two in step is scattered across several modules: full rewrite, incremental save, xref streams, duplicate merging, number compaction, linearization, object stream packing. None calls another. Before #98 the justpdf reader did not look at a reference's generation, so its own round-trip tests passed even when they disagreed — a write defect was hidden by read tolerance. The reader now reads a reference with the wrong generation as `Null` ([Document access](../territory/document-access.md)). But references obtained from `object_refs()` use the xref generation, so only an assertion that follows a reference written inside the document sees a mismatch.
 
 ## Territories it holds in
+- [Document access](../territory/document-access.md) — the read side: a reference whose generation disagrees with the xref resolves to `Null` (#98).
 - [Document modifier](../territory/document-modifier.md) — `from_document` holds the generations, and `build` (plain, `set_encryption`, keep-source) and `build_with_xref_stream` write with them. Holds (#72).
 - `merge_documents` in [Document modifier](../territory/document-modifier.md) — `deep_copy_object` puts another document's objects at a number newly taken from the writer at generation 0, and writes references with the new number and generation 0 too. Holds (inferred — code reading, #106 check step).
 - [Incremental save](../territory/incremental-save.md) — header, xref entry and key of appended objects. Holds (#72).
@@ -23,6 +24,8 @@ A generation appears separately in the reference (a copied value) and in the def
 - If duplicate merging changes only the number, the kept object is `K 1 obj` while the merged reference is `K 0 R` (found in code during the #72 check step, reproduced with a test).
 
 ## Discovery history
+Re-read 2026-10-30 at 88b2a08: `PdfWriter`'s `generations` and `reference_to` (`writer/mod.rs`), `from_document` and `deep_copy_object` (`writer/modify.rs`), `merge_duplicates`, `rewrite_references` and `compact_object_numbers` (`writer/clean.rs`) and the `with_info_at_generation` tests are where this note says (inferred).
+
 2026-09-24, while working on #26 (incremental trailer), found in the code that `DocumentModifier` drops generations, and filed it as #72. On 2026-09-29, while fixing #72, reproduced it with tests and a qpdf check, and assay and lens in the check step found the duplicate-merging site. The remaining violating sites (number compaction, linearization, packing) were gathered the same day by grep and code reading, and reproduced with tests and fixed in #106.
 
 ## Where it will recur

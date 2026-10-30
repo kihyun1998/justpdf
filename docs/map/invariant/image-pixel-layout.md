@@ -1,36 +1,29 @@
 # Image pixel layout
 
 ## The fact
-What the pixel buffer `decode_image` returns means — component count, bits per component, color space, the bit packing of masks — varies with the image dictionary and the decode path (DCT/JPX/JBIG2/CCITT/raw). Every place that interprets the buffer as RGB(A) must interpret it by **the same rule**, and that rule must follow `/BitsPerComponent`, array color spaces (Indexed, ICCBased, Separation), `/Decode`, and each path's output shape (e.g. CCITT and JBIG2 give one byte per pixel).
+A CMYK colour must convert to the same RGB (and the same gray) wherever justpdf converts it — in an image's samples, in a fill or stroke colour, and in the grayscale pass of compression. Today the conversion is the naive `(1 − c)(1 − k)`, `(1 − m)(1 − k)`, `(1 − y)(1 − k)`; whatever it becomes (an ICC-free improvement, rounding instead of truncation), every site must change with it, or the same document shows different colours rendered directly, rendered after compression, and rendered as an image versus as vector paint.
 
-**The rule lives in `DecodedImage::to_rgb8`** (#46): the raster renderer, the SVG renderer and the compressor (recompression and grayscale) all turn samples into RGB through it, so `/BitsPerComponent`, array colour spaces and `/Decode` are read once ([Image decoding](../territory/image-decoding.md)). Fill and stroke colours and shadings convert through the same core `Color::to_rgb` since #231. Still separate: the 1-bit mask unpacking (#42).
+The rest of an image's sample layout — component count, bits per component, `/Decode`, array colour spaces — has one home since #46: `DecodedImage::to_rgb8` ([Image decoding](../territory/image-decoding.md)), and every consumer calls it (`image_to_rgba` in the raster and SVG renderers, `to_rgb_pixels` and the grayscale path in `writer/compress.rs`, `cbz`, `ocr`; `git grep -n 'to_rgb8()'`, measured 2026-10-30). That part is no longer an invariant — it is a design rule of Image decoding. The 1-bit mask unpacking lives only in the raster renderer ([Render images](../territory/render-images.md)).
 
 ## Why it is cross-cutting
-Decoding is in one place, but **interpretation lives in several places, each its own copy**, and none calls another. For CMYK→RGB conversion alone, besides core `cmyk_to_rgb` there are copies in the renderer, SVG, shading and compression. All of them implicitly assume "8-bit, components 1/3/4, named color space". Fixing one copy leaves the rest as they were.
+Three CMYK conversions exist, and none calls another (inferred, read at 88b2a08):
+- `color/mod.rs — cmyk_to_rgb`, the one `Color::to_rgb` and the general path of `to_rgb8` use (fill and stroke colours, shadings, non-8-bit or `/Decode` images).
+- The 8-bit `DeviceCMYK` fast path inside `image/mod.rs — DecodedImage::to_rgb8`, which repeats the formula inline and truncates to `u8`.
+- `writer/compress.rs — cmyk_to_gray_from_operands`, which repeats the formula inline and then applies Rec.601 luminance, for `k`/`K` operators in the grayscale pass.
+
+The shared assumption is the formula itself. Changing `cmyk_to_rgb` alone moves vector colours and leaves 8-bit CMYK images and grayscaled operators where they were.
 
 ## Territories it holds in
-- [Image decoding](../territory/image-decoding.md) — the starting point (`decode_image`, reads only the color space name).
-- [Render images](../territory/render-images.md) — `image_to_rgba`, 1-bit mask unpacking (mismatched with the CCITT and JBIG2 output).
-- [SVG renderer](../territory/svg-renderer.md) — `image_to_rgba` wraps `to_rgb8`; `cs`/`CS` resolve through core (#231).
-- [Render shading](../territory/render-shading.md) — `components_to_color` wraps `Color::to_rgb` (#231).
-- [Compress images](../territory/compress-images.md) — `to_rgb_pixels` (a CMYK copy, f32).
-- [Compress grayscale](../territory/compress-grayscale.md) — the luminosity formula (Rec.601; the renderer's masks use Rec.709).
-- [Color spaces](../territory/color-spaces.md) — the original `cmyk_to_rgb` and the unused array color space model.
-
-Command to find them again: `rg -n 'fn image_to_rgba|fn to_rgb_pixels|fn components_to_color|fn cs_from_name|fn cmyk_to_rgb' --glob '*.rs' --glob '!target' .`
+- [Color spaces](../territory/color-spaces.md) — `cmyk_to_rgb`, `Color::to_rgb`.
+- [Image decoding](../territory/image-decoding.md) — the 8-bit CMYK fast path in `DecodedImage::to_rgb8`.
+- [Compress grayscale](../territory/compress-grayscale.md) — `cmyk_to_gray_from_operands`.
+- Consumers that inherit whichever copy they reach: [Render images](../territory/render-images.md), [SVG renderer](../territory/svg-renderer.md), [Render shading](../territory/render-shading.md) (`components_to_color` through `Color::to_rgb`), [Compress images](../territory/compress-images.md) (`to_rgb_pixels` through `to_rgb8`).
 
 ## What a violation looks like
-- An Indexed image renders in the wrong colors, and compression silently skips it.
-- 16-bit and 1/2/4-bit raw images show as stripes or cut-off images.
-- CCITT and JBIG2 image masks are unpacked wrongly.
-- A 1-bit mask whose width is not a multiple of 8 is sheared, because the row padding to a byte boundary is ignored (measured 2026-10-06, see [Render images](../territory/render-images.md)).
-- The same image has different colors rendered directly and rendered after compression.
-Condition: with 8-bit DeviceRGB/Gray JPEG, all of it is fine — common test inputs meet this condition, so it stays invisible.
+A CMYK page whose vector fill and 8-bit image are the same colour in the file renders as two slightly different colours once one copy changes; a grayscaled page's text (operators) and photos (images) land on different grays for the same CMYK value. With only DeviceRGB and DeviceGray test inputs nothing shows, which is the usual state of the suite.
 
 ## Discovery history
-No recorded incident. On 2026-09-23, while writing the map, two research agents (stream/image/color, render) reported the copies independently. All of it is inferred from reading code, and `decode_image` has no unit test.
-
-- Tracked: #42 (render: double decode, mask row padding and shape, inline images)
+First written 2026-09-23 as "interpretation lives in several copies" (sample layout, CMYK copies in the renderer, SVG, shading and compression), from a reading by two research agents. #46 and #231 moved sample interpretation into `to_rgb8` and colour conversion into `Color::to_rgb`. The 2026-10-30 rewrite found the three CMYK copies above still apart, and the maintainer chose to keep this note narrowed to them rather than fold it (2026-10-30).
 
 ## Where it will recur
-**A function that indexes the bytes of a `DecodedImage` or converts color components to RGB is subject to this invariant.** Before writing a new one, find the existing copies with the command above, and use the functions in [Color spaces](../territory/color-spaces.md) where possible. Unless test inputs include Indexed, 16-bit, CMYK and CCITT, this invariant is not checked.
+**A function that converts CMYK components to RGB or gray.** Command: `rg -n '\(1\.0 - [cmyk]\) \* \(1\.0 - k\)' justpdf-*/src`. Call `color::cmyk_to_rgb` instead of writing the formula; a test converts one CMYK value as a fill colour, as an 8-bit image sample and through the grayscale pass and expects one result.

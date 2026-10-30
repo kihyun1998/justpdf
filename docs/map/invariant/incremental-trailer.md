@@ -21,6 +21,8 @@ Two pieces of code write an incremental section (plain incremental save, signing
 - Another reader (one that follows earlier trailers) and justpdf read the same file differently.
 
 ## Discovery history
+Re-read 2026-10-30 at 88b2a08: `incremental_trailer` (`writer/modify.rs`) is called by `incremental_save` and by `sign/sign_pdf.rs`, and `load_xref_at` (`xref/mod.rs`) still keeps the first trailer's main keys (inferred).
+
 No recorded incident. On 2026-09-23, while the map was being written, the read-side research agent reported it from the code, and a throwaway probe reproduced the `incremental_save` side the same day (above). `test_incremental_update` only checks that the newest trailer's `/Info` wins.
 
 
