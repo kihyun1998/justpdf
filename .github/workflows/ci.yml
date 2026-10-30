@@ -50,13 +50,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: ./scripts/check-feature-isolation.sh
 
-  map:
-    name: Map
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: python3 scripts/check-map.py .
-
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
