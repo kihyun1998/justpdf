@@ -433,6 +433,32 @@ mod tests {
     }
 
     #[test]
+    fn every_line_of_a_section_is_drawn_on_the_page_top_to_bottom() {
+        let pdf = Fb2Document::from_str(sample_fb2())
+            .unwrap()
+            .to_pdf()
+            .unwrap();
+        let doc = justpdf_core::PdfDocument::from_bytes(pdf).unwrap();
+        let pages = justpdf_core::page::collect_pages(&doc).unwrap();
+        let text = justpdf_core::text::extract_page_text(&doc, &pages[0]).unwrap();
+        let lines: Vec<_> = text
+            .lines
+            .iter()
+            .map(|l| (l.text.as_str(), l.x, l.y))
+            .collect();
+        // 72 pt margin, 10 pt Courier, 12 pt line height: the title, a blank
+        // line, then one line per paragraph with half a line between them.
+        assert_eq!(
+            lines,
+            vec![
+                ("Chapter 1", 72.0, 710.0),
+                ("This is the first paragraph.", 72.0, 686.0),
+                ("This is the second paragraph.", 72.0, 668.0),
+            ]
+        );
+    }
+
+    #[test]
     fn test_parse_fb2_metadata() {
         let doc = Fb2Document::from_str(sample_fb2()).unwrap();
         let meta = doc.metadata();
