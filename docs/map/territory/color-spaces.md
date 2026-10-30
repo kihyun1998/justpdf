@@ -4,7 +4,7 @@
 The PDF colour space model (`ColorSpace`: Device*, CalGray/CalRGB, Lab, Indexed, Separation, DeviceN, ICCBased, Unknown), reading a colour space through the document, the colour set by `cs`/`CS`, and conversion of colour values to RGB. It also holds an ICC profile parser with sRGB conversion, and OutputIntent and overprint parsers.
 
 ## Governing decisions
-**None.**
+**None.** The colour-space recursion bound was decided on #414 (maintainer, 2026-10-30: MuPDF's ancestor-chain rule with depth 256, a refused level becoming `Unknown`; shown beside returning a `Result`), not in a record.
 
 ## Design model
 Rules read from the code (*inferred* unless marked).
@@ -15,14 +15,15 @@ Rules read from the code (*inferred* unless marked).
 - **`Color::to_rgb`** converts Indexed (index rounded and clamped to `hival`, the lookup entry read in the base space; a short lookup gives 0 in each base component), Separation and DeviceN (through the tint transform into the alternate; without one, the tint shows as gray `1 − t`), and ICCBased without a profile through `substitute`: its `/Alternate`, else DeviceGray/RGB/CMYK for `/N` 1/3/4, with no ICC transform. Lab and Unknown return black. CalGray and CalRGB are treated as their device spaces.
 - **ICC, OutputIntent and overprint are unreachable from product paths:** the only callers of `parse_icc_profile`, `read_output_intents` and `parse_overprint` are tests, and `icc_to_srgb` is reached only through `to_rgb` with a profile set, which nothing sets (`rg -n 'profile: Some' -g '*.rs'` matches only the `to_rgb` arm, 2026-10-30). Rendering intent is parsed and applied nowhere.
 - **CMYK → RGB:** `cmyk_to_rgb` is the formula `Color::to_rgb` and `icc_to_srgb` use, and the renderers reach it through `to_rgb`. Two copies remain outside this module: the 8-bit fast path of `DecodedImage::to_rgb8` (the same formula, truncated instead of rounded) and `compress.rs — cmyk_to_gray_from_operands` (CMYK to gray) — [Image pixel layout](../invariant/image-pixel-layout.md).
-- **Input bound:** `resolve` recurses into an Indexed base, an ICCBased `/Alternate` and a Separation/DeviceN alternate with no depth limit and no cycle check. *Measured* 2026-10-30, release `justpdf render` on a page drawing a 1 × 1 image whose `/ColorSpace` is `6 0 R` with object 6 `[/Indexed 6 0 R 0 <00>]`: the process aborts with a stack overflow (exit 134). An Indexed lookup and a DeviceN name list are bounded only by their decoded size; `hival` is clamped at 0 from below and not checked against the lookup length.
+- **Input bound:** `resolve` follows an Indexed base, an ICCBased `/Alternate` and a Separation/DeviceN alternate through `resolve_within`, carrying the object numbers of the colour spaces it is inside (0 for a direct one). One that is its own ancestor — an ICCBased also counted by its ICC stream, so a stream reached again inside its own `/Alternate` is refused — or one past `MAX_COLOR_SPACE_DEPTH` (256) entries, direct arrays included, is `Unknown(b"recursive")` at that level, as an unresolved reference is `Unknown(b"unresolved")`. An ICCBased level adds two entries (its array and its stream), so a chain of ICC alternates stops after 128 (inferred). Pinned by the `color::tests` recursion tests (measured 2026-10-30). Depth 256 holds on a 1 MiB thread in a debug build, resolve, `to_rgb`, clone, compare and drop of a 300-level Indexed and Separation chain all completing (measured 2026-10-30, throwaway probe). No colour space has two colour-space children, so the ancestor chain and a visited set behave alike within one call (dropping the `pop` left the tests green, measured).
 
 ## Code
-- `justpdf-core/src/color/mod.rs` — `ColorSpace`, `ColorSpace::resolve`, `ColorSpace::substitute`, `ColorSpace::initial_color`, `ColorSpace::num_components`, `ColorSpace::from_pdf_object`, `ColorSpace::from_name`, `ColorSpace::from_array`, `ColorSpace::parse_indexed`, `ColorSpace::parse_separation`, `ColorSpace::parse_device_n`, `Color`, `Color::to_rgb`, `cmyk_to_rgb`, `rgb_to_cmyk`, `OutputIntent`, `read_output_intents`, `OverprintState`, `parse_overprint`
+- `justpdf-core/src/color/mod.rs` — `ColorSpace`, `ColorSpace::resolve`, `ColorSpace::resolve_within`, `ColorSpace::resolve_one`, `MAX_COLOR_SPACE_DEPTH`, `ColorSpace::substitute`, `ColorSpace::initial_color`, `ColorSpace::num_components`, `ColorSpace::from_pdf_object`, `ColorSpace::from_name`, `ColorSpace::from_array`, `ColorSpace::parse_indexed`, `ColorSpace::parse_separation`, `ColorSpace::parse_device_n`, `Color`, `Color::to_rgb`, `cmyk_to_rgb`, `rgb_to_cmyk`, `OutputIntent`, `read_output_intents`, `OverprintState`, `parse_overprint`
 - `justpdf-core/src/color/icc.rs` — `IccProfile`, `parse_icc_profile`, `icc_to_srgb`, `RenderingIntent`
 
 ## Reference behaviour
-**None.** The code cites ICC.1:2004 / ISO 15076-1, OutputIntent §14.11.5 and Overprint §8.6.7; that is not a comparison record. Image conversion through these spaces was compared with MuPDF under [Image decoding](image-decoding.md) (#46). Not compared: ISO 32000-2 §8.6.
+- Colour-space recursion (read raw for #414): MuPDF `pdf_load_colorspace_imp` (`source/pdf/pdf-colorspace.c` @ `b487eef`) checks the ancestor chain with `pdf_cycle` (`source/pdf/pdf-object.c`, `MAX_CYCLE_STACK_DEPTH` 256), counting indirect objects only, and throws "recursive colorspace"; Indexed and DeviceN rethrow, so the whole colour space fails, and only an ICC `/Alternate` swallows it. It does not count the ICC stream. justpdf takes the ancestor rule and the 256 from it; returning `Unknown` at the refused level, counting direct arrays and counting the ICC stream are #414's choices. pdf.js (`src/core/colorspace_utils.js` @ `22f5df1`) has no cycle check and relies on the engine's stack limit.
+- The code cites ICC.1:2004 / ISO 15076-1, OutputIntent §14.11.5 and Overprint §8.6.7; that is not a comparison record. Image conversion through these spaces was compared with MuPDF under [Image decoding](image-decoding.md) (#46). Not compared: ISO 32000-2 §8.6.
 
 ## Cross-cutting invariants
 - [Image pixel layout](../invariant/image-pixel-layout.md) — `cmyk_to_rgb` is the original of the CMYK conversion copies.
@@ -36,7 +37,6 @@ Rules read from the code (*inferred* unless marked).
 - [PDF functions](pdf-functions.md) — tint transforms are `PdfFunction`s; a function that does not parse leaves the tint shown as gray.
 
 ## Known holes / open
-- A colour space that refers to itself, directly or through an alternate or base, overflows the stack (measured above). Tracked: #414.; #122's depth limit lists tree walkers and parsers, not this resolver.
 - Lab draws black, and CalGray/CalRGB ignore their calibration (above).
 - ICC profiles, OutputIntents, overprint and rendering intent are parsed but not used by any product path (above).
 - Indexed lookups are tested through `DecodedImage::to_rgb8` (`justpdf-core/tests/image_rgb.rs`); `test_indexed` checks only the parsed fields.
