@@ -16,11 +16,55 @@ pub fn apply(data: Vec<u8>, params: &PdfDict) -> Result<Vec<u8>> {
     }
 }
 
+/// The row layout `/DecodeParms` describes, checked: `/Columns` and
+/// `/Colors` below 1 read as 1 and `/BitsPerComponent` below 1 as 8; bits per
+/// component must be 1, 2, 4, 8 or 16, colours at most 32, and a row's bits
+/// below `i32::MAX`.
+struct Layout {
+    bits_per_component: usize,
+    /// Bytes from one pixel to the next, at least 1.
+    bytes_per_pixel: usize,
+    /// Bytes of one row, without a PNG filter byte.
+    row_bytes: usize,
+}
+
+impl Layout {
+    fn read(params: &PdfDict) -> Result<Self> {
+        let at_least_one = |key: &[u8], default: i64| match params.get_i64(key) {
+            Some(v) if v >= 1 => v,
+            _ => default,
+        };
+        let columns = at_least_one(b"Columns", 1);
+        let colors = at_least_one(b"Colors", 1);
+        let bits = at_least_one(b"BitsPerComponent", 8);
+        let invalid = |detail: String| JustPdfError::StreamDecode {
+            filter: "Predictor".into(),
+            detail,
+        };
+        if ![1, 2, 4, 8, 16].contains(&bits) {
+            return Err(invalid(format!("invalid /BitsPerComponent: {bits}")));
+        }
+        if colors > 32 {
+            return Err(invalid(format!("too many /Colors: {colors}")));
+        }
+        if columns >= i64::from(i32::MAX) / (bits * colors) {
+            return Err(invalid(format!("too many /Columns: {columns}")));
+        }
+        Ok(Self {
+            bits_per_component: bits as usize,
+            bytes_per_pixel: ((colors * bits) as usize).div_ceil(8),
+            row_bytes: ((columns * colors * bits) as usize).div_ceil(8),
+        })
+    }
+}
+
 /// TIFF Predictor 2: horizontal differencing.
 fn apply_tiff_predictor(data: Vec<u8>, params: &PdfDict) -> Result<Vec<u8>> {
-    let columns = params.get_i64(b"Columns").unwrap_or(1) as usize;
-    let colors = params.get_i64(b"Colors").unwrap_or(1) as usize;
-    let bits_per_component = params.get_i64(b"BitsPerComponent").unwrap_or(8) as usize;
+    let Layout {
+        bits_per_component,
+        bytes_per_pixel,
+        row_bytes,
+    } = Layout::read(params)?;
 
     if bits_per_component != 8 {
         return Err(JustPdfError::StreamDecode {
@@ -29,8 +73,6 @@ fn apply_tiff_predictor(data: Vec<u8>, params: &PdfDict) -> Result<Vec<u8>> {
         });
     }
 
-    let bytes_per_pixel = colors;
-    let row_bytes = columns * bytes_per_pixel;
     let mut result = data.clone();
 
     for row_start in (0..result.len()).step_by(row_bytes) {
@@ -45,17 +87,21 @@ fn apply_tiff_predictor(data: Vec<u8>, params: &PdfDict) -> Result<Vec<u8>> {
 
 /// PNG predictor (10-15): each row starts with a filter byte.
 fn apply_png_predictor(data: Vec<u8>, params: &PdfDict) -> Result<Vec<u8>> {
-    let columns = params.get_i64(b"Columns").unwrap_or(1) as usize;
-    let colors = params.get_i64(b"Colors").unwrap_or(1) as usize;
-    let bits_per_component = params.get_i64(b"BitsPerComponent").unwrap_or(8) as usize;
-
-    let bytes_per_pixel = (colors * bits_per_component).div_ceil(8);
-    let row_bytes = (columns * colors * bits_per_component).div_ceil(8);
+    let Layout {
+        bytes_per_pixel,
+        row_bytes,
+        ..
+    } = Layout::read(params)?;
     // Each row has 1 filter byte + row_bytes of data
     let stride = row_bytes + 1;
 
     let mut result = Vec::with_capacity(data.len());
-    let mut prev_row: Vec<u8> = vec![0; row_bytes];
+    // Sized only when the data holds a whole row.
+    let mut prev_row: Vec<u8> = if data.len() >= stride {
+        vec![0; row_bytes]
+    } else {
+        Vec::new()
+    };
 
     let mut offset = 0;
     while offset + stride <= data.len() {
@@ -206,6 +252,63 @@ mod tests {
         let data = vec![0, 10, 20, 30, 2, 1, 2, 3];
         let result = apply(data, &params).unwrap();
         assert_eq!(result, vec![10, 20, 30, 11, 22, 33]);
+    }
+
+    fn params(entries: &[(&[u8], i64)]) -> PdfDict {
+        let mut d = PdfDict::new();
+        for (key, value) in entries {
+            d.insert(key.to_vec(), crate::object::PdfObject::Integer(*value));
+        }
+        d
+    }
+
+    #[test]
+    fn parameters_below_one_take_their_defaults() {
+        for key in [&b"Columns"[..], b"Colors", b"BitsPerComponent"] {
+            let p = params(&[(b"Predictor", 10), (key, -1)]);
+            assert_eq!(
+                apply(vec![0, 10, 0, 20], &p).unwrap(),
+                vec![10, 20],
+                "{key:?}"
+            );
+        }
+        let p = params(&[(b"Predictor", 10), (b"Columns", 0), (b"Colors", 0)]);
+        assert_eq!(apply(vec![0, 10], &p).unwrap(), vec![10]);
+    }
+
+    #[test]
+    fn a_row_longer_than_the_data_is_no_error_and_adds_no_bytes() {
+        let p = params(&[(b"Predictor", 12), (b"Columns", 1000)]);
+        assert!(apply(vec![0, 1, 2, 3], &p).unwrap().len() <= 4);
+    }
+
+    #[test]
+    fn invalid_predictor_parameters_are_errors() {
+        for p in [
+            params(&[(b"Predictor", 10), (b"BitsPerComponent", 3)]),
+            params(&[(b"Predictor", 10), (b"Colors", 33)]),
+            params(&[(b"Predictor", 10), (b"Columns", i64::MAX), (b"Colors", 32)]),
+            params(&[(b"Predictor", 12), (b"Columns", 1_000_000_000_000)]),
+            params(&[(b"Predictor", 2), (b"Columns", 1 << 28)]),
+            params(&[(b"Predictor", 2), (b"Colors", 33)]),
+        ] {
+            let err = apply(vec![0, 1, 2, 3], &p).unwrap_err();
+            assert!(
+                matches!(err, JustPdfError::StreamDecode { .. }),
+                "{p:?}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tiff_predictor_adds_each_byte_to_the_one_a_pixel_before() {
+        let p = params(&[(b"Predictor", 2), (b"Columns", 3)]);
+        assert_eq!(
+            apply(vec![10, 5, 3, 1, 1, 1], &p).unwrap(),
+            vec![10, 15, 18, 1, 2, 3]
+        );
+        let p = params(&[(b"Predictor", 2), (b"Columns", 0)]);
+        assert_eq!(apply(vec![1, 2, 3], &p).unwrap(), vec![1, 2, 3]);
     }
 
     #[test]
