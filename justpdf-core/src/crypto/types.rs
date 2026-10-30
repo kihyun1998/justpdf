@@ -1,6 +1,6 @@
 //! Core types for PDF encryption.
 
-use crate::error::Result;
+use crate::error::{JustPdfError, Result};
 use crate::object::{PdfDict, PdfObject};
 
 /// Parsed encryption dictionary from the PDF trailer.
@@ -10,7 +10,9 @@ pub struct EncryptionDict {
     pub filter: Vec<u8>,
     /// /V — algorithm version (0, 1, 2, 3, 4, 5)
     pub v: i64,
-    /// /Length — key length in bits (default 40)
+    /// The file key length in bits, derived from `/V`, `/R`, `/Length` and
+    /// the crypt filters: 40..=128 in steps of 8 for V2 and V4 (256 for a V4
+    /// AESV3 filter at R5 or later), 256 for V5, 40 for any other `/V`.
     pub length: i64,
     /// /R — revision of the Standard handler (2, 3, 4, 5, 6)
     pub r: i64,
@@ -136,7 +138,6 @@ impl EncryptionDict {
         let filter = dict.get_name(b"Filter").unwrap_or(b"Standard").to_vec();
 
         let v = dict.get_i64(b"V").unwrap_or(0);
-        let length = dict.get_i64(b"Length").unwrap_or(40);
         let r = dict.get_i64(b"R").unwrap_or(0);
 
         let o = dict
@@ -178,6 +179,14 @@ impl EncryptionDict {
         let stm_f = dict.get_name(b"StmF").map(|s| s.to_vec());
         let str_f = dict.get_name(b"StrF").map(|s| s.to_vec());
 
+        let length = key_length_bits(
+            v,
+            r,
+            dict.get_i64(b"Length"),
+            cf.as_ref(),
+            [stm_f.as_deref(), str_f.as_deref()],
+        )?;
+
         Ok(Self {
             filter,
             v,
@@ -196,12 +205,19 @@ impl EncryptionDict {
         })
     }
 
-    /// Key length in bytes.
+    /// Key length in bytes: 32 for `/V` 5, else `length / 8`. For `/R` 2–4
+    /// it is held within 5..=16, the bytes their MD5-based derivation can
+    /// give, whatever `/V` asks for.
     pub fn key_length_bytes(&self) -> usize {
-        if self.v == 5 {
-            32 // AES-256 always uses 32-byte keys
+        let bytes = if self.v == 5 {
+            32
         } else {
-            (self.length as usize) / 8
+            (self.length / 8).max(0) as usize
+        };
+        if self.r <= 4 {
+            bytes.clamp(5, 16)
+        } else {
+            bytes
         }
     }
 }
@@ -247,33 +263,84 @@ impl SecurityState {
     }
 }
 
+/// The file key length in bits for an encryption dictionary with version
+/// `v`, revision `r`, top-level `/Length` `length`, crypt filters `cf` and default filter
+/// names `defaults` (`/StmF`, then `/StrF`).
+fn key_length_bits(
+    v: i64,
+    r: i64,
+    length: Option<i64>,
+    cf: Option<&CryptFilterMap>,
+    defaults: [Option<&[u8]>; 2],
+) -> Result<i64> {
+    match v {
+        2 | 4 => {}
+        5 => return Ok(256),
+        _ => return Ok(40),
+    }
+    let top = checked_key_length(length.unwrap_or(40))?;
+    if v == 2 {
+        return Ok(top);
+    }
+    let filter = defaults
+        .into_iter()
+        .flatten()
+        .map(|name| named_filter(v, cf, name))
+        .find(|(method, _)| *method != CryptMethod::None);
+    match filter {
+        Some((CryptMethod::AESV2, _)) => Ok(128),
+        Some((CryptMethod::V2, filter_length)) if filter_length > 0 => {
+            checked_key_length(filter_length)
+        }
+        Some((CryptMethod::AESV3, _)) if r >= 5 => Ok(256),
+        Some((CryptMethod::AESV3, _)) => Err(JustPdfError::EncryptionError {
+            detail: "an AESV3 crypt filter needs /R 5 or later".into(),
+        }),
+        _ => Ok(top),
+    }
+}
+
+/// A `/Length` in bits, with a value below 40 read as bytes; it must be a
+/// multiple of 8 within 40..=128.
+fn checked_key_length(length: i64) -> Result<i64> {
+    let bits = if length < 40 {
+        length.saturating_mul(8)
+    } else {
+        length
+    };
+    if bits % 8 != 0 || !(40..=128).contains(&bits) {
+        return Err(JustPdfError::EncryptionError {
+            detail: format!("invalid encryption key length: {length}"),
+        });
+    }
+    Ok(bits)
+}
+
 /// Resolve a named crypt filter to a CryptMethod.
 fn resolve_crypt_method(ed: &EncryptionDict, filter_name: Option<&[u8]>) -> CryptMethod {
-    let name = match filter_name {
-        Some(n) => n,
-        None => return CryptMethod::None,
-    };
+    match filter_name {
+        Some(name) => named_filter(ed.v, ed.cf.as_ref(), name).0,
+        None => CryptMethod::None,
+    }
+}
 
-    // Special names
+/// The method of the crypt filter `name` names, and the filter's own
+/// `/Length` (0 when it has none): `Identity` is no encryption, a name
+/// missing from `cf` falls back by `/V` (AESV2 for 4, AESV3 for 5, RC4
+/// otherwise).
+fn named_filter(v: i64, cf: Option<&CryptFilterMap>, name: &[u8]) -> (CryptMethod, i64) {
     if name == b"Identity" {
-        return CryptMethod::None;
+        return (CryptMethod::None, 0);
     }
-
-    // Look up in CF map
-    if let Some(ref cf) = ed.cf {
-        for (n, f) in &cf.filters {
-            if n == name {
-                return f.cfm;
-            }
-        }
+    if let Some((_, f)) = cf.and_then(|cf| cf.filters.iter().find(|(n, _)| n == name)) {
+        return (f.cfm, f.key_length);
     }
-
-    // Fallback based on V
-    match ed.v {
+    let fallback = match v {
         4 => CryptMethod::AESV2,
         5 => CryptMethod::AESV3,
         _ => CryptMethod::V2,
-    }
+    };
+    (fallback, 0)
 }
 
 /// Serialize an EncryptionDict back to a PdfDict (for writing encrypted PDFs).
@@ -375,6 +442,104 @@ mod tests {
         assert_eq!(ed.length, 128);
         assert_eq!(ed.key_length_bytes(), 16);
         assert!(ed.encrypt_metadata);
+    }
+
+    fn standard_dict(v: i64, r: i64, length: Option<i64>) -> PdfDict {
+        let mut d = PdfDict::new();
+        d.insert(b"Filter".to_vec(), PdfObject::Name(b"Standard".to_vec()));
+        d.insert(b"V".to_vec(), PdfObject::Integer(v));
+        d.insert(b"R".to_vec(), PdfObject::Integer(r));
+        if let Some(length) = length {
+            d.insert(b"Length".to_vec(), PdfObject::Integer(length));
+        }
+        d.insert(b"O".to_vec(), PdfObject::String(vec![0u8; 32]));
+        d.insert(b"U".to_vec(), PdfObject::String(vec![0u8; 32]));
+        d.insert(b"P".to_vec(), PdfObject::Integer(-4));
+        d
+    }
+
+    fn with_std_cf(mut d: PdfDict, cfm: &[u8], length: Option<i64>) -> PdfDict {
+        let mut filter = PdfDict::new();
+        filter.insert(b"CFM".to_vec(), PdfObject::Name(cfm.to_vec()));
+        if let Some(length) = length {
+            filter.insert(b"Length".to_vec(), PdfObject::Integer(length));
+        }
+        let mut cf = PdfDict::new();
+        cf.insert(b"StdCF".to_vec(), PdfObject::Dict(filter));
+        d.insert(b"CF".to_vec(), PdfObject::Dict(cf));
+        d.insert(b"StmF".to_vec(), PdfObject::Name(b"StdCF".to_vec()));
+        d.insert(b"StrF".to_vec(), PdfObject::Name(b"StdCF".to_vec()));
+        d
+    }
+
+    #[test]
+    fn an_invalid_key_length_is_an_encryption_error() {
+        for length in [0, -8, 256, 44, 136] {
+            let err = EncryptionDict::from_dict(&standard_dict(2, 3, Some(length))).unwrap_err();
+            assert!(
+                matches!(err, crate::error::JustPdfError::EncryptionError { .. }),
+                "/Length {length}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_length_below_40_is_read_as_bytes() {
+        let ed = EncryptionDict::from_dict(&standard_dict(2, 3, Some(5))).unwrap();
+        assert_eq!((ed.length, ed.key_length_bytes()), (40, 5));
+        let ed = EncryptionDict::from_dict(&standard_dict(2, 3, Some(16))).unwrap();
+        assert_eq!((ed.length, ed.key_length_bytes()), (128, 16));
+    }
+
+    #[test]
+    fn v1_always_uses_a_40_bit_key() {
+        let ed = EncryptionDict::from_dict(&standard_dict(1, 2, Some(128))).unwrap();
+        assert_eq!((ed.length, ed.key_length_bytes()), (40, 5));
+    }
+
+    #[test]
+    fn a_v4_aesv2_filter_sets_a_128_bit_key_without_a_top_level_length() {
+        let d = with_std_cf(standard_dict(4, 4, None), b"AESV2", None);
+        let ed = EncryptionDict::from_dict(&d).unwrap();
+        assert_eq!((ed.length, ed.key_length_bytes()), (128, 16));
+    }
+
+    #[test]
+    fn a_v4_filter_name_missing_from_cf_gets_the_aesv2_key_length() {
+        let mut d = standard_dict(4, 4, None);
+        d.insert(b"StmF".to_vec(), PdfObject::Name(b"StdCF".to_vec()));
+        d.insert(b"StrF".to_vec(), PdfObject::Name(b"StdCF".to_vec()));
+        let ed = EncryptionDict::from_dict(&d).unwrap();
+        let state = SecurityState::new(ed.clone(), vec![], None);
+        assert_eq!(state.stream_method, CryptMethod::AESV2);
+        assert_eq!((ed.length, ed.key_length_bytes()), (128, 16));
+    }
+
+    #[test]
+    fn r2_to_r4_key_bytes_stay_within_what_md5_gives() {
+        let v5_r3 = EncryptionDict::from_dict(&standard_dict(5, 3, None)).unwrap();
+        assert_eq!(v5_r3.key_length_bytes(), 16);
+        let v5_r6 = EncryptionDict::from_dict(&standard_dict(5, 6, None)).unwrap();
+        assert_eq!(v5_r6.key_length_bytes(), 32);
+    }
+
+    #[test]
+    fn a_v4_aesv3_filter_needs_r5_or_later() {
+        let d = with_std_cf(standard_dict(4, 6, None), b"AESV3", None);
+        assert_eq!(EncryptionDict::from_dict(&d).unwrap().length, 256);
+        let d = with_std_cf(standard_dict(4, 4, None), b"AESV3", None);
+        assert!(EncryptionDict::from_dict(&d).is_err());
+    }
+
+    #[test]
+    fn a_v4_rc4_filter_takes_its_own_length_in_bytes() {
+        let d = with_std_cf(standard_dict(4, 4, Some(40)), b"V2", Some(16));
+        let ed = EncryptionDict::from_dict(&d).unwrap();
+        assert_eq!((ed.length, ed.key_length_bytes()), (128, 16));
+        let d = with_std_cf(standard_dict(4, 4, Some(96)), b"V2", None);
+        assert_eq!(EncryptionDict::from_dict(&d).unwrap().length, 96);
+        let d = with_std_cf(standard_dict(4, 4, None), b"V2", Some(44));
+        assert!(EncryptionDict::from_dict(&d).is_err());
     }
 
     #[test]

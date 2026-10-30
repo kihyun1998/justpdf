@@ -1580,6 +1580,24 @@ mod tests {
     }
 
     #[test]
+    fn an_aes128_file_without_a_top_level_length_opens_with_its_password() {
+        use crate::crypto::EncryptionMethod;
+        let bytes = encrypt_with_modifier(create_plain_pdf(None), EncryptionMethod::AES128);
+        let top_level = b"/Filter /Standard /Length 128 ";
+        let at = bytes
+            .windows(top_level.len())
+            .position(|w| w == top_level)
+            .expect("the writer's /Encrypt dictionary layout");
+        let mut stripped = bytes.clone();
+        stripped[at + b"/Filter /Standard ".len()..at + top_level.len()].fill(b' ');
+        assert!(!stripped.windows(top_level.len()).any(|w| w == top_level));
+
+        let mut doc = PdfDocument::from_bytes(stripped).unwrap();
+        doc.authenticate(b"user").unwrap();
+        assert_eq!(first_page_text(&doc).trim(), "Secret page");
+    }
+
+    #[test]
     fn test_build_with_encryption_roundtrip() {
         use crate::crypto::EncryptionMethod;
         for method in [

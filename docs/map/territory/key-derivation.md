@@ -13,7 +13,7 @@ Password padding, the file encryption key, the `/O` and `/U` values (R2–R4), t
 - **Object key** (`compute_object_key`): MD5 of the file key, the low 3 bytes of the object number, the low 2 bytes of the generation, and `sAlT` for AES; truncated to `min(n + 5, 16)` bytes (inferred). R5 and R6 (AESV3) use the file key directly, so their object keys depend on neither number nor generation (inferred, `decrypt_bytes`, `encrypt_bytes`).
 - **R6** (`compute_hash_r6`, Algorithm 2.B): at least 64 rounds, ending when the last byte of the round's output is at most `round - 32`, so at most 287 rounds (inferred). `generate_values_r6` is deterministic: the caller passes the file key, the four salts and `/Perms` bytes 12–15 (`perms_random`). The random values are made by `build_r6` in [Object encryption](object-encryption.md).
 - The doc comment of `compute_file_key_r5` says "validation_salt", but the parameter is `key_salt`, and `authenticate_r5` passes the key salt (`/U[40..48]` or `/O[40..48]`) (inferred).
-- **Input size**: `/O`, `/U`, `/OE` and `/UE` come from the file; R5 and R6 check their minimum lengths before slicing (inferred, `compute_file_key_r6_user`, `compute_file_key_r6_owner`). R2–R4 derivation trusts `key_length_bytes`, which nothing checks ([Encryption model](encryption-model.md)); a key length of 0 or above 16 panics (Known holes).
+- **Input size**: `/O`, `/U`, `/OE` and `/UE` come from the file; R5 and R6 check their minimum lengths before slicing (inferred, `compute_file_key_r6_user`, `compute_file_key_r6_owner`). R2–R4 derivation trusts `key_length_bytes`, which is clamped to 5..=16 bytes for `/R` 2–4 whatever `/V` says — MuPDF clamps at the same place (`fz_clampi(length/8, 0, 16)` in `pdf-crypt.c`) ([Encryption model](encryption-model.md), #410).
 
 ## Code
 - `justpdf-core/src/crypto/key.rs` — `PADDING`, `pad_password`, `compute_file_encryption_key_r234`, `compute_o_value_r234`, `compute_u_value_r234`, `recover_user_password_from_owner_r234`, `compute_file_key_r5`, `compute_hash_r6`, `compute_file_key_r6_user`, `compute_file_key_r6_owner`, `compute_object_key`, `aes128_cbc_encrypt_no_padding`, `generate_o_u_values_r234`, `generate_values_r6`, `aes256_cbc_encrypt_no_padding`
@@ -36,6 +36,5 @@ Password padding, the file encryption key, the `/O` and `/U` values (R2–R4), t
 - [Encryption model](encryption-model.md) — supplies `key_length_bytes` and the parsed values these functions trust.
 
 ## Known holes / open
-- A key length of 0 or above 16 bytes panics: `rc4` divides by the key length, and the R3+ rehash slices the 16-byte MD5 by `key_length_bytes` (measured 2026-10-30, `/Length 0`, `256` and `-8` on open; [Encryption model](encryption-model.md)). Tracked: #410
 - The owner-password path for R3, R4 and R6 is tested only on justpdf's own output; the third-party fixtures authenticate with the user password only (inferred, `tests/integration.rs`). There is no R2 test.
 - No test exercises a password longer than 127 bytes (R5/R6 truncation) (inferred).
