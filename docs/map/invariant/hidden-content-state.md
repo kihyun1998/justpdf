@@ -12,12 +12,16 @@ There are three content-stream executors, none calling another: `RenderInterpret
 - [Render interpreter](../territory/render-interpreter.md) — `execute_ops`: in a hidden section, painting operators clear `path_builder`, `Do`/`BI`/`sh` are skipped, everything else runs `execute_op`; `render_text_string` draws no glyph while `oc_skip_depth > 0`.
 - [SVG renderer](../territory/svg-renderer.md) — `execute_ops` and `render_text_string`, the same rule with `path_data`.
 - [Content interpreter](../territory/content-interpreter.md) — runs every operator and flags glyphs `hidden` (#219); it never drops them, so redaction can erase them (ADR 0004).
-- [Optional content](../territory/optional-content.md) — what decides "hidden".
+- [Optional content](../territory/optional-content.md) — what decides "hidden". Deciding it is itself split: for an inline property list (`/OC <<…>> BDC`) the core interpreter's `process_op` reads only a name operand and treats the section as visible, while the renderers evaluate it (`optional_content::section_visible`, `operand_to_pdf_object`), so a page can draw nothing where extraction reports text (measured on the extraction side 2026-10-30; renderer side read). Which side moves is open: core follows §8.11.3.2, ADR 0005 asks extraction and sanitizing to judge alike.
+- [Form flatten](../territory/form-flatten.md) — the annotation-level case: the renderer skips a widget whose own `/OC` is off (`render_annotations` through `oc_entry_visible`), while `form/flatten.rs — flatten_form` checks only the Hidden/NoView flags and paints it into the page. The two do not share a primitive (`annot::placement` has no `/OC` test) (inferred, 2026-10-30).
+- [Sanitize](../territory/sanitize.md) — not built. ADR 0005's hidden-optional-content category is decided through the content interpreter's `Glyph::hidden`, so it inherits this rule there.
 
 ## What a violation looks like
 Measured 2026-10-25 on master after #44 and #218 (both renderers skipped every operator in a hidden section): `/OC /L BDC 1 0 0 1 50 0 cm EMC 0 0 1 rg 0 0 10 10 re f` with `/L` OFF drew the blue square at x 0–10 where it belongs at 50–60 (raster pixel (5,95) blue, (55,95) white; SVG `transform="matrix(1,0,0,-1,0,100)"`). Likewise a colour or a clip set inside a hidden section was lost, and text after hidden text started where the hidden text began. `justpdf-render/tests/render_optional_content.rs` (`assert_hidden_like`) renders each case against the same page with the hidden part replaced by its state-only equivalent, raster and SVG; a mutation turning any one rule off at either renderer fails a named test there.
 
 ## Discovery history
+Re-read 2026-10-30 at 88b2a08: `oc_skip_depth`, `execute_ops` and `render_text_string` in `justpdf-render/src/interpreter.rs` and `svg_device.rs`, `hidden_at` in `justpdf-core/src/content/interpret.rs`, and `assert_hidden_like` in `justpdf-render/tests/render_optional_content.rs` are where this note says (inferred). Redaction does not run on the content interpreter yet (`annot/redact.rs` filters parsed operators itself); ADR 0004 and #209 plan the move.
+
 Found 2026-10-25 while reading §8.11.3.1 for #219 (text extraction). The skip-everything loop in the raster interpreter predates #44, but before #44 an `/OC` name never resolved, so it never ran; #44 and #218 made it reachable. The content interpreter was written to the rule from the start (#219).
 
 ## Where it will recur

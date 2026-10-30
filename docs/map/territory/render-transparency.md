@@ -7,7 +7,9 @@ Applies the alpha, blend mode and soft mask from an ExtGState (`gs`), and draws 
 **None.**
 
 ## Design model
-- Soft masks are Luminosity and Alpha only. Any other subtype returns early.
+Read from the source and the issues cited; no decision record states it.
+
+- Soft masks are Luminosity and Alpha only. Any other subtype returns early (re-verified, `apply_soft_mask`).
 - The mask is built by drawing the `/G` form the moment `gs` is met (MuPDF defers it until painting). If `/G` is already running, applying that `/SMask` is skipped altogether — [Content stream recursion](../invariant/content-stream-recursion.md).
 - The `/G` form is drawn in its own `/Resources` scope, else the scope at the `gs` — [resource name scope](../invariant/resource-scope.md).
 - **A Luminosity mask's group is composited over `/BC`**, given in the group's `/CS`, black without one; an Alpha mask ignores it (ISO 32000-1 Table 144, read raw, #374). The mask pixmap is filled with the backdrop before `/G` runs, so it shows where `/G` paints nothing, including outside `/G`'s `/BBox` (MuPDF master `begin_softmask` uses an unbounded area for luminosity masks, read raw). `mask_backdrop` resolves the group's `/CS` with `ColorSpace::resolve` (since #46, so an ICCBased space converts through its `/Alternate` or `/N`) and converts with `Color::to_rgb`. Without a `/CS`, or when its component count differs from `/BC`'s, the space is taken from the count (1, 3, 4: gray, RGB, CMYK). Until #46 an ICCBased `/CS` always went through that count fallback, because `ColorSpace::from_pdf_object` never read the stream.
@@ -21,28 +23,35 @@ Applies the alpha, blend mode and soft mask from an ExtGState (`gs`), and draws 
   - Until #128 the mask and group forms inherited them (measured 2026-10-24 on master, a red fill at the page centre): `ca 0.5` with a full-white soft mask gave (255,191,191), where (255,128,128) is right; `ca 0.5` and a group form gave (255,192,192), alpha applied twice; a second soft mask set while the first was current was drawn through the first, so the right half stayed white. The group composite used the clip only; a group under a half-white soft mask happened to come out right, because the mask was applied once inside the group instead.
   - Until #129 pattern fills and strokes, `sh`, text and stencil masks ignored the soft mask (measured 2026-10-06 on master: each painted the masked-out half red). Pinned by `tests/render_soft_mask_paths.rs`, one test per path; a mutation reverting either glyph site, the pattern fill or the image rule fails its test.
 - **`/SMask` in an ExtGState and `/Group` on a form are read through indirect references** (`dict_entry`), the same as the direct dictionary, including the group's `/I` (#129). The mask's `/G` already followed a reference. Until #129 both were read only as direct dictionaries (measured: `/SMask 6 0 R` left the fill unmasked, and a non-isolated Multiply group written as `/Group 6 0 R` painted (229,229,204) over black where the direct dictionary gives (0,0,0); in a real magazine file, a gutter shadow drew as a solid band and a title was painted over).
-  - **The clip × soft mask product is kept** in `RenderInterpreter::combined_mask` with the clip and soft mask it was made from, and reused while both are the same masks (`SharedMask::ptr_eq`). Holding the two keeps them alive, so a freed mask's address cannot be reused and mistaken for one of them. The cache also holds a reference to the clip, so the next `W` copies the clip once rather than changing it in place. Measured 2026-10-24, release, 1300 Helvetica glyphs at 10 pt on a 400 × 600 pt page under a clip and a uniform mask, 300 dpi, best of 9: master 106.1 ms; #129 without the cache 794.9 ms (each glyph made its own page-sized product); with it 45.0 ms. Measured by mutation: dropping the clip or the soft-mask comparison fails `a_new_clip_under_the_same_soft_mask_is_used` or `a_new_soft_mask_under_the_same_clip_is_used`.
+- **The clip × soft mask product is kept** in `RenderInterpreter::combined_mask` with the clip and soft mask it was made from, and reused while both are the same masks (`SharedMask::ptr_eq`). Holding the two keeps them alive, so a freed mask's address cannot be reused and mistaken for one of them. The cache also holds a reference to the clip, so the next `W` copies the clip once rather than changing it in place. Measured 2026-10-24, release, 1300 Helvetica glyphs at 10 pt on a 400 × 600 pt page under a clip and a uniform mask, 300 dpi, best of 9: master 106.1 ms; #129 without the cache 794.9 ms (each glyph made its own page-sized product); with it 45.0 ms. Measured by mutation: dropping the clip or the soft-mask comparison fails `a_new_clip_under_the_same_soft_mask_is_used` or `a_new_soft_mask_under_the_same_clip_is_used`.
   - Measured 2026-10-24, release, a 400 × 600 pt page of 1000 small fills under a uniform luminosity mask, master → #50: 300 dpi, fills alone 717.5 → 43.9 ms; each fill in its own `q … Q` 832.7 → 41.0 ms (best of 5). Before #50 every masked draw copied and multiplied a page mask, and every `q` copied the soft mask. With a clip as well, unchanged within noise (best of 15, two alternating rounds: master 461 / 406 ms, #50 445 / 435 ms). 112 real pages (21 local files) rendered pixel-identical before and after.
-- Luminosity weights are Rec.709. [Compress grayscale](compress-grayscale.md) uses Rec.601.
-- The ExtGState's `/Font` is ignored (text extraction does the same).
+- Luminosity weights are Rec.709 (`pixmap_to_mask`; `apply_image_smask` uses the same for a colour SMask). [Compress grayscale](compress-grayscale.md) uses Rec.601.
+- **A transparency group and a soft mask `/G` each draw into a page-sized pixmap** (`render_transparency_group`, `render_soft_mask`). The group's `/BBox` clip is the one `do_xobject` set before it, applied when the group is composited; the soft mask form is not clipped to its `/BBox` (re-verified).
+- **A non-isolated group starts from a copy of the page and is composited back over the page**, so the backdrop is composited onto itself at the group's alpha and blend mode. An empty non-isolated group drawn under `/BM /Multiply` over a 50% gray page turned it (63, 63, 63) where the page should stay (128, 128, 128) (measured 2026-10-30 with the CLI at `88b2a08`). ISO 32000-2 §11.4.8 removes the backdrop's contribution from a non-isolated group's result before compositing (inferred, not read raw). With `ca` 1 and Normal the result happens to be right.
+- What bounds the input: every group and every soft mask allocates one page-sized RGBA pixmap, and a soft mask one page-sized mask; group nesting is bounded by `xobject_depth` (11), soft mask forms only by the running-stream check (inferred).
 
 ## Code
-- `justpdf-render/src/interpreter.rs` — `render_form_xobject`, `render_transparency_group`, `render_form_xobject_direct`, `apply_extgstate`, `apply_soft_mask`, `render_soft_mask`, `pixmap_to_mask`, `draw_mask`, `combined_mask`, `dict_entry`, `nested_stream`, `reset_transparency`, `mask_backdrop`, `transfer_table`
+- `justpdf-render/src/interpreter.rs` — `render_form_xobject`, `render_transparency_group`, `render_form_xobject_direct`, `apply_extgstate`, `apply_soft_mask`, `render_soft_mask`, `pixmap_to_mask`, `mask_backdrop`, `transfer_table`, `resolved`, `draw_mask`, `combined_mask`, `dict_entry`, `nested_stream`, `reset_transparency`
+- `justpdf-render/src/graphics_state.rs` — `SoftMask`, `SoftMaskSubtype`, `SharedMask`, `PdfBlendMode`, `PdfBlendMode::from_name`, `PdfBlendMode::to_skia`
 - `justpdf-render/tests/render_soft_mask_dict.rs` — `/BC` and `/TR`
-- `justpdf-render/src/graphics_state.rs` — `SoftMask`, `PdfBlendMode`
 - `justpdf-render/tests/render_soft_mask_paths.rs` — the soft mask on every painting path, the image's own mask overriding it, and indirect `/SMask` and `/Group`
+- `justpdf-render/tests/render_clip_state.rs` — the soft mask kept apart from the clip
 
 ## Reference behaviour
-**None.** Clause to compare against: ISO 32000-2 §11.
+- ISO 32000-1 Table 58, Table 144, §11.6.4.3, §11.6.6 and its NOTE 1 (read raw for #50, #128, #129, #374).
+- MuPDF master `pdf-op-run.c` (read raw for #128 and #374) — `begin_softmask` (an unbounded area for luminosity masks; soft mask cleared and alpha 1 before the mask form) and `pdf_run_xobject` (the `Do`-time blend and alpha passed to `fz_begin_group`, reset inside). Where this renderer differs: it builds the mask at `gs`, MuPDF when painting.
 
 ## Cross-cutting invariants
 - [Content stream recursion](../invariant/content-stream-recursion.md)
 - [resource name scope](../invariant/resource-scope.md)
 
 ## Blast radius
-- [Render clipping](render-clipping.md) — `draw_mask` combines the clip with the soft mask.
-- [Raster device](raster-device.md) — draws through the combined mask.
-- [Render images](render-images.md) — SMask.
+- [Render clipping](render-clipping.md) — `draw_mask` multiplies clip and soft mask byte for byte and caches the product by identity (`SharedMask::ptr_eq`); a clip that changed in place instead of being copied would reuse a stale product.
+- [Raster device](raster-device.md) — groups and soft masks swap their own pixmap into `PixmapDevice::pixmap`.
+- [Render images](render-images.md) — an image's own `/SMask`/`/Mask` decides whether the graphics state's soft mask applies.
+- [Render shading](render-shading.md), [Render tiling patterns](render-tiling-patterns.md) — a translucent `sh` and pattern pixmaps are composited like a group, and a group or soft mask form sets `stream_start`, which places patterns and gives a tiling cell its alpha (#393, #397).
+- [Render annotations](render-annotations.md) — an appearance with a `/Group` goes through `render_transparency_group`.
 
 ## Known holes / open
-- The group's `/K` (knockout) and `/CS` (blending colour space) are not read (measured for `/K`, 2026-10-24). Tracked: #375
+- The group's `/K` (knockout) and `/CS` (blending colour space) are not read (measured for `/K`, 2026-10-24, #375). Tracked: #375
+- A non-isolated group composites the backdrop onto itself (measured, above). Tracked: #419.

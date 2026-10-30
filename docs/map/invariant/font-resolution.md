@@ -6,15 +6,18 @@ The same font **must be interpreted the same way** by text extraction and by ren
 ## Why it is cross-cutting
 Both consumers start from core `parse_font_info`, but each builds on top of it **on its own**, and neither calls the other:
 - Text decodes with the encoding tables (render does not use them). CID widths (`/W`, `/DW`) are shared since #222.
-- Render reads `/CIDToGIDMap` (text does not need it), and picks a simple TrueType glyph through the font's encoding with `font::truetype_glyph_candidates`, the function subsetting also uses (#223).
-- There are two copies of the ToUnicode interpretation code.
-- Core has several font modules that neither path uses (CFF, Type3, recovery, OpenType layout).
+- `/CIDToGIDMap` is read at three sites that do not call each other: the renderer (`RenderInterpreter::parse_cid_to_gid_map`, `parse_cid_gid_stream`), font subsetting (`cid_font_glyph_ids` in `writer/compress.rs`) and `font/encoder.rs` (`cid_to_gid_map`, added by #178 for appearance text); the encoder's result must name the glyph the renderer draws (re-read 2026-10-30 at 88b2a08; inferred). Text does not need it. Render picks a simple TrueType glyph through the font's encoding with `font::truetype_glyph_candidates`, the function subsetting also uses (#223).
+- ToUnicode has one parser (`ToUnicodeCMap::parse`, `font/cmap.rs`), but each consumer finds and decodes the `/ToUnicode` stream on its own: `resolve_to_unicode` in `content/interpret.rs`, `font/encoder.rs`, and the renderers' `resolve_font` (re-read 2026-10-30 at 88b2a08; the old map's "two copies of the interpretation code" no longer holds; inferred).
+- Of core's other font modules, render uses `font::recovery` (`find_substitute` in `interpreter.rs`, and `substitute.rs`); bare CFF programs are read through `justpdf_core::ttf_parser::cff` with core's `cff_simple_glyph`/`cff_cid_to_gid` helpers, not through `font::cff` (`glyph.rs`). Text uses neither. `font::cff`, Type3 and OpenType layout are used by neither path (`git grep` at 88b2a08; measured).
+
+Advances follow the same split. The advance rules — word spacing `Tw` on single-byte code 32 only, Type3 widths through `/FontMatrix`, vertical writing mode — are applied separately in `RenderInterpreter::render_text_string`, `SvgRenderer::render_text_string` and the core content interpreter, and each is wrong the same way at all three today. Tracked: #314, #312, #313, #323, #324 (reported by the 2026-10-30 rewrite; inferred).
 
 ## Territories it holds in
 - [Font loading](../territory/font-loading.md) — the common starting point (does not fill in CID widths).
 - [Font encodings](../territory/font-encodings.md) — encoding tables only text uses.
-- [ToUnicode](../territory/tounicode.md) — two copies of the interpretation.
-- [CID fonts](../territory/cid-fonts.md) — widths shared (#222), GID mapping only in render.
+- [ToUnicode](../territory/tounicode.md) — one parser, located and decoded separately per consumer.
+- [CID fonts](../territory/cid-fonts.md) — widths shared (#222); `/CIDToGIDMap` read separately by render, subsetting and the encoder.
+- [Type3 fonts](../territory/type3-fonts.md) — `/FontMatrix` is ignored alike by text extraction and both renderers, so widths agree with each other but not with the font. Tracked: #312.
 - [Text extraction](../territory/text-extraction.md) — `CharCollector` (Unicode).
 - [Content interpreter](../territory/content-interpreter.md) — `load_font` (widths, descriptor, ToUnicode).
 - [Render interpreter](../territory/render-interpreter.md) — `resolve_font`.
@@ -23,7 +26,7 @@ Both consumers start from core `parse_font_info`, but each builds on top of it *
 - [Font subsetting](../territory/font-subsetting.md) — the two paths read the subset result differently (render through the font cmap, text through ToUnicode). Subsetting keeps the union of the same simple-TrueType candidates the renderer draws the first of (`simple_font_glyph_ids`), and resolves CID fonts on its own (`cid_font_glyph_ids`); it keeps GIDs, so it loses no glyphs.
 
 ## What a violation looks like
-- On a page with a Type0 (CJK) font, the rendered character spacing and the extracted text coordinates differ (render uses a fixed width of 1000 — inferred).
+- On a page with a Type0 (CJK) font, the rendered character spacing and the extracted text coordinates differ (before #222, render used a fixed width of 1000 for Type0 fonts — inferred at the time; #222 moved CID widths into core).
 - A subset font loses glyphs or draws the wrong ones in render while extracted text is fine — compress tests that only look at extraction pass.
 - In a `/Differences` font, extraction (#221), simple-TrueType render (#223), bare-CFF render (#224) and Type1 render (#225) follow the encoding.
 

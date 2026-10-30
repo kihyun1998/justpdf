@@ -18,13 +18,14 @@ Two things are **maintainer decisions** (2026-09-29, #119): not clearing the pat
 - **The caller's path does not reach the tile.** `B`/`b` keep the page path for the stroke while the pattern fill renders the tile. Until #128 the tile's own `f` filled that path too and consumed it, so the stroke had no path (measured: `… 20 20 160 160 re B` drew no stroke; and with the page path inside the first cell, the tile painted it red).
 
 ## Why it is cross-cutting
-There are two content stream executors and neither calls the other: `RenderInterpreter` (raster) and `SvgRenderer` (SVG, a copy of the interpreter — recurses only into Form XObjects). When there was no defence, both guarded only depth (>10), and the interpreter's pattern and soft mask paths did not count depth either. Once text extraction and font subsetting go into Form XObjects, they become a third and fourth executor (#48, #68).
+There are two content stream executors and neither calls the other: `RenderInterpreter` (raster) and `SvgRenderer` (SVG, a copy of the interpreter — recurses only into Form XObjects). When there was no defence, both guarded only depth (>10), and the interpreter's pattern and soft mask paths did not count depth either. A third executor now exists in `justpdf-core`: the shared content interpreter (`content/interpret.rs`, moved out of text extraction in 1ac99e5, #207) follows `Do` in `Interpreter::do_form` with its own ancestor list (`active_forms`, refusing a repeat as `FormRefusal::Cycle`), a depth cap (`MAX_FORM_DEPTH` = 10, `FormRefusal::Depth`) and a `stack_floor` — the same rules, written a third time. It enters forms only when `InterpretOptions::enter_forms` is set, and at 88b2a08 only its tests set it: text extraction, its one production caller, passes `InterpretOptions::default()` (`text/mod.rs`), so text in Form XObjects is not extracted. Tracked: #48. Font subsetting's character collection would be a fourth (#68) (inferred, read at 88b2a08).
 
 ## Territories it holds in
 - [Render interpreter](../territory/render-interpreter.md) — `with_running_stream` manages the ancestor chain (`running_streams`). `do_xobject` wraps Form XObjects in it.
 - [Render tiling patterns](../territory/render-tiling-patterns.md) — `render_pattern` wraps the tile, and `render_tiling_pattern` clears the soft mask. The device color operators clear the pattern selection.
 - [Render transparency](../territory/render-transparency.md) — `apply_soft_mask` wraps the whole of `render_soft_mask`.
 - [SVG renderer](../territory/svg-renderer.md) — `do_xobject` follows the same rule with `running_forms`.
+- [Content interpreter](../territory/content-interpreter.md) — `Interpreter::do_form` with `active_forms`, `MAX_FORM_DEPTH` and `stack_floor`; reached only with `InterpretOptions::enter_forms`.
 
 ## What a violation looks like
 (Before #119, reproduced 2026-09-29 with a probe and `tests/render_recursion.rs`)

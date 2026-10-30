@@ -4,7 +4,7 @@
 Every byte justpdf writes as PDF syntax (objects, names, strings, numbers, content operators) must, when read back by justpdf's own parser ([Tokenizer](../territory/tokenizer.md), [Object model](../territory/object-model.md), [Content stream parsing](../territory/content-stream-parsing.md)), give **the same value as before writing**. Check shape: `parse(serialize(x)) == x`.
 
 ## Why it is cross-cutting
-PDF syntax is not written in one place. The rules are in one place — `write_name`, `write_string` and `write_real` in `object/types.rs` (which `PdfObject` Display writes through), and `ContentOp::write_to`/`write_content`, which write content operators with them. But code that assembles operator text is spread across several modules, and each gets the rules only by calling these functions. The moment someone writes by hand, as in `write!(buf, "/{}", name)`, the rules drop out, and that defect is carried along no territory→territory edge.
+PDF syntax is not written in one place. The rules are in one place — `write_name`, `write_string` and `write_real` in `object/types.rs` (which `PdfObject` Display writes through), and `ContentOp::write_to`/`write_content`, which write content operators with them. But code that assembles operator text is spread across several modules, and each gets the rules only by calling these functions. The moment someone writes by hand, as in `write!(buf, "/{}", name)`, the rules drop out, and that defect is carried along no territory→territory edge. The writer and the judge are also two implementations that do not call each other: `object/types.rs`'s `write_*` functions on one side, the tokenizer and the content parser on the other, so a rule changed on one side alone (an escape, the CR normalization) breaks the round trip without breaking either side's own tests (inferred, from reading both at 88b2a08).
 
 ## Territories it holds in
 Central sites:
@@ -16,12 +16,12 @@ Central sites:
 
 Sites that misuse Display: none. [Clean](../territory/clean.md) used Display text as object identity (dropping stream data, `Real(1.0)`=`Integer(1)`), and #27 switched it to value comparison — Display remains only as the bucket key for duplicate candidates.
 
-Sites that write syntax by calling the shared functions (moved in #29):
+Sites that write syntax by calling the shared functions (moved in #29). The half a tool can see: `git grep -n 'string_syntax\|name_syntax\|real_syntax\|write_content(\|\.write_to(&mut' -- '*.rs'` — at 88b2a08 its callers are `annot/appearance.rs`, `annot/redact.rs`, `form/appearance.rs`, `sign/appearance.rs`, `sign/sign_pdf.rs`, `writer/page.rs`, `writer/serialize.rs`, `writer/compress.rs` (`rewrite_color_operators_to_gray`, through `ContentOp::write_to`) and `content/` itself (measured, 2026-10-30):
 - [Redaction](../territory/redaction.md), [Compress grayscale](../territory/compress-grayscale.md) — `write_content`/`ContentOp::write_to`.
 - [Signing](../territory/signing.md) — `/Name`, `/Reason` and `/Location` through `string_syntax`, `/Rect` through `real_syntax`, the appearance stream dictionary through `serialize_dict`.
 - [Signature appearance](../territory/signature-appearance.md), [Form appearance](../territory/form-appearance.md), [Annotation appearance](../territory/annotation-appearance.md) — `Tj` strings through `string_syntax`.
 - [Document builder](../territory/document-builder.md) — names in `PageBuilder`'s `set_font`, `draw_image` and `draw_inline_image` through `name_syntax`, `show_text` through `write_string`.
-- [CJK font embedding](../territory/cjk-font-embedding.md) — the `Tf` resource names of fallback runs through `name_syntax`, CID strings through `write_string`, and the subset tag and PostScript name in `/BaseFont`/`/FontName` as `PdfObject::Name`.
+- [CJK font embedding](../territory/cjk-font-embedding.md) — the `Tf` resource names of fallback runs, written by `PageBuilder::write_tf_name` (`writer/page.rs`) through `name_syntax`, CID strings through `write_string`, and the subset tag and PostScript name in `/BaseFont`/`/FontName` as `PdfObject::Name`.
 - [Embedded files](../territory/embedded-files.md) — sets the MIME type as `Name(b"application/pdf")` and leaves it to the serializer.
 
 Generator reals — appearance generators (form, annotation and signature appearances), `PageBuilder`'s coordinates, colors and font sizes, redaction's cover rectangles and colors — are written as `Number` (#90): an integer value within the 32-bit range is an integer (`612`), anything else goes through `write_real` (with a decimal point), NaN → `0`, ±Inf → ±`f32::MAX`. Normal output is the same as when it was written with `{}` — only NaN, inf, `-0` and integer values beyond 32 bits change.
@@ -33,6 +33,7 @@ Sites that rely on byte preservation (the half a tool cannot see — an assumpti
 
 A command to find the hand-writing sites again (read through the rest, filtering out test messages, examples and benches):
 `rg -n '"/\{\}|/\{[a-z_]+\}|\(\{[a-z_]*\}\)|write!\(buf, "\{\}", obj\)|format!\("\{\}", obj\)' --glob '*.rs' --glob '!target' .`
+Run at 88b2a08 (2026-10-30), its non-test hits are doc comments in `writer/page.rs`, an error message, `serialize_object`'s Display arm for non-stream objects, and `clean.rs`'s Display bucket key — no hand-writing site (measured).
 
 ## What a violation looks like
 - A Name with a space, such as a Korean font name, breaks and font parsing fails → **Korean text disappears after a round trip** (0be6cc7).
@@ -50,7 +51,7 @@ All three times only the central site (Display) was fixed. The hand-writing site
 
 4. #28 — Display wrote a CR inside a literal raw (→ LF), wrote integer-valued reals without a decimal point (→ `Integer`, a parse error past i64), and wrote NaN and inf as they were. Encrypting a document whose source `/ID` held a CR made it openable by no one. This time a fixed case table, `test_written_objects_read_back_unchanged`, checks both the Display and `serialize_object` paths by reading them back, together with the three earlier defects (Name spaces, String parentheses, high bytes).
 
-5. #29 — the hand-writing sites. Redaction (`format_operand`) wrote a string with unbalanced parentheses (`1)`) without escaping and changed the text, and both redaction and grayscale lost inline images (`<inline-image> BI`, `BI `). Names with spaces split into two operands, and large reals read back as different values (grayscale rounded every real to 4 decimal places). The embedded-file MIME type was double-escaped (`/application#232Fpdf`). The rules were pulled out into shared functions and every site made to call them. A fixed case table `test_written_ops_read_back_unchanged` (content operators) and per-site read-back tests were added.
+5. #29 — the hand-writing sites. Redaction (its former `format_operand`, gone at HEAD) wrote a string with unbalanced parentheses (`1)`) without escaping and changed the text, and both redaction and grayscale lost inline images (`<inline-image> BI`, `BI `). Names with spaces split into two operands, and large reals read back as different values (grayscale rounded every real to 4 decimal places). The embedded-file MIME type was double-escaped (`/application#232Fpdf`). The rules were pulled out into shared functions and every site made to call them. A fixed case table `test_written_ops_read_back_unchanged` (content operators) and per-site read-back tests were added.
 
 - `incremental_save` switched to `serialize_object` in #26.
 
