@@ -156,10 +156,7 @@ pub fn parse_indirect_object(tokenizer: &mut Tokenizer<'_>) -> Result<(IndirectR
                 data: stream_data,
             };
 
-            // Consume endstream
-            // (read_stream_data positions us after the data, now skip to endobj)
-            // The 'endstream' keyword may have been consumed by position-based reading
-            // Try to consume endstream if present
+            // Consume `endstream` when it follows the data.
             let saved2 = tokenizer.pos();
             if let Ok(Some(Token::Keyword(Keyword::EndStream))) = tokenizer.next_token() {
                 // good
@@ -189,7 +186,10 @@ pub fn parse_indirect_object(tokenizer: &mut Tokenizer<'_>) -> Result<(IndirectR
     Ok((IndirectRef { obj_num, gen_num }, result))
 }
 
-/// Read raw stream data based on /Length in the dict.
+/// The raw data of a stream whose `stream` keyword the tokenizer has just
+/// read: by a direct `/Length` when `endstream` follows it, else up to the
+/// first `endstream`, else by an in-range `/Length`. Leaves the tokenizer at
+/// the end of the data.
 fn read_stream_data(
     tokenizer: &mut Tokenizer<'_>,
     dict: &PdfDict,
@@ -207,45 +207,80 @@ fn read_stream_data(
         pos += 1;
     }
 
-    // Get length from dict
-    let length = match dict.get(b"Length") {
-        Some(PdfObject::Integer(n)) => *n as usize,
-        _ => {
-            // Try to find endstream by scanning
-            return find_stream_data_by_endstream(data, pos, start_offset);
-        }
-    };
-
-    if pos + length > data.len() {
-        return Err(JustPdfError::UnexpectedEof { offset: pos });
+    // The end a direct, non-negative /Length gives, when it is inside `data`.
+    let declared_end = match dict.get(b"Length") {
+        Some(PdfObject::Integer(n)) => usize::try_from(*n).ok(),
+        _ => None,
     }
+    .and_then(|length| pos.checked_add(length))
+    .filter(|&end| end <= data.len());
 
-    let stream_data = data[pos..pos + length].to_vec();
-    tokenizer.seek(pos + length);
-
-    Ok(stream_data)
+    if let Some(end) = declared_end.filter(|&end| endstream_follows(data, end)) {
+        tokenizer.seek(end);
+        return Ok(data[pos..end].to_vec());
+    }
+    match find_stream_data_by_endstream(data, pos, start_offset) {
+        Ok((stream_data, endstream_at)) => {
+            tokenizer.seek(endstream_at);
+            Ok(stream_data)
+        }
+        Err(err) => match declared_end {
+            Some(end) => {
+                tokenizer.seek(end);
+                Ok(data[pos..end].to_vec())
+            }
+            None => Err(err),
+        },
+    }
 }
 
-/// Fallback: scan for 'endstream' to determine stream length.
-fn find_stream_data_by_endstream(data: &[u8], start: usize, err_offset: usize) -> Result<Vec<u8>> {
-    let needle = b"endstream";
-    for i in start..data.len().saturating_sub(needle.len()) {
-        if &data[i..i + needle.len()] == needle {
-            // Remove trailing \r\n or \n before endstream
-            let mut end = i;
-            if end > start && data[end - 1] == b'\n' {
-                end -= 1;
-            }
-            if end > start && data[end - 1] == b'\r' {
-                end -= 1;
-            }
-            return Ok(data[start..end].to_vec());
-        }
+/// Whether `endstream` is next in `data` at `pos`, after any whitespace.
+fn endstream_follows(data: &[u8], pos: usize) -> bool {
+    let rest = &data[pos..];
+    let skip = rest
+        .iter()
+        .position(|&b| !crate::tokenizer::reader::is_pdf_whitespace(b))
+        .unwrap_or(rest.len());
+    rest[skip..].starts_with(b"endstream")
+}
+
+/// Whether a stream terminator starts at `data[0]`: `endstream`, or the
+/// misspelled `endsteam` or truncated `endstrea` when whitespace follows.
+fn is_stream_terminator(data: &[u8]) -> bool {
+    let Some(rest) = data.strip_prefix(b"end") else {
+        return false;
+    };
+    rest.starts_with(b"stream")
+        || [&b"steam"[..], b"strea"].iter().any(|part| {
+            rest.strip_prefix(*part)
+                .and_then(|after| after.first())
+                .is_some_and(|&b| crate::tokenizer::reader::is_pdf_whitespace(b))
+        })
+}
+
+/// The stream data from `start` to the first stream terminator
+/// (`is_stream_terminator`), without the one end-of-line marker before it,
+/// and the offset of that terminator.
+fn find_stream_data_by_endstream(
+    data: &[u8],
+    start: usize,
+    err_offset: usize,
+) -> Result<(Vec<u8>, usize)> {
+    let Some(found) = (start..data.len()).find(|&i| is_stream_terminator(&data[i..])) else {
+        return Err(JustPdfError::InvalidObject {
+            offset: err_offset,
+            detail: "could not find endstream".into(),
+        });
+    };
+    let endstream_at = found;
+    let mut end = endstream_at;
+    if end > start && data[end - 1] == b'\n' {
+        end -= 1;
     }
-    Err(JustPdfError::InvalidObject {
-        offset: err_offset,
-        detail: "could not find endstream".into(),
-    })
+    if end > start && data[end - 1] == b'\r' {
+        end -= 1;
+    }
+    Ok((data[start..end].to_vec(), endstream_at))
 }
 
 #[cfg(test)]
@@ -351,6 +386,91 @@ mod tests {
             }
         );
         assert!(matches!(obj, PdfObject::Dict(_)));
+    }
+
+    /// The data of `1 0 obj << /Length {length} >> stream\n{body}endobj`.
+    fn stream_data(length: &str, body: &[u8]) -> Result<Vec<u8>> {
+        let mut input = format!("1 0 obj\n<< /Length {length} >>\nstream\n").into_bytes();
+        input.extend_from_slice(body);
+        input.extend_from_slice(b"endobj");
+        let mut t = Tokenizer::new(&input);
+        let obj = parse_indirect_object(&mut t)?.1;
+        assert_eq!(t.pos(), input.len(), "endstream and endobj consumed");
+        match obj {
+            PdfObject::Stream { data, .. } => Ok(data),
+            other => panic!("expected a stream, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_stream_with_a_wrong_length_reads_up_to_endstream() {
+        for length in ["-1", "-1000", "100000", "3", "7"] {
+            assert_eq!(
+                stream_data(length, b"BT ET\nendstream\n").unwrap(),
+                b"BT ET",
+                "/Length {length}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stream_with_a_correct_length_is_read_by_length() {
+        let body = b"ab endstream cd";
+        let mut text = body.to_vec();
+        text.extend_from_slice(b"\nendstream\n");
+        assert_eq!(stream_data(&body.len().to_string(), &text).unwrap(), body);
+        assert_eq!(stream_data("5", b"BT ET\r\nendstream\n").unwrap(), b"BT ET");
+        assert_eq!(stream_data("5", b"BT ETendstream\n").unwrap(), b"BT ET");
+    }
+
+    #[test]
+    fn a_misspelled_or_truncated_endstream_ends_the_data() {
+        for terminator in ["endsteam", "endstrea"] {
+            let mut body = b"BT ET\n".to_vec();
+            body.extend_from_slice(terminator.as_bytes());
+            body.extend_from_slice(b"\nendobj\n2 0 obj\n<< /Length 2 >>\nstream\nzz\nendstream\n");
+            for length in ["5", "-1"] {
+                assert_eq!(
+                    stream_data_prefix(length, &body).unwrap(),
+                    b"BT ET",
+                    "{terminator}, /Length {length}"
+                );
+            }
+        }
+        // Without the whitespace after it, a near miss is not a terminator.
+        let body = b"BT ET\nendsteamX\nendstream\n";
+        assert_eq!(stream_data("-1", body).unwrap(), b"BT ET\nendsteamX");
+    }
+
+    /// The data of the first object in `1 0 obj << /Length {length} >>
+    /// stream\n{body}`, where `body` may hold further objects.
+    fn stream_data_prefix(length: &str, body: &[u8]) -> Result<Vec<u8>> {
+        let mut input = format!("1 0 obj\n<< /Length {length} >>\nstream\n").into_bytes();
+        input.extend_from_slice(body);
+        let mut t = Tokenizer::new(&input);
+        match parse_indirect_object(&mut t)?.1 {
+            PdfObject::Stream { data, .. } => Ok(data),
+            other => panic!("expected a stream, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_stream_without_endstream_is_an_invalid_object() {
+        let err = stream_data("-1", b"BT ET\n").unwrap_err();
+        assert!(matches!(err, JustPdfError::InvalidObject { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn a_stream_with_no_endstream_anywhere_keeps_an_in_range_length() {
+        assert_eq!(stream_data("5", b"BT ET\n").unwrap(), b"BT ET");
+    }
+
+    #[test]
+    fn the_endstream_scan_finds_one_ending_the_input() {
+        let input = b"1 0 obj\n<< >>\nstream\nBT ET\nendstream";
+        let mut t = Tokenizer::new(input);
+        let (_, obj) = parse_indirect_object(&mut t).unwrap();
+        assert!(matches!(obj, PdfObject::Stream { ref data, .. } if data == b"BT ET"));
     }
 
     #[test]
