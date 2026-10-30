@@ -62,18 +62,15 @@ fn search_page_exact(
 ) -> Vec<SearchResult> {
     let mut results = Vec::new();
 
-    // Build a flat string from chars with index mapping
-    let (flat_text, char_indices) = build_flat_text(&page_text.chars);
-
-    let search_text;
-    let search_pattern;
-
-    if options.case_insensitive {
-        search_text = flat_text.to_lowercase();
-        search_pattern = pattern.to_lowercase();
+    // The searched text, lowercased per character when case-insensitive,
+    // with its own byte → char index mapping.
+    let (search_text, char_indices) =
+        build_flat_text_with(&page_text.chars, options.case_insensitive);
+    let search_pattern = if options.case_insensitive {
+        // Per character, as the text is.
+        pattern.chars().flat_map(char::to_lowercase).collect()
     } else {
-        search_text = flat_text.clone();
-        search_pattern = pattern.to_string();
+        pattern.to_string()
     };
 
     let mut search_start = 0;
@@ -83,18 +80,31 @@ fn search_page_exact(
 
         // Map byte positions to char indices
         let char_start = byte_pos_to_char_index(&char_indices, abs_byte_pos);
-        let char_end = byte_pos_to_char_index(&char_indices, match_end_byte);
+        // Case-insensitive matches report whole glyphs, so an end inside a
+        // glyph of several characters takes in the rest of it.
+        let char_end = if options.case_insensitive {
+            byte_pos_to_char_index_ceil(&char_indices, match_end_byte)
+        } else {
+            byte_pos_to_char_index(&char_indices, match_end_byte)
+        };
 
         if char_start < page_text.chars.len()
             && char_end <= page_text.chars.len()
             && char_start < char_end
         {
-            let matched = &flat_text[abs_byte_pos..match_end_byte];
+            let matched = if options.case_insensitive {
+                page_text.chars[char_start..char_end]
+                    .iter()
+                    .map(|c| c.unicode.as_str())
+                    .collect()
+            } else {
+                search_text[abs_byte_pos..match_end_byte].to_string()
+            };
             let quad = compute_quad(&page_text.chars[char_start..char_end]);
 
             results.push(SearchResult {
                 page_index: page_text.page_index,
-                matched_text: matched.to_string(),
+                matched_text: matched,
                 quad,
                 char_start,
                 char_end,
@@ -105,7 +115,12 @@ fn search_page_exact(
             }
         }
 
-        search_start = abs_byte_pos + 1;
+        // The next search starts one character after this match's start.
+        search_start = abs_byte_pos
+            + search_text[abs_byte_pos..]
+                .chars()
+                .next()
+                .map_or(1, char::len_utf8);
         if search_start >= search_text.len() {
             break;
         }
@@ -136,6 +151,12 @@ fn search_page_regex(
 
 /// Build a flat text string from chars, tracking byte→char_index mapping.
 fn build_flat_text(chars: &[TextChar]) -> (String, Vec<(usize, usize)>) {
+    build_flat_text_with(chars, false)
+}
+
+/// `build_flat_text`, each char lowercased first when `lowercase` is set, so
+/// the mapping holds for the lowercased text.
+fn build_flat_text_with(chars: &[TextChar], lowercase: bool) -> (String, Vec<(usize, usize)>) {
     let mut text = String::new();
     // (byte_start, char_index) pairs
     let mut indices: Vec<(usize, usize)> = Vec::new();
@@ -143,7 +164,11 @@ fn build_flat_text(chars: &[TextChar]) -> (String, Vec<(usize, usize)>) {
     for (i, ch) in chars.iter().enumerate() {
         let byte_start = text.len();
         indices.push((byte_start, i));
-        text.push_str(&ch.unicode);
+        if lowercase {
+            text.push_str(&ch.unicode.to_lowercase());
+        } else {
+            text.push_str(&ch.unicode);
+        }
     }
 
     // Add sentinel for end
@@ -163,6 +188,16 @@ fn byte_pos_to_char_index(indices: &[(usize, usize)], byte_pos: usize) -> usize 
                 0
             }
         }
+    }
+}
+
+/// The index of the first char starting at or after `byte_pos`.
+fn byte_pos_to_char_index_ceil(indices: &[(usize, usize)], byte_pos: usize) -> usize {
+    match indices.binary_search_by_key(&byte_pos, |&(bp, _)| bp) {
+        Ok(i) => indices[i].1,
+        Err(i) => indices
+            .get(i)
+            .map_or_else(|| indices.last().map_or(0, |e| e.1), |e| e.1),
     }
 }
 
@@ -788,6 +823,83 @@ mod tests {
             lines: Vec::new(),
             blocks: Vec::new(),
         }
+    }
+
+    fn hits(text: &str, pattern: &str, case_insensitive: bool) -> Vec<(usize, usize, String)> {
+        let page = make_page_text(text, 0);
+        let options = SearchOptions {
+            case_insensitive,
+            ..Default::default()
+        };
+        search_page(&page, pattern, &options)
+            .into_iter()
+            .map(|r| (r.char_start, r.char_end, r.matched_text))
+            .collect()
+    }
+
+    #[test]
+    fn a_non_ascii_pattern_is_found_at_every_occurrence() {
+        assert_eq!(
+            hits("a\u{e9}b \u{e9}", "\u{e9}", false),
+            vec![(1, 2, "\u{e9}".into()), (4, 5, "\u{e9}".into())]
+        );
+        assert_eq!(
+            hits(
+                "\u{d55c}\u{ae00} \u{d55c}\u{ae00}",
+                "\u{d55c}\u{ae00}",
+                false
+            ),
+            vec![
+                (0, 2, "\u{d55c}\u{ae00}".into()),
+                (3, 5, "\u{d55c}\u{ae00}".into())
+            ]
+        );
+        assert_eq!(
+            hits("\u{1f600}x\u{1f600}", "\u{1f600}", false),
+            vec![(0, 1, "\u{1f600}".into()), (2, 3, "\u{1f600}".into())]
+        );
+        assert_eq!(hits("aaa", "aa", false).len(), 2);
+    }
+
+    #[test]
+    fn case_insensitive_matches_map_to_the_original_characters() {
+        assert_eq!(hits("\u{130}x", "x", true), vec![(1, 2, "x".into())]);
+        assert_eq!(
+            hits("Hello WORLD", "world", true),
+            vec![(6, 11, "WORLD".into())]
+        );
+        assert_eq!(
+            hits("\u{130}\u{130}ab", "ab", true),
+            vec![(2, 4, "ab".into())]
+        );
+        // A match ending inside a glyph of several characters covers it.
+        let mut page = make_page_text("ice", 0);
+        page.chars.insert(0, page.chars[0].clone());
+        page.chars[0].unicode = "o".into();
+        page.chars[1].unicode = "ffi".into();
+        page.chars.remove(2);
+        let ci = SearchOptions {
+            case_insensitive: true,
+            ..Default::default()
+        };
+        let r: Vec<_> = search_page(&page, "OFF", &ci)
+            .into_iter()
+            .map(|r| (r.char_start, r.char_end, r.matched_text))
+            .collect();
+        assert_eq!(r, vec![(0, 2, "offi".to_string())]);
+        // Text and pattern lowercase the same way: a final capital sigma.
+        assert_eq!(
+            hits(
+                "\u{39f}\u{394}\u{39f}\u{3a3}",
+                "\u{39f}\u{394}\u{39f}\u{3a3}",
+                true
+            )
+            .len(),
+            1
+        );
+        // No panic, whatever these match.
+        hits("Stra\u{df}e STRASSE", "\u{df}", true);
+        hits("\u{130}x\u{130}", "i\u{307}", true);
     }
 
     #[test]
