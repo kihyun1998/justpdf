@@ -183,6 +183,21 @@ struct ObjStm {
     offsets: Vec<Option<usize>>,
 }
 
+/// Refuse an `/Encrypt` dictionary whose `/Filter` names a security
+/// handler other than `Standard` (a missing `/Filter` reads as `Standard`).
+fn check_security_handler(encrypt_dict: &PdfDict) -> Result<()> {
+    let filter = encrypt_dict.get_name(b"Filter").unwrap_or(b"Standard");
+    if filter != b"Standard" {
+        return Err(JustPdfError::UnsupportedEncryption {
+            detail: format!(
+                "unsupported security handler: {}",
+                String::from_utf8_lossy(filter)
+            ),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 thread_local! {
     /// Number of times [`parse_obj_stream_offsets`] ran on this thread.
@@ -331,17 +346,8 @@ impl PdfDocument {
             }
         };
 
+        check_security_handler(encrypt_dict)?;
         let ed = crypto::EncryptionDict::from_dict(encrypt_dict)?;
-
-        // Verify we support this encryption
-        if ed.filter != b"Standard" {
-            return Err(JustPdfError::UnsupportedEncryption {
-                detail: format!(
-                    "unsupported security handler: {}",
-                    String::from_utf8_lossy(&ed.filter)
-                ),
-            });
-        }
 
         // Extract file ID from trailer
         let file_id = self.extract_file_id();
@@ -360,16 +366,8 @@ impl PdfDocument {
     /// Handle inline /Encrypt dict (not an indirect reference).
     fn detect_encryption_inline(&mut self) -> Result<()> {
         let encrypt_dict = self.xref.trailer.get_dict(b"Encrypt").unwrap().clone();
+        check_security_handler(&encrypt_dict)?;
         let ed = crypto::EncryptionDict::from_dict(&encrypt_dict)?;
-
-        if ed.filter != b"Standard" {
-            return Err(JustPdfError::UnsupportedEncryption {
-                detail: format!(
-                    "unsupported security handler: {}",
-                    String::from_utf8_lossy(&ed.filter)
-                ),
-            });
-        }
 
         let file_id = self.extract_file_id();
         let mut state = SecurityState::new(ed, file_id, None);
@@ -873,6 +871,80 @@ mod tests {
         pdf.extend_from_slice(format!("startxref\n{xref_offset}\n%%EOF\n").as_bytes());
 
         pdf
+    }
+
+    /// A one-page PDF whose trailer `/Encrypt` is `encrypt` (a dictionary
+    /// body): written inline in the trailer, or as object 4.
+    fn build_encrypted_pdf(encrypt: &str, inline: bool) -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let bodies = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>".to_string(),
+            if inline {
+                "null".to_string()
+            } else {
+                encrypt.to_string()
+            },
+        ];
+        let mut offsets = Vec::new();
+        for (i, body) in bodies.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", i + 1).as_bytes());
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Size 5 /Root 1 0 R /Encrypt {} /ID [<00112233445566778899aabbccddeeff> <00112233445566778899aabbccddeeff>] >>\nstartxref\n{xref}\n%%EOF\n",
+                if inline { encrypt } else { "4 0 R" }
+            )
+            .as_bytes(),
+        );
+        pdf
+    }
+
+    #[test]
+    fn opening_a_file_with_an_invalid_key_length_is_an_encryption_error() {
+        let zeros = "0".repeat(64);
+        for length in [0, -8, 256, 44] {
+            let encrypt = format!(
+                "<< /Filter /Standard /V 2 /R 3 /Length {length} /O <{zeros}> /U <{zeros}> /P -4 >>"
+            );
+            for inline in [false, true] {
+                let result = PdfDocument::from_bytes(build_encrypted_pdf(&encrypt, inline));
+                assert!(
+                    matches!(result, Err(JustPdfError::EncryptionError { .. })),
+                    "/Length {length}, inline {inline}: {:?}",
+                    result.err()
+                );
+            }
+        }
+        // Another security handler is unsupported, whatever its /Length.
+        let other =
+            format!("<< /Filter /Other /V 2 /R 3 /Length 0 /O <{zeros}> /U <{zeros}> /P -4 >>");
+        for inline in [false, true] {
+            let result = PdfDocument::from_bytes(build_encrypted_pdf(&other, inline));
+            assert!(
+                matches!(result, Err(JustPdfError::UnsupportedEncryption { .. })),
+                "inline {inline}: {:?}",
+                result.err()
+            );
+        }
+        // A /V that asks for a longer key than its /R's MD5-based derivation
+        // can give opens without a panic.
+        let v5_r3 = format!("<< /Filter /Standard /V 5 /R 3 /O <{zeros}> /U <{zeros}> /P -4 >>");
+        assert!(PdfDocument::from_bytes(build_encrypted_pdf(&v5_r3, false)).is_ok());
+        let valid = format!(
+            "<< /Filter /Standard /V 2 /R 3 /Length 128 /O <{zeros}> /U <{zeros}> /P -4 >>"
+        );
+        for inline in [false, true] {
+            let doc = PdfDocument::from_bytes(build_encrypted_pdf(&valid, inline)).unwrap();
+            assert!(doc.is_encrypted(), "inline {inline}");
+        }
     }
 
     /// Build a tiny PDF that uses an xref stream and an ObjStm. The ObjStm's
