@@ -5,6 +5,9 @@ use crate::function::PdfFunction;
 use crate::object::{IndirectRef, PdfDict, PdfObject};
 use crate::parser::PdfDocument;
 
+/// How many colour spaces `ColorSpace::resolve` follows one inside another.
+const MAX_COLOR_SPACE_DEPTH: usize = 256;
+
 pub use self::icc::IccProfile;
 
 /// Supported color space types.
@@ -205,8 +208,30 @@ impl ColorSpace {
     /// Parse a color space from a PDF name, array or reference, resolving
     /// references through `doc`: the colour space itself, an Indexed lookup
     /// stream, an ICCBased stream (its `/N` and `/Alternate`), and the
-    /// alternate space and tint transform of Separation and DeviceN.
+    /// alternate space and tint transform of Separation and DeviceN. A
+    /// colour space nested in one of its own ancestors, or deeper than
+    /// `MAX_COLOR_SPACE_DEPTH`, is `Unknown(b"recursive")` at that level.
     pub fn resolve(obj: &PdfObject, doc: &PdfDocument) -> Self {
+        Self::resolve_within(obj, doc, &mut Vec::new())
+    }
+
+    /// `resolve`, inside the colour spaces whose object numbers (0 for a
+    /// direct one) are `ancestors`, outermost first.
+    fn resolve_within(obj: &PdfObject, doc: &PdfDocument, ancestors: &mut Vec<u32>) -> Self {
+        let num = match obj {
+            PdfObject::Reference(r) => r.obj_num,
+            _ => 0,
+        };
+        if ancestors.len() >= MAX_COLOR_SPACE_DEPTH || (num != 0 && ancestors.contains(&num)) {
+            return Self::Unknown(b"recursive".to_vec());
+        }
+        ancestors.push(num);
+        let cs = Self::resolve_one(obj, doc, ancestors);
+        ancestors.pop();
+        cs
+    }
+
+    fn resolve_one(obj: &PdfObject, doc: &PdfDocument, ancestors: &mut Vec<u32>) -> Self {
         let obj = match obj {
             PdfObject::Reference(r) => match doc.resolve(r) {
                 Ok(o) => o,
@@ -227,7 +252,7 @@ impl ColorSpace {
             Some(b"Indexed" | b"I") => {
                 let base = arr
                     .get(1)
-                    .map(|b| Self::resolve(b, doc))
+                    .map(|b| Self::resolve_within(b, doc, ancestors))
                     .unwrap_or(Self::DeviceRGB);
                 let hival = arr.get(2).and_then(|o| o.as_i64()).unwrap_or(255).max(0) as u32;
                 let lookup = match resolved(3) {
@@ -244,14 +269,26 @@ impl ColorSpace {
                 }
             }
             Some(b"ICCBased") => {
+                // The ICC stream counts as the colour space for the ancestor
+                // chain, so a stream reached again inside itself is refused.
+                let stream_num = match arr.get(1) {
+                    Some(PdfObject::Reference(r)) => r.obj_num,
+                    _ => 0,
+                };
+                if stream_num != 0 && ancestors.contains(&stream_num) {
+                    return Self::Unknown(b"recursive".to_vec());
+                }
                 let dict = match resolved(1) {
                     Some(PdfObject::Stream { dict, .. }) | Some(PdfObject::Dict(dict)) => dict,
                     _ => PdfDict::new(),
                 };
                 let num_components = dict.get_i64(b"N").unwrap_or(3).clamp(1, 4) as u32;
-                let alternate = dict
-                    .get(b"Alternate")
-                    .map(|a| Box::new(Self::resolve(a, doc)));
+                let alternate = dict.get(b"Alternate").map(|a| {
+                    ancestors.push(stream_num);
+                    let alternate = Self::resolve_within(a, doc, ancestors);
+                    ancestors.pop();
+                    Box::new(alternate)
+                });
                 Self::ICCBased {
                     num_components,
                     profile: None,
@@ -266,7 +303,7 @@ impl ColorSpace {
                     .to_vec(),
                 alternate: Box::new(
                     arr.get(2)
-                        .map(|a| Self::resolve(a, doc))
+                        .map(|a| Self::resolve_within(a, doc, ancestors))
                         .unwrap_or(Self::DeviceGray),
                 ),
                 tint: arr
@@ -284,7 +321,7 @@ impl ColorSpace {
                 },
                 alternate: Box::new(
                     arr.get(2)
-                        .map(|a| Self::resolve(a, doc))
+                        .map(|a| Self::resolve_within(a, doc, ancestors))
                         .unwrap_or(Self::DeviceCMYK),
                 ),
                 tint: arr
@@ -740,6 +777,126 @@ fn parse_f64_array_9(arr: &[PdfObject]) -> [f64; 9] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A document holding `objects` (number, body) beside a catalog and an
+    /// empty page tree.
+    fn doc_with(objects: &[(u32, String)]) -> PdfDocument {
+        let mut all = vec![
+            (1, "<< /Type /Catalog /Pages 2 0 R >>".to_string()),
+            (2, "<< /Type /Pages /Kids [] /Count 0 >>".to_string()),
+        ];
+        all.extend(objects.iter().cloned());
+        let size = all.iter().map(|(n, _)| *n).max().unwrap() + 1;
+        let mut pdf = b"%PDF-1.7\n".to_vec();
+        let mut offsets = vec![None; size as usize];
+        for (n, body) in &all {
+            offsets[*n as usize] = Some(pdf.len());
+            pdf.extend_from_slice(format!("{n} 0 obj\n{body}\nendobj\n").as_bytes());
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {size}\n").as_bytes());
+        for offset in &offsets {
+            match offset {
+                Some(o) => pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes()),
+                None => pdf.extend_from_slice(b"0000000000 65535 f \n"),
+            }
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n")
+                .as_bytes(),
+        );
+        PdfDocument::from_bytes(pdf).unwrap()
+    }
+
+    fn reference(obj_num: u32) -> PdfObject {
+        PdfObject::Reference(crate::object::IndirectRef {
+            obj_num,
+            gen_num: 0,
+        })
+    }
+
+    /// How many Indexed levels down the first non-Indexed base is, and it.
+    fn indexed_depth(cs: &ColorSpace) -> (usize, &ColorSpace) {
+        let mut depth = 0;
+        let mut cs = cs;
+        while let ColorSpace::Indexed { base, .. } = cs {
+            depth += 1;
+            cs = base;
+        }
+        (depth, cs)
+    }
+
+    #[test]
+    fn a_self_referencing_colour_space_resolves_with_an_unknown_base() {
+        let doc = doc_with(&[(6, "[/Indexed 6 0 R 0 <00>]".into())]);
+        let cs = ColorSpace::resolve(&reference(6), &doc);
+        let (depth, inner) = indexed_depth(&cs);
+        assert_eq!(depth, 1);
+        assert!(matches!(inner, ColorSpace::Unknown(_)), "{inner:?}");
+    }
+
+    #[test]
+    fn a_cycle_through_another_colour_space_stops_at_the_repeat() {
+        let doc = doc_with(&[
+            (6, "[/Indexed 7 0 R 0 <00>]".into()),
+            (7, "[/Separation /Spot 6 0 R null]".into()),
+        ]);
+        let cs = ColorSpace::resolve(&reference(6), &doc);
+        let ColorSpace::Indexed { base, .. } = &cs else {
+            panic!("{cs:?}")
+        };
+        let ColorSpace::Separation { alternate, .. } = base.as_ref() else {
+            panic!("{base:?}")
+        };
+        assert!(
+            matches!(alternate.as_ref(), ColorSpace::Unknown(_)),
+            "{alternate:?}"
+        );
+    }
+
+    #[test]
+    fn a_cycle_through_an_icc_stream_stops_at_the_stream() {
+        let doc = doc_with(&[(
+            5,
+            "<< /N 3 /Alternate [/ICCBased 5 0 R] /Length 0 >>\nstream\n\nendstream".into(),
+        )]);
+        let direct = PdfObject::Array(vec![PdfObject::Name(b"ICCBased".to_vec()), reference(5)]);
+        let cs = ColorSpace::resolve(&direct, &doc);
+        let ColorSpace::ICCBased { alternate, .. } = &cs else {
+            panic!("{cs:?}")
+        };
+        assert!(
+            matches!(alternate.as_deref(), Some(ColorSpace::Unknown(_))),
+            "{alternate:?}"
+        );
+    }
+
+    #[test]
+    fn colour_spaces_sharing_a_base_each_resolve_it() {
+        let doc = doc_with(&[
+            (8, "[/Separation /Spot /DeviceCMYK null]".into()),
+            (6, "[/Indexed 8 0 R 0 <00>]".into()),
+            (7, "[/Indexed 8 0 R 0 <00>]".into()),
+        ]);
+        for n in [6, 7] {
+            let cs = ColorSpace::resolve(&reference(n), &doc);
+            let (_, inner) = indexed_depth(&cs);
+            assert!(matches!(inner, ColorSpace::Separation { .. }), "{inner:?}");
+        }
+    }
+
+    #[test]
+    fn a_colour_space_chain_deeper_than_256_ends_in_unknown() {
+        let objects: Vec<(u32, String)> = (10..310)
+            .map(|n| (n, format!("[/Indexed {} 0 R 0 <00>]", n + 1)))
+            .chain(std::iter::once((310, "/DeviceRGB".to_string())))
+            .collect();
+        let doc = doc_with(&objects);
+        let cs = ColorSpace::resolve(&reference(10), &doc);
+        let (depth, inner) = indexed_depth(&cs);
+        assert_eq!(depth, 256);
+        assert!(matches!(inner, ColorSpace::Unknown(_)), "{inner:?}");
+    }
 
     #[test]
     fn test_device_color_spaces() {
