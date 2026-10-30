@@ -90,10 +90,13 @@ impl PageBuilder {
         self.content.extend_from_slice(b"ET\n");
     }
 
-    /// Move to position (x, y): `x y Td`.
+    /// Start the next text at the absolute user-space point (x, y):
+    /// `1 0 0 1 x y Tm`. Sets the text matrix and the text line matrix, so
+    /// earlier moves in the same text object do not add to it, and any
+    /// earlier text-matrix change in that object is reset.
     pub fn move_to(&mut self, x: f64, y: f64) {
         use std::io::Write;
-        writeln!(self.content, "{} {} Td", Number(x), Number(y)).unwrap();
+        writeln!(self.content, "1 0 0 1 {} {} Tm", Number(x), Number(y)).unwrap();
     }
 
     /// Show a text string in the font `set_font` selected: WinAnsi codes for a
@@ -416,7 +419,17 @@ mod tests {
             operands(b"Tf"),
             vec![Operand::Name(b"F1".to_vec()), Real(1e20)]
         );
-        assert_eq!(operands(b"Td"), vec![Integer(0), Real(-max)]);
+        assert_eq!(
+            operands(b"Tm"),
+            vec![
+                Integer(1),
+                Integer(0),
+                Integer(0),
+                Integer(1),
+                Integer(0),
+                Real(-max)
+            ]
+        );
         assert_eq!(operands(b"m"), vec![Integer(0), Integer(612)]);
         assert_eq!(operands(b"l"), vec![Real(0.5), Real(2147483648.0)]);
         let rects: Vec<_> = ops
@@ -477,6 +490,32 @@ mod tests {
     }
 
     #[test]
+    fn move_to_places_each_run_at_its_own_point_in_one_text_block() {
+        let mut doc = crate::writer::DocumentBuilder::new();
+        let font = doc.add_standard_font("Helvetica");
+        let mut page = PageBuilder::new(612.0, 792.0);
+        page.begin_text();
+        page.set_font(&font, 12.0);
+        page.move_to(72.0, 700.0);
+        page.show_text("a");
+        page.move_to(72.0, 650.0);
+        page.show_text("b");
+        page.end_text();
+        doc.add_page(page);
+
+        let parsed = crate::PdfDocument::from_bytes(doc.build().unwrap()).unwrap();
+        let pages = crate::page::collect_pages(&parsed).unwrap();
+        let text = crate::text::extract_page_text(&parsed, &pages[0]).unwrap();
+        let at = |c: &str| {
+            let ch = text.chars.iter().find(|t| t.unicode == c).unwrap();
+            (ch.x, ch.y)
+        };
+        assert_eq!(text.chars.len(), 2);
+        assert_eq!(at("a"), (72.0, 700.0));
+        assert_eq!(at("b"), (72.0, 650.0));
+    }
+
+    #[test]
     #[allow(deprecated)]
     fn test_page_builder_content() {
         let mut page = PageBuilder::new(612.0, 792.0);
@@ -489,7 +528,7 @@ mod tests {
         let content = String::from_utf8(page.content.clone()).unwrap();
         assert!(content.contains("BT\n"));
         assert!(content.contains("/F1 12 Tf\n"));
-        assert!(content.contains("72 720 Td\n"));
+        assert!(content.contains("1 0 0 1 72 720 Tm\n"));
         assert!(content.contains("(Hello) Tj\n"));
         assert!(content.contains("ET\n"));
     }

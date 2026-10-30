@@ -12,7 +12,7 @@ Status: read from the source only.
 - Compression 1 (none) and 2 (PalmDOC, `decompress_palmdoc`) are read; any other — including HUFF/CDIC (17480) — is an error. An invalid back reference is skipped, not an error.
 - Title: the MOBI header's full name when it is in range, else the PDB name.
 - Text: `String::from_utf8_lossy` whatever the header's text encoding, so a CP1252 book has its non-ASCII replaced (inferred); trailing-entry bytes that the MOBI extra-data flags describe are not stripped (inferred). `strip_html_tags` drops tags, turns `p`, `br`, `div`, `h1`–`h3` into newlines and decodes six entities.
-- Layout: `paginate` wraps with `wrap_fixed_pitch` at `usable_width / (10 × 0.6)` characters and splits into pages of `usable_height / 12` lines (US Letter, 72 pt margins). Each line goes through `move_to`, so only the first line of each page is visible ([Format document](format-document.md), inferred for MOBI from the shared loop).
+- Layout: `paginate` wraps with `wrap_fixed_pitch` at `usable_width / (10 × 0.6)` characters and splits into pages of `usable_height / 12` lines (US Letter, 72 pt margins). Each line goes through `move_to` ([Format document](format-document.md)).
 - Preview: `build_page_pdf` makes a one-page PDF with the same loop and renders it.
 - Input bound: the record list is checked against the file length. The output buffer is `Vec::with_capacity(text_length)`, a `u32` from the header, so a 100-byte file can ask for a 4 GiB reservation (inferred); decompressed output is otherwise bounded by the records' size.
 
@@ -31,7 +31,6 @@ Status: read from the source only.
 - [Document builder](document-builder.md) — assumes `show_text` writes WinAnsi for Courier and that `move_to` is absolute.
 
 ## Known holes / open
-- Only the first line of each page is visible (Design model).
 - Text encoding and trailing entries are not handled; HUFF/CDIC books are refused (Design model).
 - `text_length` drives an unchecked reservation (inferred).
 - Caller-supplied fonts and width-based layout. Tracked: #174

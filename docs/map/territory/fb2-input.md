@@ -11,7 +11,7 @@ Status: read from the source only.
 - Encoding: the bytes must be UTF-8 (`invalid UTF-8 in FB2`); the XML declaration's `encoding` is not read, so a windows-1251 book is refused (inferred).
 - Metadata: `description/title-info/book-title` and the last `author`'s first and last name.
 - Sections: each `section` directly under each `body` is one `FormatDocument` page. Inside it, `title`, `p`, `epigraph`, `poem` and `cite` become paragraphs; a nested `section` is flattened into its parent (its title becomes a paragraph). Images (`binary`, `image`) are ignored.
-- `to_pdf`: one PDF page per section. The title is cut to one line; paragraphs wrap with `wrap_fixed_pitch` at `usable_width / (10 × 0.6)` characters. Lines below the bottom margin are dropped, so a section longer than a page loses the rest. Each line goes through `move_to`, so only the first line is visible — measured 2026-10-30 at 88b2a08: a section with a title and two paragraphs shows only `Chapter` in pdftotext ([Format document](format-document.md)).
+- `to_pdf`: one PDF page per section. The title is cut to one line; paragraphs wrap with `wrap_fixed_pitch` at `usable_width / (10 × 0.6)` characters. Lines below the bottom margin are dropped, so a section longer than a page loses the rest. Each line goes through `move_to` ([Format document](format-document.md)).
 - Preview: `build_section_pdf` repeats the `to_pdf` loop for one section and renders it.
 - Input bound: none beyond roxmltree's own limits; the file is read whole (inferred).
 
@@ -30,6 +30,6 @@ Status: read from the source only.
 - [Document builder](document-builder.md) — assumes `show_text` writes WinAnsi for Courier and that `move_to` is absolute.
 
 ## Known holes / open
-- Only the first line of each page is visible; text past one page per section is dropped (Design model).
+- Text past one page per section is dropped (Design model).
 - Non-UTF-8 books are refused (inferred).
 - Caller-supplied fonts and width-based layout. Tracked: #174

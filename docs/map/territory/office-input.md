@@ -13,7 +13,7 @@ Status: read from the source; the preview rule comes from #35.
 - DOCX: one `FormatDocument` page for the whole document — every `w:p` in `word/document.xml`, with `w:t`, `w:tab` and `w:br` inside `w:r` and inside `hyperlink`; other run content (fields, text boxes, tables' structure) is not read specially (inferred).
 - XLSX: one page per `xl/worksheets/sheet*.xml`, sorted as strings, so `sheet10` comes before `sheet2` (inferred); cells tab-separated by column from `c@r`, shared strings resolved.
 - PPTX: one page per `ppt/slides/slide*.xml`, sorted by slide number; `a:t` text joined per `a:p`.
-- `to_pdf`: one PDF page per `FormatDocument` page, US Letter, 72 pt margins, 12 pt lines; it stops at the bottom margin ("Would need pagination here for real use"), so a DOCX longer than one page loses the rest. No wrapping. Each line goes through `move_to`, so only the first line is visible ([Format document](format-document.md), inferred for Office from the shared loop).
+- `to_pdf`: one PDF page per `FormatDocument` page, US Letter, 72 pt margins, 12 pt lines; it stops at the bottom margin ("Would need pagination here for real use"), so a DOCX longer than one page loses the rest. No wrapping. Each line goes through `move_to` ([Format document](format-document.md)).
 - Preview: as EPUB — `PlainTextDocument` page 0 under `cfg(feature = "plaintext")`, else `FormatError::preview_needs_plaintext()` after the index check. `office` compiles alone (measured 2026-10-30), with the `wrap_fixed_pitch` dead-code warning.
 - Input bound: none. Parts are read whole from the ZIP; `column_index_from_ref` multiplies by 26 per letter in `u32`, so a cell reference of seven or more letters overflows (a panic in a debug build), and the row is then allocated as `max_col + 1` strings, up to about 4 billion (inferred).
 
@@ -34,7 +34,7 @@ Status: read from the source; the preview rule comes from #35.
 - [Document builder](document-builder.md) — assumes `show_text` writes WinAnsi for Courier and that `move_to` is absolute.
 
 ## Known holes / open
-- No page breaks: text past one page is dropped; only the first line is visible (Design model).
+- No page breaks: text past one page is dropped (Design model).
 - XLSX sheets are ordered as strings, not by number (inferred).
 - A long cell reference overflows `u32` and drives an unbounded allocation (inferred).
 - Wrapping and caller-supplied fonts. Tracked: #174

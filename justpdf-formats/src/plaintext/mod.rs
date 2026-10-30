@@ -242,6 +242,30 @@ mod tests {
     }
 
     #[test]
+    fn every_line_is_drawn_on_the_page_top_to_bottom() {
+        let pdf = PlainTextDocument::from_string("first line\nsecond line\nthird line")
+            .to_pdf()
+            .unwrap();
+        let doc = justpdf_core::PdfDocument::from_bytes(pdf).unwrap();
+        let pages = justpdf_core::page::collect_pages(&doc).unwrap();
+        let text = justpdf_core::text::extract_page_text(&doc, &pages[0]).unwrap();
+        let lines: Vec<_> = text
+            .lines
+            .iter()
+            .map(|l| (l.text.as_str(), l.x, l.y))
+            .collect();
+        // 792 pt page, 72 pt margin, 10 pt Courier, 12 pt line height.
+        assert_eq!(
+            lines,
+            vec![
+                ("first line", 72.0, 710.0),
+                ("second line", 72.0, 698.0),
+                ("third line", 72.0, 686.0),
+            ]
+        );
+    }
+
+    #[test]
     fn test_empty_text() {
         let doc = PlainTextDocument::from_string("");
         assert_eq!(doc.page_count(), 1);
