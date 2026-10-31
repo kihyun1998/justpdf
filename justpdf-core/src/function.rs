@@ -8,11 +8,17 @@
 //!
 //! Reference: PDF 2.0 spec, section 7.10
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::object::{PdfDict, PdfObject};
 use crate::parser::PdfDocument;
 
 /// How deep `PdfFunction::resolve` follows stitching sub-functions.
 const MAX_DEPTH: usize = 8;
+
+/// The most sub-functions a stitching function may list.
+const MAX_STITCHING: usize = 256;
 
 /// A resolved PDF function that can be evaluated.
 #[derive(Debug, Clone)]
@@ -20,7 +26,7 @@ pub enum PdfFunction {
     /// An array of functions taking the same inputs, their outputs
     /// concatenated (a shading's `/Function` as one 1-out function per colour
     /// component, ISO 32000-2 §8.7.4.5).
-    Array(Vec<PdfFunction>),
+    Array(Vec<Arc<PdfFunction>>),
     /// Type 0: Sampled, interpolated linearly between samples.
     Sampled {
         domain: Vec<(f64, f64)>,
@@ -43,7 +49,7 @@ pub enum PdfFunction {
     Stitching {
         domain: Vec<(f64, f64)>,
         range: Vec<(f64, f64)>,
-        functions: Vec<PdfFunction>,
+        functions: Vec<Arc<PdfFunction>>,
         bounds: Vec<f64>,
         encode: Vec<f64>,
     },
@@ -116,46 +122,37 @@ impl PdfFunction {
     /// references are not followed and stream data is used undecoded. A
     /// document's function goes through [`PdfFunction::resolve`].
     pub fn parse(obj: &PdfObject) -> Option<Self> {
-        Self::from_object(obj, &PdfFunction::parse)
+        Self::from_object(obj, &mut |sub| match sub {
+            PdfObject::Array(_) => None,
+            _ => PdfFunction::parse(sub).map(Arc::new),
+        })
     }
 
     /// Read a PDF function through `doc`: references are resolved, stream
     /// data is decoded (filters and decryption), and stitching sub-functions
-    /// are read the same way, to a fixed depth.
+    /// are read the same way, to a fixed depth. A function that names one of
+    /// its own ancestors is no function; one referenced from several places
+    /// is read once and shared.
     pub fn resolve(obj: &PdfObject, doc: &PdfDocument) -> Option<Self> {
-        Self::resolve_at(obj, doc, 0)
+        let mut resolver = Resolver {
+            doc,
+            ancestors: Vec::new(),
+            shared: HashMap::new(),
+        };
+        let (function, _) = resolver.resolve_at(obj, 0, true)?;
+        drop(resolver);
+        Some(Arc::unwrap_or_clone(function))
     }
 
-    fn resolve_at(obj: &PdfObject, doc: &PdfDocument, depth: usize) -> Option<Self> {
-        if depth > MAX_DEPTH {
-            return None;
-        }
-        let obj = match obj {
-            PdfObject::Reference(r) => doc.resolve(r).ok()?,
-            other => other.clone(),
-        };
-        if let PdfObject::Array(items) = &obj {
-            let functions: Vec<Self> = items
-                .iter()
-                .map(|item| Self::resolve_at(item, doc, depth + 1))
-                .collect::<Option<_>>()?;
-            return (!functions.is_empty()).then_some(PdfFunction::Array(functions));
-        }
-        let obj = match obj {
-            PdfObject::Stream { dict, data } => {
-                let data = doc.decode_stream(&dict, &data).ok()?;
-                PdfObject::Stream { dict, data }
-            }
-            other => other,
-        };
-        Self::from_object(&obj, &|sub| Self::resolve_at(sub, doc, depth + 1))
-    }
-
-    /// The function `obj` describes, reading stitching sub-functions with
-    /// `sub` and stream data as it is.
-    fn from_object(obj: &PdfObject, sub: &dyn Fn(&PdfObject) -> Option<Self>) -> Option<Self> {
+    /// The function `obj` describes, reading sub-functions with `sub` and
+    /// stream data as it is. An array is an array of functions; a
+    /// sub-function that `sub` refuses makes the whole function absent.
+    fn from_object(
+        obj: &PdfObject,
+        sub: &mut dyn FnMut(&PdfObject) -> Option<Arc<Self>>,
+    ) -> Option<Self> {
         if let PdfObject::Array(items) = obj {
-            let functions: Vec<Self> = items.iter().map(sub).collect::<Option<_>>()?;
+            let functions: Vec<Arc<Self>> = items.iter().map(&mut *sub).collect::<Option<_>>()?;
             return (!functions.is_empty()).then_some(PdfFunction::Array(functions));
         }
         let dict = match obj {
@@ -241,7 +238,7 @@ impl PdfFunction {
         dict: &PdfDict,
         domain: Vec<(f64, f64)>,
         range: Vec<(f64, f64)>,
-        sub: &dyn Fn(&PdfObject) -> Option<Self>,
+        sub: &mut dyn FnMut(&PdfObject) -> Option<Arc<Self>>,
     ) -> Option<Self> {
         let bounds = dict
             .get_array(b"Bounds")
@@ -252,10 +249,11 @@ impl PdfFunction {
             .map(|a| a.iter().filter_map(|o| o.as_f64()).collect())
             .unwrap_or_default();
 
-        let functions: Vec<PdfFunction> = dict
-            .get_array(b"Functions")
-            .map(|arr| arr.iter().filter_map(sub).collect())
-            .unwrap_or_default();
+        let listed = dict.get_array(b"Functions")?;
+        if listed.is_empty() || listed.len() > MAX_STITCHING {
+            return None;
+        }
+        let functions: Vec<Arc<Self>> = listed.iter().map(sub).collect::<Option<_>>()?;
 
         Some(PdfFunction::Stitching {
             domain,
@@ -392,6 +390,71 @@ impl PdfFunction {
                     .collect()
             }
         }
+    }
+}
+
+/// The state of one `PdfFunction::resolve` call.
+struct Resolver<'a> {
+    doc: &'a PdfDocument,
+    /// Object numbers of the references being resolved, outermost first.
+    ancestors: Vec<u32>,
+    /// Each reference resolved so far, with the height of its sub-function
+    /// tree (0 for a function without sub-functions).
+    shared: HashMap<(u32, u16), (Arc<PdfFunction>, usize)>,
+}
+
+impl Resolver<'_> {
+    /// The function `obj` names at `depth`, with its height; an array is a
+    /// function only at the top.
+    fn resolve_at(
+        &mut self,
+        obj: &PdfObject,
+        depth: usize,
+        top: bool,
+    ) -> Option<(Arc<PdfFunction>, usize)> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
+        let PdfObject::Reference(r) = obj else {
+            return self.resolve_direct(obj.clone(), depth, top);
+        };
+        let key = (r.obj_num, r.gen_num);
+        if let Some((function, height)) = self.shared.get(&key) {
+            return (depth + height <= MAX_DEPTH).then(|| (function.clone(), *height));
+        }
+        if self.ancestors.contains(&r.obj_num) {
+            return None;
+        }
+        let resolved = self.doc.resolve(r).ok()?;
+        self.ancestors.push(r.obj_num);
+        let out = self.resolve_direct(resolved, depth, top);
+        self.ancestors.pop();
+        let (function, height) = out?;
+        self.shared.insert(key, (function.clone(), height));
+        Some((function, height))
+    }
+
+    fn resolve_direct(
+        &mut self,
+        obj: PdfObject,
+        depth: usize,
+        top: bool,
+    ) -> Option<(Arc<PdfFunction>, usize)> {
+        let obj = match obj {
+            PdfObject::Array(_) if !top => return None,
+            PdfObject::Stream { dict, data } => {
+                let data = self.doc.decode_stream(&dict, &data).ok()?;
+                PdfObject::Stream { dict, data }
+            }
+            other => other,
+        };
+        let mut height = 0;
+        let function = PdfFunction::from_object(&obj, &mut |sub| {
+            let (f, h) = self.resolve_at(sub, depth + 1, false)?;
+            height = height.max(h + 1);
+            Some(f)
+        })?;
+        Some((Arc::new(function), height))
     }
 }
 
