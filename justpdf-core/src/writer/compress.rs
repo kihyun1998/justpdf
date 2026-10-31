@@ -654,7 +654,7 @@ fn to_rgb_pixels(decoded: &image::DecodedImage, target_w: u32, target_h: u32) ->
     let (src_w, src_h) = (decoded.width, decoded.height);
     let rgb_data = decoded.to_rgb8();
 
-    let expected_len = (src_w * src_h * 3) as usize;
+    let expected_len = src_w as usize * src_h as usize * 3;
     if rgb_data.len() < expected_len {
         return Vec::new();
     }

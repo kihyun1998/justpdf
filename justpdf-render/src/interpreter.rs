@@ -2692,13 +2692,11 @@ fn appearance_mapping(dict: &PdfDict, rect: &justpdf_core::page::Rect) -> Option
     justpdf_core::annot::placement::appearance_matrix(dict, rect).map(matrix_of)
 }
 
-/// The pixmap size of a `w` × `h` image that is drawn: `None` when either
-/// side is 0 or its RGBA buffer would exceed `i32::MAX` bytes.
+/// The pixmap size of a `w` × `h` image that is drawn: `None` when
+/// `image::rgba_len` refuses it (a side of 0, or an RGBA buffer over
+/// `i32::MAX` bytes).
 fn drawable_image_size(w: u32, h: u32) -> Option<tiny_skia::IntSize> {
-    let len = (w as usize).checked_mul(h as usize)?.checked_mul(4)?;
-    if len > i32::MAX as usize {
-        return None;
-    }
+    image::rgba_len(w, h)?;
     tiny_skia::IntSize::from_wh(w, h)
 }
 
