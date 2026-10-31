@@ -107,3 +107,64 @@ fn the_svg_renderer_emits_a_flate_image() {
     let svg = render_page_to_svg(&doc, 0).unwrap();
     assert!(svg.contains("<image"), "{svg}");
 }
+
+/// A page drawing `/Im0` (object 5), then filling the whole page red.
+fn image_then_red_fill(image: Obj<'_>, rest: Vec<Obj<'_>>) -> justpdf_core::PdfDocument {
+    let mut objs = vec![image];
+    objs.extend(rest);
+    page(
+        "<< /XObject << /Im0 5 0 R >> >>",
+        "q 100 0 0 100 0 0 cm /Im0 Do Q 1 0 0 rg 0 0 100 100 re f",
+        objs,
+    )
+}
+
+#[test]
+fn an_image_of_no_or_overflowing_size_is_skipped_and_the_page_goes_on() {
+    for dict in [
+        "/Type /XObject /Subtype /Image /Width 0 /Height 1 /ImageMask true /Filter /ASCIIHexDecode",
+        "/Type /XObject /Subtype /Image /Width -1 /Height 1 /ImageMask true /Filter /ASCIIHexDecode",
+        "/Type /XObject /Subtype /Image /Width 0 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode",
+        "/Type /XObject /Subtype /Image /Width 70000 /Height 70000 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode",
+        "/Type /XObject /Subtype /Image /Width 70000 /Height 70000 /ImageMask true /Filter /ASCIIHexDecode",
+    ] {
+        let doc = image_then_red_fill(Stream(dict, "00>"), vec![]);
+        assert_eq!(rgb(&doc, 50, 50), RED, "{dict}");
+    }
+}
+
+#[test]
+fn a_mask_of_no_or_overflowing_size_does_not_stop_the_page() {
+    let red = hex_flate(&solid(255, 0, 0, 64));
+    for (key, mask_dict) in [
+        (
+            "SMask",
+            "/Type /XObject /Subtype /Image /Width 0 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode",
+        ),
+        (
+            "SMask",
+            "/Type /XObject /Subtype /Image /Width 70000 /Height 70000 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /ASCIIHexDecode",
+        ),
+        (
+            "Mask",
+            "/Type /XObject /Subtype /Image /Width 0 /Height 8 /ImageMask true /Filter /ASCIIHexDecode",
+        ),
+        (
+            "Mask",
+            "/Type /XObject /Subtype /Image /Width 70000 /Height 70000 /ImageMask true /Filter /ASCIIHexDecode",
+        ),
+    ] {
+        let dict = format!("{RGB_8X8} /Filter [/ASCIIHexDecode /FlateDecode] /{key} 6 0 R");
+        let doc = image_then_red_fill(Stream(&dict, &red), vec![Stream(mask_dict, "00>")]);
+        assert_eq!(rgb(&doc, 50, 50), RED, "{key}: {mask_dict}");
+    }
+}
+
+#[test]
+fn a_jpeg_takes_its_size_from_the_codec_not_a_bad_dictionary_size() {
+    let data = hex_flate(&red_jpeg());
+    let dict = "/Type /XObject /Subtype /Image /Width 0 /Height 0 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode /DCTDecode]";
+    let doc = image_page(Stream(dict, &data), vec![]);
+    let [r, g, b] = rgb(&doc, 50, 50);
+    assert!(r > 240 && g < 20 && b < 20, "{:?}", [r, g, b]);
+}

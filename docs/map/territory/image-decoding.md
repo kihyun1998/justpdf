@@ -17,7 +17,7 @@ Rules read from the code (*inferred* unless marked).
 - `ImageMask` sets `is_mask` (1 bit, default DeviceGray); `SMask` only sets `has_smask`. Neither is applied here: the renderer decodes a soft mask or mask as another image ([Render images](render-images.md)).
 - JBIG2: `/JBIG2Globals` is read from the `/DecodeParms` entry at the JBIG2 filter's index, resolved through `doc` and decoded; an entry that does not resolve to a stream is an error, never a decode without it (`jbig2_globals`). Not verified against a real symbol-dictionary pair (no such fixture; the tests use an empty globals stream). The output is spread to 8-bit gray (1 → `0x00`).
 - JPX: each component sample is clamped to 0..255 (`val.clamp(0, 255) as u8`), so the bit depth is ignored and samples above 8 bits saturate. `SMaskInData` is not handled.
-- **Input bound:** the output buffers are sized from the file. `to_rgb8` allocates `width × height × 3` from `/Width` and `/Height` before reading samples; JPX and JBIG2 size theirs from the codec's reported dimensions (`(w * h) as usize`, `u32` arithmetic). Nothing caps them (#161 proposes an image limit from these values).
+- **Input bound:** the output buffers are sized from the file. `to_rgb8` allocates `width × height × 3` from `/Width` and `/Height` before reading samples; JPX and JBIG2 size theirs from the codec's reported dimensions (`(w * h) as usize`, `u32` arithmetic). Nothing caps them here; the raster renderer bounds its own use since #415 (`drawable_image_size`, [Render images](render-images.md)), the compressor, CBZ, OCR and SVG renderer do not (#161 proposes an image limit from these values).
 
 ## Code
 - `justpdf-core/src/image/mod.rs` — `ImageInfo`, `image_info`, `DecodedImage`, `DecodedImage::to_rgb8`, `DecodedImage::is_gray`, `DecodedImage::sample_space`, `DecodedImage::decode_ranges`, `read_sample`, `ImageFormat`, `decode_image`, `jbig2_globals`, `extract_jpeg_bytes`
@@ -42,4 +42,4 @@ Rules read from the code (*inferred* unless marked).
 - JPX images never decode: `justjp2` rejects every standard JPEG 2000 file tried (*measured* 2026-10-06 on files made by Pillow/OpenJPEG; MuPDF decodes them). Which decoder to use is the maintainer's dependency decision. Tracked: #230
 - JPX, CCITT and masks have no tests in `tests/image_decode.rs` or `tests/image_rgb.rs`.
 - Callers of `decode_stream` get the codec's input bytes for DCT/JPX/JBIG2, not pixels; only `decode_image` produces pixels.
-- Output buffers are sized from `/Width` × `/Height` and codec dimensions with no cap (above). Tracked: #161
+- Output buffers are sized from `/Width` × `/Height` and codec dimensions with no cap (above). Tracked: #440 (a core-side cap for every caller), #161
