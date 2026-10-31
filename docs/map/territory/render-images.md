@@ -20,11 +20,11 @@ Read from the source and the issues cited; no decision record states it.
 - **An image XObject with an `/SMask` or `/Mask` entry is drawn with the clip only**, without the graphics state's soft mask; other images and stencil masks draw through `draw_mask` (ISO 32000-1 §11.6.4.3, #129) — [Render transparency](render-transparency.md). The test is `dict.get(..).is_some()`, so a colour-key `/Mask` array, which is not applied, still drops the soft mask (inferred).
 - **Inline images are not drawn**: the body of `render_inline_image` is a `TODO` and `Ok(())` (re-verified; measured 2026-10-06, #42: an inline 2×2 RGB image and an inline `/IM true` mask drew 0 pixels; MuPDF drew both).
 - A broken image is skipped: `do_xobject` drops `render_image`'s error (re-verified).
-- What bounds the input: nothing. `/Width` and `/Height` are read as `i64 as u32` by core `image_info` with no cap, `render_image_mask` allocates `w × h × 4` bytes, and `w * h` is a `u32` product that overflows for large images (inferred).
+- What bounds the input: `drawable_image_size`. An image is drawn only when both sides of its decoded size are at least 1 and its RGBA buffer (`w × h × 4`, checked in `usize`) is at most `i32::MAX` bytes (about 5.4 × 10^8 pixels); otherwise it draws nothing and the page goes on (inferred, `render_image`). A stencil mask is checked the same way on its dictionary size, which is the only size it has (inferred, `render_image_mask`); the SMask and `/Mask` loops multiply in `usize`, and the `/Mask` loop maps image to mask coordinates in `u64`, because the mask's own size is not bounded (a `/Width -1` mask wraps to about 4.29 × 10^9) and those products overflow a 32-bit `usize` such as wasm32's (inferred; not run on wasm32, where `cargo check -p justpdf-render --target wasm32-unknown-unknown` fails in `getrandom` for a reason unrelated to this). `render_image` checks the decoded size, not the dictionary's: a DCT or JBIG2 image takes its size from the codec, so a bad dictionary size does not stop a good JPEG (`a_jpeg_takes_its_size_from_the_codec_not_a_bad_dictionary_size`; a dictionary pre-check made it fail, measured 2026-10-31). `/Width` and `/Height` are still read as `i64 as u32` by core `image_info`, so a negative side wraps to about 4.29 × 10^9 and fails the byte cap (inferred). tiny-skia 0.11.4 caps only a pixmap's width (`i32::MAX / 4`) and overflow (inferred, read in the local crate), so without the cap a 70000 × 70000 mask would allocate and fill 19.6 GB: with the cap removed, the 70000 × 70000 test ran past 10 minutes and was killed (measured 2026-10-31). Decided on #415 (maintainer, 2026-10-31: skip the image, keep the page; the byte cap shown at the confirm stop). Pinned by `an_image_of_no_or_overflowing_size_is_skipped_and_the_page_goes_on` (measured 2026-10-31: it panicked before).
 
 ## Code
-- `justpdf-render/src/interpreter.rs` — `do_xobject`, `resolve_xobject`, `XObjectData`, `render_image`, `render_image_mask`, `apply_image_smask`, `apply_image_explicit_mask`, `render_inline_image`, `image_to_rgba`
-- `justpdf-render/tests/render_images.rs` — Flate images, SMasks and masks decoded once
+- `justpdf-render/src/interpreter.rs` — `do_xobject`, `resolve_xobject`, `XObjectData`, `render_image`, `render_image_mask`, `apply_image_smask`, `apply_image_explicit_mask`, `render_inline_image`, `image_to_rgba`, `drawable_image_size`
+- `justpdf-render/tests/render_images.rs` — Flate images, SMasks and masks decoded once; images and masks of no or overflowing size skipped
 - `justpdf-render/tests/render_image_colour.rs` — image colour conversion through the core
 
 ## Reference behaviour
@@ -42,8 +42,6 @@ Read from the source and the issues cited; no decision record states it.
 - [Document builder](document-builder.md) — PDFs whose page raster went in through `embed_rgb` (CBZ/SVG input, since #88) are Flate image XObjects; drawn since #229.
 
 ## Known holes / open
-- **An image mask with `/Width 0` panics the renderer**: `render_image_mask` calls `IntSize::from_wh(w, h).unwrap()` on a zero size (measured 2026-10-30 with the CLI at `88b2a08`: `thread 'main' panicked at justpdf-render/src/interpreter.rs`, exit 101). `render_image` has the same `unwrap` on the decoded size (inferred). Tracked: #415.
 - Inline images are not rendered, 1-bit masks ignore row padding, and stencil masks misread CCITT and JBIG2 output (above). Tracked: #42 (the double decode it also lists was fixed in #229)
 - JPEG 2000 (`JPXDecode`) images never decode, so they are skipped. Tracked: #230
 - A colour-key `/Mask`, `/Matte`, `/Interpolate` and an SMask of other dimensions are not handled (above, inferred).
-- Image size is not bounded (above).

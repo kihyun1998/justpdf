@@ -1440,9 +1440,12 @@ impl<'a> RenderInterpreter<'a> {
         let decoded = image::decode_image(data, dict, self.doc).map_err(RenderError::Core)?;
 
         // Convert decoded image to RGBA
-        let mut rgba_data = image_to_rgba(&decoded);
         let w = decoded.width;
         let h = decoded.height;
+        let Some(size) = drawable_image_size(w, h) else {
+            return Ok(());
+        };
+        let mut rgba_data = image_to_rgba(&decoded);
 
         // Apply SMask if present on the image dict
         if let Some(PdfObject::Reference(smask_ref)) = dict.get(b"SMask") {
@@ -1470,10 +1473,7 @@ impl<'a> RenderInterpreter<'a> {
             }
         }
 
-        let img_pixmap = match tiny_skia::Pixmap::from_vec(
-            rgba_data,
-            tiny_skia::IntSize::from_wh(w, h).unwrap(),
-        ) {
+        let img_pixmap = match tiny_skia::Pixmap::from_vec(rgba_data, size) {
             Some(p) => p,
             None => return Ok(()),
         };
@@ -1519,7 +1519,10 @@ impl<'a> RenderInterpreter<'a> {
     ) -> Result<()> {
         let w = info.width;
         let h = info.height;
-        let pixel_count = (w * h) as usize;
+        let Some(size) = drawable_image_size(w, h) else {
+            return Ok(());
+        };
+        let pixel_count = w as usize * h as usize;
 
         // Decode the mask data if it has filters
         let decoded_data = match dict.get(b"Filter") {
@@ -1565,11 +1568,10 @@ impl<'a> RenderInterpreter<'a> {
             // else: transparent (0,0,0,0)
         }
 
-        let img_pixmap =
-            match tiny_skia::Pixmap::from_vec(rgba, tiny_skia::IntSize::from_wh(w, h).unwrap()) {
-                Some(p) => p,
-                None => return Ok(()),
-            };
+        let img_pixmap = match tiny_skia::Pixmap::from_vec(rgba, size) {
+            Some(p) => p,
+            None => return Ok(()),
+        };
 
         let image_transform = Matrix {
             a: 1.0 / w as f64,
@@ -1611,7 +1613,7 @@ impl<'a> RenderInterpreter<'a> {
             Err(_) => return,
         };
 
-        let pixel_count = (w * h) as usize;
+        let pixel_count = w as usize * h as usize;
         let mask_pixels = smask_decoded.data;
 
         // SMask is typically a grayscale image — use its values as alpha
@@ -1658,7 +1660,7 @@ impl<'a> RenderInterpreter<'a> {
             Err(_) => return,
         };
 
-        let pixel_count = (w * h) as usize;
+        let pixel_count = w as usize * h as usize;
 
         // Scale mask to image dimensions if different
         let mask_w = mask_decoded.width as usize;
@@ -1673,10 +1675,20 @@ impl<'a> RenderInterpreter<'a> {
                     break;
                 }
 
-                // Map to mask coordinates
-                let mx = if mask_w > 0 { x * mask_w / img_w } else { 0 };
-                let my = if mask_h > 0 { y * mask_h / img_h } else { 0 };
-                let mi = my * mask_w + mx;
+                // Map to mask coordinates, computed in u64.
+                let mx = if mask_w > 0 {
+                    x as u64 * mask_w as u64 / img_w as u64
+                } else {
+                    0
+                };
+                let my = if mask_h > 0 {
+                    y as u64 * mask_h as u64 / img_h as u64
+                } else {
+                    0
+                };
+                let Ok(mi) = usize::try_from(my * mask_w as u64 + mx) else {
+                    continue;
+                };
 
                 let mask_bit = if mask_decoded.bpc == 1 {
                     // 1-bit packed
@@ -2678,6 +2690,16 @@ fn form_matrix(dict: &PdfDict) -> Matrix {
 /// onto `rect`; `None` when its box is degenerate.
 fn appearance_mapping(dict: &PdfDict, rect: &justpdf_core::page::Rect) -> Option<Matrix> {
     justpdf_core::annot::placement::appearance_matrix(dict, rect).map(matrix_of)
+}
+
+/// The pixmap size of a `w` × `h` image that is drawn: `None` when either
+/// side is 0 or its RGBA buffer would exceed `i32::MAX` bytes.
+fn drawable_image_size(w: u32, h: u32) -> Option<tiny_skia::IntSize> {
+    let len = (w as usize).checked_mul(h as usize)?.checked_mul(4)?;
+    if len > i32::MAX as usize {
+        return None;
+    }
+    tiny_skia::IntSize::from_wh(w, h)
 }
 
 fn image_to_rgba(img: &image::DecodedImage) -> Vec<u8> {
