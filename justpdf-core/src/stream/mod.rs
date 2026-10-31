@@ -3,6 +3,7 @@ mod ascii_hex;
 pub mod ccitt;
 pub mod dct;
 mod flate;
+mod lzw;
 mod predictor;
 mod run_length;
 
@@ -148,7 +149,7 @@ fn decode_single(data: &[u8], filter: &[u8], params: Option<&PdfDict>) -> Result
         b"ASCIIHexDecode" | b"AHx" => ascii_hex::decode(data),
         b"ASCII85Decode" | b"A85" => ascii85::decode(data),
         b"LZWDecode" | b"LZW" => {
-            let decoded = lzw_decode(data)?;
+            let decoded = lzw::decode(data, params)?;
             if let Some(p) = params {
                 predictor::apply(decoded, p)
             } else {
@@ -210,88 +211,6 @@ pub(crate) fn get_decode_params(dict: &PdfDict) -> Vec<Option<PdfDict>> {
             .collect(),
         _ => Vec::new(),
     }
-}
-
-/// Basic LZW decoder (PDF variant: early change = 1).
-fn lzw_decode(data: &[u8]) -> Result<Vec<u8>> {
-    // Minimal LZW implementation for PDF
-    let mut result = Vec::new();
-    let mut table: Vec<Vec<u8>> = (0..256).map(|i| vec![i as u8]).collect();
-    // 256 = clear table, 257 = EOD
-    table.push(Vec::new()); // 256
-    table.push(Vec::new()); // 257
-
-    let mut bit_pos: usize = 0;
-    let mut code_size: u32 = 9;
-    let mut prev_entry: Option<Vec<u8>> = None;
-
-    loop {
-        let code = read_bits(data, bit_pos, code_size);
-        bit_pos += code_size as usize;
-
-        if code == 256 {
-            // Clear table
-            table.truncate(258);
-            code_size = 9;
-            prev_entry = None;
-            continue;
-        }
-
-        if code == 257 {
-            // End of data
-            break;
-        }
-
-        let entry = if (code as usize) < table.len() {
-            table[code as usize].clone()
-        } else if code as usize == table.len() {
-            // Special case: code not yet in table
-            let mut e = prev_entry.clone().unwrap_or_default();
-            if let Some(first) = e.first().copied() {
-                e.push(first);
-            }
-            e
-        } else {
-            return Err(JustPdfError::StreamDecode {
-                filter: "LZWDecode".into(),
-                detail: format!("invalid code {code}, table size {}", table.len()),
-            });
-        };
-
-        result.extend_from_slice(&entry);
-
-        if let Some(prev) = &prev_entry {
-            let mut new_entry = prev.clone();
-            if let Some(&first) = entry.first() {
-                new_entry.push(first);
-            }
-            table.push(new_entry);
-        }
-
-        prev_entry = Some(entry);
-
-        // Increase code size (early change: PDF default)
-        if table.len() >= (1 << code_size) as usize && code_size < 12 {
-            code_size += 1;
-        }
-    }
-
-    Ok(result)
-}
-
-/// Read `count` bits from a big-endian bit stream.
-fn read_bits(data: &[u8], bit_offset: usize, count: u32) -> u32 {
-    let mut val: u32 = 0;
-    for i in 0..count {
-        let byte_idx = (bit_offset + i as usize) / 8;
-        let bit_idx = 7 - ((bit_offset + i as usize) % 8);
-        if byte_idx < data.len() {
-            val = (val << 1) | ((data[byte_idx] >> bit_idx) & 1) as u32;
-        } else {
-            val <<= 1;
-        }
-    }
-    val
 }
 
 #[cfg(test)]
