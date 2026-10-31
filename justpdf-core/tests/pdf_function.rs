@@ -1,6 +1,7 @@
 //! `PdfFunction::resolve`: functions read through the document (references
 //! resolved, streams decoded), sampled (Type 0) functions, and evaluation that
-//! never panics (#47).
+//! never panics (#47), and the bound on resolving shared and cyclic
+//! sub-functions (#437).
 
 use std::io::Write;
 
@@ -202,10 +203,7 @@ fn a_stitching_function_naming_itself_stops() {
            /Functions [4 0 R] >>"
             .to_vec(),
     ]);
-    // Resolved or not, it must return rather than recurse without end.
-    if let Some(f) = f {
-        let _ = f.evaluate(&[0.5]);
-    }
+    assert!(f.is_none());
 }
 
 #[test]
@@ -225,4 +223,147 @@ fn an_array_of_functions_concatenates_their_outputs() {
     ])
     .unwrap();
     assert!(close(&f.evaluate(&[0.25]), &[0.25, 0.75]));
+}
+
+/// Object 4 of a document holding `objs`, resolved on another thread: fails
+/// after 10 s, or at once if resolving panics, instead of hanging the run.
+fn function_within_10s(objs: Vec<Vec<u8>>) -> Option<PdfFunction> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(function(&objs));
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(10))
+        .expect("resolve panicked or did not finish within 10 s")
+}
+
+/// A stitching function over [0 1] whose `/Functions` are `subs`.
+fn stitching(subs: &[String]) -> Vec<u8> {
+    let k = subs.len();
+    let bounds: Vec<String> = (1..k).map(|i| format!("{}", i as f64 / k as f64)).collect();
+    format!(
+        "<< /FunctionType 3 /Domain [0 1] /Bounds [{}] /Encode [{}] /Functions [{}] >>",
+        bounds.join(" "),
+        "0 1 ".repeat(k),
+        subs.join(" ")
+    )
+    .into_bytes()
+}
+
+fn obj_ref(n: usize) -> String {
+    format!("{n} 0 R")
+}
+
+const CONSTANT_QUARTER: &[u8] = b"<< /FunctionType 2 /Domain [0 1] /C0 [0.25] /C1 [0.25] /N 1 >>";
+
+#[test]
+fn a_stitching_function_listing_itself_many_times_fails_promptly() {
+    let f = function_within_10s(vec![stitching(&vec![obj_ref(4); 20])]);
+    assert!(f.is_none());
+}
+
+#[test]
+fn a_two_function_cycle_fails() {
+    let f = function_within_10s(vec![stitching(&[obj_ref(5)]), stitching(&[obj_ref(4)])]);
+    assert!(f.is_none());
+}
+
+#[test]
+fn a_cycle_through_a_function_array_fails() {
+    // 4 is an array listing the stitching function 5, which lists 4 again.
+    let f = function_within_10s(vec![
+        format!("[{}]", obj_ref(5)).into_bytes(),
+        stitching(&[obj_ref(4)]),
+    ]);
+    assert!(f.is_none());
+}
+
+#[test]
+fn a_tree_sharing_its_sub_functions_resolves_each_once() {
+    // Objects 4..=11 are stitching functions each listing the next 20 times;
+    // object 12, at the depth cap, is the constant 0.25. Unshared, that is
+    // 20^8 leaves.
+    let mut objs: Vec<Vec<u8>> = (5..=12)
+        .map(|next| stitching(&vec![obj_ref(next); 20]))
+        .collect();
+    objs.push(CONSTANT_QUARTER.to_vec());
+    let f = function_within_10s(objs).expect("the shared tree resolves");
+    for x in [0.0, 0.33, 0.9, 1.0] {
+        assert!(close(&f.evaluate(&[x]), &[0.25]), "at {x}");
+    }
+}
+
+#[test]
+fn a_shared_function_past_the_depth_cap_fails_as_it_would_unshared() {
+    // 4 lists 5 and 11. 5..=9 chain to the leaf 10 (depth 6 from 4). 11..=13
+    // chain to 5, which puts the leaf at depth 9, past the cap of 8.
+    let mut objs = vec![stitching(&[obj_ref(5), obj_ref(11)])];
+    objs.extend((6..=10).map(|next| stitching(&[obj_ref(next)])));
+    objs.push(CONSTANT_QUARTER.to_vec());
+    objs.extend((12..=14).map(|next| stitching(&[obj_ref(if next == 14 { 5 } else { next })])));
+    assert_eq!(objs.len(), 10);
+    assert!(function_within_10s(objs).is_none());
+}
+
+#[test]
+fn a_stitching_function_with_an_invalid_sub_function_fails() {
+    let f = function(&[
+        stitching(&[obj_ref(5), obj_ref(6)]),
+        CONSTANT_QUARTER.to_vec(),
+        b"<< /FunctionType 9 >>".to_vec(),
+    ]);
+    assert!(f.is_none());
+}
+
+#[test]
+fn a_stitching_function_takes_at_most_256_sub_functions() {
+    let ok = function(&[stitching(&vec![obj_ref(5); 256]), CONSTANT_QUARTER.to_vec()]);
+    assert!(close(
+        &ok.expect("256 sub-functions").evaluate(&[0.5]),
+        &[0.25]
+    ));
+    let over = function(&[stitching(&vec![obj_ref(5); 257]), CONSTANT_QUARTER.to_vec()]);
+    assert!(over.is_none());
+}
+
+#[test]
+fn a_stitching_function_without_sub_functions_fails() {
+    assert!(function(&[stitching(&[])]).is_none());
+    let missing = b"<< /FunctionType 3 /Domain [0 1] /Bounds [] /Encode [0 1] >>".to_vec();
+    assert!(function(&[missing]).is_none());
+}
+
+#[test]
+fn an_array_inside_a_function_array_fails() {
+    let nested = format!("[{} [{}]]", obj_ref(5), obj_ref(5)).into_bytes();
+    assert!(function(&[nested, CONSTANT_QUARTER.to_vec()]).is_none());
+    let as_sub = format!("[{}]", obj_ref(6)).into_bytes();
+    assert!(
+        function(&[
+            as_sub,
+            CONSTANT_QUARTER.to_vec(),
+            format!("[{}]", obj_ref(5)).into_bytes()
+        ])
+        .is_none()
+    );
+    let in_stitching = stitching(&[format!("[{}]", obj_ref(5))]);
+    assert!(function(&[in_stitching, CONSTANT_QUARTER.to_vec()]).is_none());
+}
+
+#[test]
+fn parse_applies_the_stitching_and_array_rules() {
+    let leaf = String::from_utf8(CONSTANT_QUARTER.to_vec()).unwrap();
+    let parse = |bytes: Vec<u8>| {
+        let doc = doc(&[bytes]);
+        let obj = doc
+            .resolve(&IndirectRef {
+                obj_num: 4,
+                gen_num: 0,
+            })
+            .unwrap();
+        PdfFunction::parse(&obj)
+    };
+    assert!(parse(stitching(std::slice::from_ref(&leaf))).is_some());
+    assert!(parse(stitching(&[leaf.clone(), "<< /FunctionType 9 >>".into()])).is_none());
+    assert!(parse(stitching(&[])).is_none());
+    assert!(parse(format!("[{leaf} [{leaf}]]").into_bytes()).is_none());
 }
