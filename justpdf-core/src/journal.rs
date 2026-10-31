@@ -190,15 +190,15 @@ impl Journal {
         }
         // Undo stack
         let undo_count = cursor.read_u32()? as usize;
-        let mut undo_stack = Vec::with_capacity(undo_count);
+        let mut undo_stack = Vec::new();
         for _ in 0..undo_count {
-            undo_stack.push(deserialize_operation(&mut cursor)?);
+            undo_stack.push(deserialize_operation(&mut cursor, 0)?);
         }
         // Redo stack
         let redo_count = cursor.read_u32()? as usize;
-        let mut redo_stack = Vec::with_capacity(redo_count);
+        let mut redo_stack = Vec::new();
         for _ in 0..redo_count {
-            redo_stack.push(deserialize_operation(&mut cursor)?);
+            redo_stack.push(deserialize_operation(&mut cursor, 0)?);
         }
         Some(Self {
             undo_stack,
@@ -252,6 +252,10 @@ impl<'a> BatchBuilder<'a> {
 // ---------------------------------------------------------------------------
 // Binary serialization helpers
 // ---------------------------------------------------------------------------
+
+/// The most batches, arrays, dictionaries and streams `from_bytes` reads
+/// nested in one another.
+const MAX_DEPTH: usize = 256;
 
 /// Tag bytes for [`Operation`] variants.
 const TAG_ADD: u8 = 1;
@@ -376,11 +380,9 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_bytes(&mut self, n: usize) -> Option<&'a [u8]> {
-        if self.pos + n > self.data.len() {
-            return None;
-        }
-        let slice = &self.data[self.pos..self.pos + n];
-        self.pos += n;
+        let end = self.pos.checked_add(n)?;
+        let slice = self.data.get(self.pos..end)?;
+        self.pos = end;
         Some(slice)
     }
 
@@ -414,7 +416,8 @@ impl<'a> Cursor<'a> {
     }
 }
 
-fn deserialize_operation(cursor: &mut Cursor<'_>) -> Option<Operation> {
+/// Reads one operation; `depth` containers enclose it.
+fn deserialize_operation(cursor: &mut Cursor<'_>, depth: usize) -> Option<Operation> {
     let tag = cursor.read_u8()?;
     match tag {
         TAG_ADD => {
@@ -423,22 +426,25 @@ fn deserialize_operation(cursor: &mut Cursor<'_>) -> Option<Operation> {
         }
         TAG_MODIFY => {
             let obj_num = cursor.read_u32()?;
-            let old_value = deserialize_pdf_object(cursor)?;
+            let old_value = deserialize_pdf_object(cursor, depth)?;
             Some(Operation::ModifyObject { obj_num, old_value })
         }
         TAG_DELETE => {
             let obj_num = cursor.read_u32()?;
-            let old_value = deserialize_pdf_object(cursor)?;
+            let old_value = deserialize_pdf_object(cursor, depth)?;
             Some(Operation::DeleteObject { obj_num, old_value })
         }
         TAG_BATCH => {
+            if depth >= MAX_DEPTH {
+                return None;
+            }
             let desc_len = cursor.read_u32()? as usize;
             let desc_bytes = cursor.read_bytes(desc_len)?;
             let description = std::str::from_utf8(desc_bytes).ok()?.to_string();
             let count = cursor.read_u32()? as usize;
-            let mut ops = Vec::with_capacity(count);
+            let mut ops = Vec::new();
             for _ in 0..count {
-                ops.push(deserialize_operation(cursor)?);
+                ops.push(deserialize_operation(cursor, depth + 1)?);
             }
             Some(Operation::Batch { ops, description })
         }
@@ -446,8 +452,12 @@ fn deserialize_operation(cursor: &mut Cursor<'_>) -> Option<Operation> {
     }
 }
 
-fn deserialize_pdf_object(cursor: &mut Cursor<'_>) -> Option<PdfObject> {
+/// Reads one object; `depth` containers enclose it.
+fn deserialize_pdf_object(cursor: &mut Cursor<'_>, depth: usize) -> Option<PdfObject> {
     let tag = cursor.read_u8()?;
+    if matches!(tag, OBJ_ARRAY | OBJ_DICT | OBJ_STREAM) && depth >= MAX_DEPTH {
+        return None;
+    }
     match tag {
         OBJ_NULL => Some(PdfObject::Null),
         OBJ_BOOL => {
@@ -474,18 +484,18 @@ fn deserialize_pdf_object(cursor: &mut Cursor<'_>) -> Option<PdfObject> {
         }
         OBJ_ARRAY => {
             let count = cursor.read_u32()? as usize;
-            let mut items = Vec::with_capacity(count);
+            let mut items = Vec::new();
             for _ in 0..count {
-                items.push(deserialize_pdf_object(cursor)?);
+                items.push(deserialize_pdf_object(cursor, depth + 1)?);
             }
             Some(PdfObject::Array(items))
         }
         OBJ_DICT => {
-            let dict = deserialize_pdf_dict(cursor)?;
+            let dict = deserialize_pdf_dict(cursor, depth + 1)?;
             Some(PdfObject::Dict(dict))
         }
         OBJ_STREAM => {
-            let dict = deserialize_pdf_dict(cursor)?;
+            let dict = deserialize_pdf_dict(cursor, depth + 1)?;
             let data_len = cursor.read_u32()? as usize;
             let data = cursor.read_bytes(data_len)?.to_vec();
             Some(PdfObject::Stream { dict, data })
@@ -502,13 +512,14 @@ fn deserialize_pdf_object(cursor: &mut Cursor<'_>) -> Option<PdfObject> {
     }
 }
 
-fn deserialize_pdf_dict(cursor: &mut Cursor<'_>) -> Option<PdfDict> {
+/// Reads a dictionary whose values `depth` containers enclose.
+fn deserialize_pdf_dict(cursor: &mut Cursor<'_>, depth: usize) -> Option<PdfDict> {
     let count = cursor.read_u32()? as usize;
     let mut dict = PdfDict::new();
     for _ in 0..count {
         let key_len = cursor.read_u32()? as usize;
         let key = cursor.read_bytes(key_len)?.to_vec();
-        let value = deserialize_pdf_object(cursor)?;
+        let value = deserialize_pdf_object(cursor, depth)?;
         dict.insert(key, value);
     }
     Some(dict)
@@ -860,5 +871,101 @@ mod tests {
     fn from_bytes_truncated() {
         assert!(Journal::from_bytes(b"JRN").is_none());
         assert!(Journal::from_bytes(b"").is_none());
+    }
+
+    /// A journal of one `ModifyObject` whose value is `depth` arrays, each
+    /// holding the next, around `null`.
+    fn nested_array_journal(depth: usize) -> Vec<u8> {
+        let mut b = b"JRNL".to_vec();
+        b.extend(1u32.to_le_bytes());
+        b.extend(1u32.to_le_bytes());
+        b.push(TAG_MODIFY);
+        b.extend(7u32.to_le_bytes());
+        for _ in 0..depth {
+            b.push(OBJ_ARRAY);
+            b.extend(1u32.to_le_bytes());
+        }
+        b.push(OBJ_NULL);
+        b.extend(0u32.to_le_bytes());
+        b
+    }
+
+    /// A journal of `depth` batches, each holding the next, around an
+    /// `AddObject`.
+    fn nested_batch_journal(depth: usize) -> Vec<u8> {
+        let mut b = b"JRNL".to_vec();
+        b.extend(1u32.to_le_bytes());
+        b.extend(1u32.to_le_bytes());
+        for _ in 0..depth {
+            b.push(TAG_BATCH);
+            b.extend(0u32.to_le_bytes());
+            b.extend(1u32.to_le_bytes());
+        }
+        b.push(TAG_ADD);
+        b.extend(1u32.to_le_bytes());
+        b.extend(0u32.to_le_bytes());
+        b
+    }
+
+    /// A journal of one `ModifyObject` whose value is `depth` dictionaries,
+    /// each holding the next under `/k`, around `null`.
+    fn nested_dict_journal(depth: usize) -> Vec<u8> {
+        let mut b = b"JRNL".to_vec();
+        b.extend(1u32.to_le_bytes());
+        b.extend(1u32.to_le_bytes());
+        b.push(TAG_MODIFY);
+        b.extend(7u32.to_le_bytes());
+        for _ in 0..depth {
+            b.push(OBJ_DICT);
+            b.extend(1u32.to_le_bytes());
+            b.extend(1u32.to_le_bytes());
+            b.push(b'k');
+        }
+        b.push(OBJ_NULL);
+        b.extend(0u32.to_le_bytes());
+        b
+    }
+
+    #[test]
+    fn deep_nesting_is_refused_instead_of_overflowing_the_stack() {
+        assert!(Journal::from_bytes(&nested_array_journal(100_000)).is_none());
+        assert!(Journal::from_bytes(&nested_dict_journal(100_000)).is_none());
+        assert!(Journal::from_bytes(&nested_batch_journal(100_000)).is_none());
+        assert!(Journal::from_bytes(&nested_dict_journal(256)).is_some());
+        assert!(Journal::from_bytes(&nested_dict_journal(257)).is_none());
+    }
+
+    #[test]
+    fn nesting_reads_to_256_levels() {
+        assert!(Journal::from_bytes(&nested_array_journal(256)).is_some());
+        assert!(Journal::from_bytes(&nested_array_journal(257)).is_none());
+        assert!(Journal::from_bytes(&nested_batch_journal(256)).is_some());
+        assert!(Journal::from_bytes(&nested_batch_journal(257)).is_none());
+    }
+
+    #[test]
+    fn batches_and_objects_share_one_depth() {
+        // 200 batches around a ModifyObject whose value is 56 or 57 arrays.
+        let journal = |arrays: usize| {
+            let mut b = b"JRNL".to_vec();
+            b.extend(1u32.to_le_bytes());
+            b.extend(1u32.to_le_bytes());
+            for _ in 0..200 {
+                b.push(TAG_BATCH);
+                b.extend(0u32.to_le_bytes());
+                b.extend(1u32.to_le_bytes());
+            }
+            b.push(TAG_MODIFY);
+            b.extend(7u32.to_le_bytes());
+            for _ in 0..arrays {
+                b.push(OBJ_ARRAY);
+                b.extend(1u32.to_le_bytes());
+            }
+            b.push(OBJ_NULL);
+            b.extend(0u32.to_le_bytes());
+            b
+        };
+        assert!(Journal::from_bytes(&journal(56)).is_some());
+        assert!(Journal::from_bytes(&journal(57)).is_none());
     }
 }
