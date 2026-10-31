@@ -276,8 +276,35 @@ pub enum ImageFormat {
     CcittFax,
 }
 
+/// The byte length of a `width` × `height` image as RGBA: `None` when
+/// either side is 0 or the length would exceed `i32::MAX`. `decode_image`
+/// refuses an image this returns `None` for.
+pub fn rgba_len(width: u32, height: u32) -> Option<usize> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let len = (width as usize)
+        .checked_mul(height as usize)?
+        .checked_mul(4)?;
+    (len <= i32::MAX as usize).then_some(len)
+}
+
+/// `StreamDecode` for an image `rgba_len` refuses.
+fn check_size(width: u32, height: u32) -> Result<()> {
+    match rgba_len(width, height) {
+        Some(_) => Ok(()),
+        None => Err(JustPdfError::StreamDecode {
+            filter: "image".into(),
+            detail: format!("image size {width} x {height} is empty or too large"),
+        }),
+    }
+}
+
 /// Decode an image XObject's raw stream data: every filter of `/Filter`
-/// in order, the image codec last; `doc` resolves `/JBIG2Globals`.
+/// in order, the image codec last; `doc` resolves `/JBIG2Globals`. An image
+/// whose size `rgba_len` refuses is `StreamDecode`: the dictionary's size,
+/// checked before decoding, or for DCT the JPEG header's and for JPX and
+/// JBIG2 the codec's.
 pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Result<DecodedImage> {
     let info = image_info(dict).ok_or_else(|| JustPdfError::StreamDecode {
         filter: "image".into(),
@@ -301,6 +328,8 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
     let decoded: Result<DecodedImage> = match filter {
         Some(b"DCTDecode") | Some(b"DCT") => {
             let codec_input = stream::decode_stream_cow(raw_data, dict)?;
+            let (w, h) = dct::jpeg_dimensions(&codec_input)?;
+            check_size(w, h)?;
             let decoded = dct::decode(&codec_input)?;
             Ok(DecodedImage {
                 width: decoded.width,
@@ -329,7 +358,8 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
             }
             let w = jp2_image.width;
             let h = jp2_image.height;
-            let pixel_count = (w * h) as usize;
+            check_size(w, h)?;
+            let pixel_count = w as usize * h as usize;
             // Interleave components into a flat pixel buffer, clamping i32→u8
             let mut data = Vec::with_capacity(pixel_count * num_comp as usize);
             for i in 0..pixel_count {
@@ -371,7 +401,8 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
             // JBIG2 convention: 1=black→0x00, 0=white→0xFF
             let w = page.width;
             let h = page.height;
-            let pixel_count = (w * h) as usize;
+            check_size(w, h)?;
+            let pixel_count = w as usize * h as usize;
             let mut data = Vec::with_capacity(pixel_count);
             for y in 0..h {
                 for x in 0..w {
@@ -400,6 +431,7 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
             // CCITT data is decoded by the stream decoder into 1-byte-per-pixel data
             // (black 0x00 / white 0xFF, reversed when /BlackIs1 is true). We pass it
             // through as 8bpc grayscale.
+            check_size(info.width, info.height)?;
             let decoded = stream::decode_stream(raw_data, dict)?;
             Ok(DecodedImage {
                 width: info.width,
@@ -413,6 +445,7 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
             })
         }
         _ => {
+            check_size(info.width, info.height)?;
             let decoded = stream::decode_stream(raw_data, dict)?;
             Ok(DecodedImage {
                 width: info.width,

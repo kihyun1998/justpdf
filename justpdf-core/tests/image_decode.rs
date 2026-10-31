@@ -255,3 +255,79 @@ fn the_jpeg_bytes_of_a_flate_wrapped_jpeg_are_the_jpeg() {
     let bare = image_dict(8, 8, b"DeviceRGB", name(b"DCTDecode"));
     assert_eq!(extract_jpeg_bytes(&jpeg, &bare).unwrap(), jpeg);
 }
+
+/// `decode_image` of `data` under `dict` on another thread: fails after 10 s,
+/// or at once if decoding panics, instead of hanging the run.
+fn decode_within_10s(
+    data: &[u8],
+    dict: PdfDict,
+) -> justpdf_core::Result<justpdf_core::image::DecodedImage> {
+    let data = data.to_vec();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(decode_image(&data, &dict, &doc_with(None)));
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(10))
+        .expect("decode_image panicked or did not finish within 10 s")
+}
+
+#[test]
+fn an_image_of_no_or_overflowing_size_is_refused() {
+    for (w, h) in [
+        (40_000, 40_000),
+        (70_000, 70_000),
+        (0, 10),
+        (10, 0),
+        (-1, 10),
+    ] {
+        let dict = image_dict(w, h, b"DeviceRGB", name(b"ASCIIHexDecode"));
+        assert!(decode_within_10s(b"00>", dict).is_err(), "{w} x {h}");
+    }
+    // CCITT, its stream kept small by /DecodeParms.
+    let mut dict = image_dict(70_000, 70_000, b"DeviceGray", name(b"CCITTFaxDecode"));
+    let mut parms = PdfDict::new();
+    parms.insert(b"Columns".to_vec(), PdfObject::Integer(8));
+    parms.insert(b"Rows".to_vec(), PdfObject::Integer(1));
+    dict.insert(b"DecodeParms".to_vec(), PdfObject::Dict(parms));
+    assert!(
+        decode_within_10s(&[0x00], dict).is_err(),
+        "CCITT 70000 x 70000"
+    );
+}
+
+#[test]
+fn a_jpeg_takes_its_size_from_the_codec_not_a_bad_dictionary_size() {
+    let dict = image_dict(0, 0, b"DeviceRGB", name(b"DCTDecode"));
+    let decoded = decode_within_10s(&red_jpeg(), dict).unwrap();
+    assert_eq!((decoded.width, decoded.height), (8, 8));
+}
+
+#[test]
+fn rgba_len_is_the_rgba_byte_length_up_to_i32_max() {
+    use justpdf_core::image::rgba_len;
+    assert_eq!(rgba_len(8, 8), Some(256));
+    // i32::MAX / 4 = 536_870_911 pixels.
+    assert_eq!(rgba_len(536_870_911, 1), Some(2_147_483_644));
+    assert_eq!(rgba_len(536_870_912, 1), None);
+    assert_eq!(rgba_len(23_170, 23_170), Some(23_170 * 23_170 * 4));
+    assert_eq!(rgba_len(23_171, 23_171), None);
+    assert_eq!(rgba_len(0, 5), None);
+    assert_eq!(rgba_len(5, 0), None);
+    assert_eq!(rgba_len(u32::MAX, u32::MAX), None);
+}
+
+#[test]
+fn a_jpeg_whose_header_is_too_large_is_refused_before_decoding() {
+    // The 8×8 red JPEG with its SOF0 header claiming 30000 × 30000.
+    let mut jpeg = red_jpeg();
+    let sof = jpeg.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
+    jpeg[sof + 5..sof + 9].copy_from_slice(&[0x75, 0x30, 0x75, 0x30]);
+    let dict = image_dict(8, 8, b"DeviceRGB", name(b"DCTDecode"));
+    let started = std::time::Instant::now();
+    assert!(decode_within_10s(&jpeg, dict).is_err());
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+}
