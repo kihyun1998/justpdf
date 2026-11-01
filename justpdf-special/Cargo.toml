@@ -24,7 +24,7 @@ justpdf-render = { version = "0.1.2", path = "../justpdf-render", optional = tru
 thiserror = "2"
 qrcode = { version = "0.14", optional = true }
 rxing = { version = "0.9.3", optional = true, default-features = false, features = ["encoders", "aztec", "datamatrix", "pdf417", "oned", "encoding_rs"] }
-roxmltree = { version = "0.20", optional = true }
+roxmltree = { version = "0.21.2", optional = true }
 unicode-bidi = { version = "0.3", optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 

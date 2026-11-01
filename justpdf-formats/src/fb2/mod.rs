@@ -4,6 +4,7 @@
 //! extracts metadata and text content, and provides PDF conversion.
 
 use crate::Result;
+use crate::common::MAX_XML_DEPTH;
 use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
 use crate::error::FormatError;
 
@@ -83,7 +84,7 @@ impl Fb2Document {
             for ti in desc.children().filter(|n| n.has_tag_name("title-info")) {
                 // Get <book-title>
                 for bt in ti.children().filter(|n| n.has_tag_name("book-title")) {
-                    let text = collect_text(&bt);
+                    let text = collect_text(&bt, 0);
                     if !text.is_empty() {
                         title = Some(text);
                     }
@@ -95,9 +96,9 @@ impl Fb2Document {
                     let mut last = String::new();
                     for child in auth.children() {
                         if child.has_tag_name("first-name") {
-                            first = collect_text(&child);
+                            first = collect_text(&child, 0);
                         } else if child.has_tag_name("last-name") {
-                            last = collect_text(&child);
+                            last = collect_text(&child, 0);
                         }
                     }
                     let name = format!("{first} {last}").trim().to_string();
@@ -124,24 +125,26 @@ impl Fb2Document {
     fn extract_sections(node: &roxmltree::Node, sections: &mut Vec<Fb2Section>) {
         for child in node.children() {
             if child.has_tag_name("section") {
-                let section = Self::parse_section(&child);
+                let section = Self::parse_section(&child, 0);
                 sections.push(section);
             }
         }
     }
 
-    fn parse_section(node: &roxmltree::Node) -> Fb2Section {
+    /// The section `node`, `depth` sections deep, with its nested sections
+    /// flattened into its paragraphs up to `MAX_XML_DEPTH`.
+    fn parse_section(node: &roxmltree::Node, depth: usize) -> Fb2Section {
         let mut title = None;
         let mut paragraphs = Vec::new();
 
         for child in node.children() {
             if child.has_tag_name("title") {
-                let text = collect_text(&child);
+                let text = collect_text(&child, 0);
                 if !text.is_empty() {
                     title = Some(text);
                 }
             } else if child.has_tag_name("p") {
-                let text = collect_text(&child);
+                let text = collect_text(&child, 0);
                 if !text.is_empty() {
                     paragraphs.push(text);
                 }
@@ -150,13 +153,13 @@ impl Fb2Document {
                 || child.has_tag_name("cite")
             {
                 // Extract text from nested elements
-                let text = collect_text(&child);
+                let text = collect_text(&child, 0);
                 if !text.is_empty() {
                     paragraphs.push(text);
                 }
-            } else if child.has_tag_name("section") {
+            } else if child.has_tag_name("section") && depth + 1 < MAX_XML_DEPTH {
                 // Nested section: flatten into paragraphs of current section
-                let nested = Self::parse_section(&child);
+                let nested = Self::parse_section(&child, depth + 1);
                 if let Some(t) = &nested.title {
                     paragraphs.push(t.clone());
                 }
@@ -217,16 +220,21 @@ impl Fb2Document {
     }
 }
 
-/// Recursively collect text content from a node and its descendants.
-fn collect_text(node: &roxmltree::Node) -> String {
+/// Recursively collect text content from a node and its descendants:
+/// the text of `node`, `depth` levels below where reading began, and of its
+/// descendants up to `MAX_XML_DEPTH`.
+fn collect_text(node: &roxmltree::Node, depth: usize) -> String {
     let mut text = String::new();
+    if depth >= MAX_XML_DEPTH {
+        return text;
+    }
     for child in node.children() {
         if child.is_text() {
             if let Some(t) = child.text() {
                 text.push_str(t);
             }
         } else {
-            text.push_str(&collect_text(&child));
+            text.push_str(&collect_text(&child, depth + 1));
             // Add space after block-like elements
             if child.has_tag_name("p") || child.has_tag_name("v") || child.has_tag_name("subtitle")
             {
@@ -522,5 +530,31 @@ mod tests {
         let doc = Fb2Document::from_str(sample_fb2()).unwrap();
         let png = doc.render_page_png(0, 72.0).unwrap();
         assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn deeply_nested_text_is_read_without_overflowing_the_stack() {
+        let xml = format!(
+            "<p>a{}b{}</p>",
+            "<emphasis>".repeat(100_000),
+            "</emphasis>".repeat(100_000)
+        );
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        let text = collect_text(&doc.root_element(), 0);
+        assert!(text.contains('a'));
+        assert!(!text.contains('b'));
+    }
+
+    #[test]
+    fn deeply_nested_sections_are_read_without_overflowing_the_stack() {
+        let xml = format!(
+            "<FictionBook><body><section><p>a</p>{}<p>b</p>{}</section></body></FictionBook>",
+            "<section>".repeat(100_000),
+            "</section>".repeat(100_000)
+        );
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        let body = doc.root_element().first_element_child().unwrap();
+        let section = Fb2Document::parse_section(&body.first_element_child().unwrap(), 0);
+        assert_eq!(section.paragraphs, vec!["a".to_string()]);
     }
 }

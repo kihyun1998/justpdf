@@ -1,5 +1,10 @@
 use crate::Result;
 
+/// How deep the XML readers descend below the node they start at; content
+/// nested deeper is skipped.
+#[cfg(feature = "roxmltree")]
+pub(crate) const MAX_XML_DEPTH: usize = 256;
+
 /// Page information for any document format.
 #[derive(Debug, Clone)]
 pub struct FormatPage {

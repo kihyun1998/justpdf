@@ -4,6 +4,7 @@
 //! and FixedPage XML files. Each FixedPage contains Path, Glyphs, and Canvas
 //! elements describing the page content.
 
+use crate::common::MAX_XML_DEPTH;
 use std::io::{Cursor, Read};
 use std::path::Path;
 
@@ -200,7 +201,7 @@ fn parse_fixed_page(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, path: &str) ->
 
     // Extract text from Glyphs elements
     let mut text_parts = Vec::new();
-    extract_glyphs_text(&root, &mut text_parts);
+    extract_glyphs_text(&root, &mut text_parts, 0);
     let text = text_parts.join("\n");
 
     Ok(XpsPage {
@@ -211,8 +212,13 @@ fn parse_fixed_page(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, path: &str) ->
     })
 }
 
-/// Recursively extract text from Glyphs elements.
-fn extract_glyphs_text(node: &roxmltree::Node<'_, '_>, text_parts: &mut Vec<String>) {
+/// Recursively extract text from Glyphs elements: collects the
+/// `UnicodeString` of each `Glyphs` in `node`, `depth` levels
+/// below where reading began, and in its descendants up to `MAX_XML_DEPTH`.
+fn extract_glyphs_text(node: &roxmltree::Node<'_, '_>, text_parts: &mut Vec<String>, depth: usize) {
+    if depth >= MAX_XML_DEPTH {
+        return;
+    }
     if node.tag_name().name() == "Glyphs"
         && let Some(unicode) = node.attribute("UnicodeString")
     {
@@ -223,7 +229,7 @@ fn extract_glyphs_text(node: &roxmltree::Node<'_, '_>, text_parts: &mut Vec<Stri
     }
     for child in node.children() {
         if child.is_element() {
-            extract_glyphs_text(&child, text_parts);
+            extract_glyphs_text(&child, text_parts, depth + 1);
         }
     }
 }
@@ -553,5 +559,18 @@ mod tests {
         let doc = XpsDocument::from_bytes(&data).unwrap();
         let text = doc.text().unwrap();
         assert!(text.contains("Hello XPS World"));
+    }
+
+    #[test]
+    fn deeply_nested_canvases_are_read_without_overflowing_the_stack() {
+        let xml = format!(
+            r#"<FixedPage><Glyphs UnicodeString="a"/>{}<Glyphs UnicodeString="b"/>{}</FixedPage>"#,
+            "<Canvas>".repeat(100_000),
+            "</Canvas>".repeat(100_000)
+        );
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        let mut parts = Vec::new();
+        extract_glyphs_text(&doc.root_element(), &mut parts, 0);
+        assert_eq!(parts, vec!["a".to_string()]);
     }
 }

@@ -11,7 +11,7 @@ Status: read from the source only.
 - Lookup (`detect_zugferd_xml`): `read_embedded_files` from core [Embedded files](embedded-files.md), which walks only the catalog's `/Names/EmbeddedFiles` tree; the catalog `/AF` array and the XMP `fx:` declaration are not read. Any attachment whose name ends in `.xml` qualifies (the three named files — `factur-x.xml`, `zugferd-invoice.xml`, `xrechnung.xml` — all end in `.xml`, so the name list adds nothing), when `extract_file` succeeds, it is UTF-8, and it contains `CrossIndustryInvoice` or `rsm:`. The first match wins. An XRechnung in UBL syntax has neither and is not found (inferred).
 - Profile (`detect_profile`): a substring search over the whole lower-cased XML in a fixed order — `xrechnung`, `extended`, `en16931` or `comfort`, `basic` and `wl`, `basic`, `minimum`. It does not read `GuidelineSpecifiedDocumentContextParameter/ID`, so a word such as "extended" or "bowl" anywhere in the invoice changes the result (inferred). Tests feed only the URN.
 - Fields (`parse_zugferd_xml`): walks every element and keeps the last value seen for `invoice_number` (an `ID` under `ExchangedDocument`), `issue_date` (any `IssueDateTime` or `DateTimeString`, so a later delivery or due date overwrites it — inferred), the four amount totals, `currency`, `seller_name`, `buyer_name`.
-- Input bound: none here; the attachment is decoded whole by `extract_file`, whose stream decoding has no size bound in core (Tracked there: #161).
+- Input bound: none here; the attachment is decoded whole by `extract_file`, whose stream decoding has no size bound in core (Tracked there: #161). Nesting: The XML is parsed with roxmltree 0.21.2, which does not recurse per element, and walked with `descendants()` (#449; [XML nesting depth](../invariant/xml-nesting-depth.md)).
 
 ## Code
 - `justpdf-special/src/zugferd/mod.rs` — `ZugferdProfile`, `ZugferdInfo`, `is_zugferd`, `extract_zugferd`, `detect_zugferd_xml`, `detect_profile`, `parse_zugferd_xml`
@@ -20,7 +20,7 @@ Status: read from the source only.
 **None.**
 
 ## Cross-cutting invariants
-**None.**
+- [XML nesting depth](../invariant/xml-nesting-depth.md)
 
 ## Blast radius
 - [Embedded files](embedded-files.md) — the only input path; this module assumes every invoice attachment is in the `/Names/EmbeddedFiles` tree and that `extract_file` returns the decoded bytes.

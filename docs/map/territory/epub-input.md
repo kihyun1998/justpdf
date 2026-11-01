@@ -15,7 +15,7 @@ Status: read from the source; the preview rule comes from #35.
 - One `FormatDocument` page per chapter. `to_pdf` paginates each chapter at 72 pt margins, 12 pt lines (`lines_per_page`), so a chapter may take several PDF pages; lines are not wrapped and run off the right edge. Each line goes through `move_to` ([Format document](format-document.md)).
 - Preview (`render_page`, `render_page_png`): under `cfg(feature = "plaintext")` it builds a `PlainTextDocument` from the chapter and renders its page 0, so only the chapter's first page is previewed. Without `plaintext` it checks the index (`OutOfRange`) and returns `FormatError::preview_needs_plaintext()` (``"page preview needs the `plaintext` feature"``). Tests: `test_preview_needs_plaintext_feature`, `test_preview_renders_with_plaintext`, `test_preview_out_of_range` (measured 2026-10-30: pass with `--features epub`).
 - `epub` compiles alone (measured 2026-10-30, `cargo check -p justpdf-formats --features epub`), with one dead-code warning for `wrap_fixed_pitch` — the old "compiles without warnings" (measured 2026-10-07) no longer holds; until #35 it failed with `E0433: cannot find plaintext in crate`.
-- Input bound: none. Each spine item and the OPF are read whole from the ZIP (inferred).
+- Input bound: none. Each spine item and the OPF are read whole from the ZIP (inferred). Nesting: `extract_text_recursive` reads at most 256 levels below the document root (`MAX_XML_DEPTH`), and roxmltree 0.21.2 parses without recursing (#449; [XML nesting depth](../invariant/xml-nesting-depth.md)).
 
 ## Code
 - `justpdf-formats/src/epub/mod.rs` — `EpubDocument`, `EpubDocument::open`, `EpubDocument::from_bytes`, `find_opf_path`, `parse_opf`, `strip_xml_tags`, `extract_text_recursive`, `normalize_whitespace`, `impl FormatDocument for EpubDocument` (`render_page`, `render_page_png`, `to_pdf`)
@@ -25,6 +25,7 @@ Status: read from the source; the preview rule comes from #35.
 **None.**
 
 ## Cross-cutting invariants
+- [XML nesting depth](../invariant/xml-nesting-depth.md)
 - [Content text encoding](../invariant/content-text-encoding.md)
 
 ## Blast radius

@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use crate::Result;
-use crate::common::{FormatDocument, FormatMetadata, FormatPage, RenderedPage};
+use crate::common::{FormatDocument, FormatMetadata, FormatPage, MAX_XML_DEPTH, RenderedPage};
 use crate::error::FormatError;
 
 /// A parsed SVG document.
@@ -233,6 +233,7 @@ impl SvgDocument {
             &Transform::identity(),
             &mut elements,
             &mut text_parts,
+            0,
         );
         let text_content = text_parts.join("\n");
 
@@ -511,14 +512,16 @@ fn parse_transform(s: &str) -> Transform {
     result
 }
 
-/// Recursively parse SVG nodes into elements.
+/// Recursively parse SVG nodes into elements: reads `node`, `depth` levels below the root, and its descendants up to
+/// `MAX_XML_DEPTH`.
 fn parse_node(
     node: &roxmltree::Node<'_, '_>,
     parent_transform: &Transform,
     elements: &mut Vec<SvgElement>,
     text_parts: &mut Vec<String>,
+    depth: usize,
 ) {
-    if !node.is_element() {
+    if !node.is_element() || depth >= MAX_XML_DEPTH {
         return;
     }
 
@@ -622,7 +625,7 @@ fn parse_node(
             let x = attr_f64(node, "x");
             let y = attr_f64(node, "y");
             // Collect all text content from this element and its descendants
-            let content = collect_text_content(node);
+            let content = collect_text_content(node, depth);
             if !content.is_empty() {
                 text_parts.push(content.clone());
                 elements.push(SvgElement::Text {
@@ -638,7 +641,7 @@ fn parse_node(
         "g" | "svg" => {
             // Group element: recurse with accumulated transform
             for child in node.children() {
-                parse_node(&child, &current_transform, elements, text_parts);
+                parse_node(&child, &current_transform, elements, text_parts, depth + 1);
             }
             return;
         }
@@ -647,20 +650,21 @@ fn parse_node(
 
     // Recurse for non-group elements that may have children
     for child in node.children() {
-        parse_node(&child, &current_transform, elements, text_parts);
+        parse_node(&child, &current_transform, elements, text_parts, depth + 1);
     }
 }
 
-/// Collect all text content from a node and its descendants.
-fn collect_text_content(node: &roxmltree::Node<'_, '_>) -> String {
+/// Collect the text content of `node`, `depth` levels below the root, and
+/// its descendants up to `MAX_XML_DEPTH`.
+fn collect_text_content(node: &roxmltree::Node<'_, '_>, depth: usize) -> String {
     let mut result = String::new();
     for child in node.children() {
         if child.is_text() {
             if let Some(t) = child.text() {
                 result.push_str(t.trim());
             }
-        } else if child.is_element() {
-            result.push_str(&collect_text_content(&child));
+        } else if child.is_element() && depth + 1 < MAX_XML_DEPTH {
+            result.push_str(&collect_text_content(&child, depth + 1));
         }
     }
     result
@@ -1554,5 +1558,36 @@ mod tests {
         let text = doc.page_text(0).unwrap();
         assert!(text.contains("Hello"));
         assert!(text.contains("World"));
+    }
+
+    /// An SVG with `groups` nested `<g>` around one rectangle.
+    fn nested_groups(groups: usize) -> String {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">{}<rect width="1" height="1"/>{}</svg>"#,
+            "<g>".repeat(groups),
+            "</g>".repeat(groups)
+        )
+    }
+
+    #[test]
+    fn a_deeply_nested_svg_reads_without_overflowing_the_stack() {
+        let doc = SvgDocument::from_string(&nested_groups(100_000)).unwrap();
+        assert!(doc.elements.is_empty());
+        let text = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><text>a{}b{}</text></svg>"#,
+            "<tspan>".repeat(100_000),
+            "</tspan>".repeat(100_000)
+        );
+        let doc = SvgDocument::from_string(&text).unwrap();
+        assert_eq!(doc.text_content, "a");
+    }
+
+    #[test]
+    fn elements_are_read_to_depth_255_below_the_root() {
+        // The root is depth 0, so a rect inside 254 groups is at depth 255.
+        let kept = SvgDocument::from_string(&nested_groups(254)).unwrap();
+        assert_eq!(kept.elements.len(), 1);
+        let dropped = SvgDocument::from_string(&nested_groups(255)).unwrap();
+        assert!(dropped.elements.is_empty());
     }
 }

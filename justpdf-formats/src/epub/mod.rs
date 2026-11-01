@@ -3,6 +3,7 @@
 //! EPUB files are ZIP archives containing XHTML content files organized
 //! by an OPF (Open Packaging Format) manifest and spine.
 
+use crate::common::MAX_XML_DEPTH;
 use std::io::{Cursor, Read};
 use std::path::Path;
 
@@ -198,7 +199,7 @@ fn strip_xml_tags(xhtml: &str) -> String {
     // Try parsing with roxmltree first for clean extraction
     if let Ok(doc) = roxmltree::Document::parse(xhtml) {
         let mut text = String::new();
-        extract_text_recursive(&doc.root(), &mut text);
+        extract_text_recursive(&doc.root(), &mut text, 0);
         return normalize_whitespace(&text);
     }
 
@@ -227,8 +228,12 @@ fn strip_xml_tags(xhtml: &str) -> String {
     normalize_whitespace(&result)
 }
 
-/// Recursively extract text from parsed XML.
-fn extract_text_recursive(node: &roxmltree::Node<'_, '_>, result: &mut String) {
+/// Recursively extract text from parsed XML: appends the text of `node`, `depth` levels below where reading began, and
+/// of its descendants up to `MAX_XML_DEPTH`.
+fn extract_text_recursive(node: &roxmltree::Node<'_, '_>, result: &mut String, depth: usize) {
+    if depth >= MAX_XML_DEPTH {
+        return;
+    }
     if node.is_text() {
         if let Some(text) = node.text() {
             result.push_str(text);
@@ -269,7 +274,7 @@ fn extract_text_recursive(node: &roxmltree::Node<'_, '_>, result: &mut String) {
     }
 
     for child in node.children() {
-        extract_text_recursive(&child, result);
+        extract_text_recursive(&child, result, depth + 1);
     }
 
     if node.is_element() {
@@ -715,5 +720,19 @@ mod tests {
         let page = doc.page(0).unwrap();
         assert_eq!(page.width_pt, 612.0);
         assert_eq!(page.height_pt, 792.0);
+    }
+
+    #[test]
+    fn deeply_nested_xhtml_is_read_without_overflowing_the_stack() {
+        let xhtml = format!(
+            "<html><body>a{}b{}</body></html>",
+            "<div>".repeat(100_000),
+            "</div>".repeat(100_000)
+        );
+        let doc = roxmltree::Document::parse(&xhtml).unwrap();
+        let mut text = String::new();
+        extract_text_recursive(&doc.root(), &mut text, 0);
+        assert!(text.contains('a'));
+        assert!(!text.contains('b'));
     }
 }
