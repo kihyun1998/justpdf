@@ -15,7 +15,7 @@ Read from the source; no record states it.
 - A stroke takes width, cap, join, miter limit and dash from the `GraphicsState` it is given (`stroke_path`, `stroke_path_with_pattern`).
 - `encode_png`, `encode_jpeg` and `raw_rgba` exist only on this type. The public results of [Render API](render-api.md) are `Vec<u8>` and `RenderedPixmap`.
 - **Pixel data is premultiplied.** `raw_rgba` returns tiny-skia's pixmap data, which is premultiplied RGBA; `encode_jpeg` copies its RGB and drops alpha (inferred, from tiny-skia 0.11's `Pixmap::data` and `encode_jpeg`). With the default opaque background the two are the same.
-- What bounds the input: the pixmap size is set by its caller; `render_to_device` caps it at 16384 px per side ([Render API](render-api.md)). `PixmapDevice::new` fails with `RenderError::InvalidDimensions` when tiny-skia cannot allocate it.
+- What bounds the input: the pixmap size is set by its caller; `render_to_device` caps it at 16384 px per side ([Render API](render-api.md)). `PixmapDevice::new` fails with `RenderError::InvalidDimensions` only where tiny-skia 0.11.4 `Pixmap::new` refuses the size: a side of 0, a row of more than `i32::MAX` bytes, or a byte length overflowing `usize` (`min_row_bytes`, `compute_data_len`). It does not cap the total size, and it allocates with `vec!`, so a size it accepts but memory cannot hold aborts the process (inferred, read in the local crate on #426).
 
 ## Code
 - `justpdf-render/src/device.rs` — `PixmapDevice`, `PixmapDevice::new`, `clip_mask`, `fill_path`, `stroke_path`, `draw_image`, `draw_pixmap`, `fill_path_with_pattern`, `stroke_path_with_pattern`, `clear`, `encode_png`, `encode_jpeg`, `raw_rgba`, `dimensions`

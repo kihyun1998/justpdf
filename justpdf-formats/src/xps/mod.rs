@@ -340,14 +340,12 @@ impl FormatDocument for XpsDocument {
         let w = (pg.width_pt * scale).ceil() as u32;
         let h = (pg.height_pt * scale).ceil() as u32;
 
-        if w == 0 || h == 0 {
-            return Err(FormatError::Format {
-                detail: "XPS page has zero dimensions".into(),
-            });
-        }
+        let len = justpdf_core::image::rgba_len(w, h).ok_or_else(|| FormatError::Format {
+            detail: format!("XPS page raster of {w}x{h} pixels is empty or too large"),
+        })?;
 
         // Create white background
-        let pixels = vec![255u8; (w * h * 4) as usize];
+        let pixels = vec![255u8; len];
 
         // v1: return white page with correct dimensions
         // Full rendering of XPS paths/glyphs would go here
@@ -465,6 +463,26 @@ mod tests {
             zip.finish().unwrap();
         }
         buf
+    }
+
+    #[test]
+    fn a_page_too_large_to_rasterize_is_refused() {
+        let mut doc = XpsDocument::from_bytes(&create_test_xps()).unwrap();
+        // 70000² overflows `u32`; 25000² fits `u32` but exceeds `i32::MAX` bytes.
+        for side in [70000.0, 25000.0] {
+            doc.pages[0].width_pt = side;
+            doc.pages[0].height_pt = side;
+            assert!(doc.render_page(0, 72.0).is_err(), "{side}");
+        }
+
+        doc.pages[0].width_pt = 1000.0;
+        doc.pages[0].height_pt = 1000.0;
+        assert!(doc.render_page(0, 7200.0).is_err(), "1000 pt at 7200 dpi");
+        let page = doc.render_page(0, 72.0).unwrap();
+        assert_eq!(
+            (page.width, page.height, page.data.len()),
+            (1000, 1000, 4_000_000)
+        );
     }
 
     #[test]

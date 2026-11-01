@@ -252,14 +252,12 @@ impl SvgDocument {
         let w = (self.width * scale).ceil() as u32;
         let h = (self.height * scale).ceil() as u32;
 
-        if w == 0 || h == 0 {
-            return Err(FormatError::Format {
-                detail: "SVG has zero dimensions".into(),
-            });
-        }
+        let len = justpdf_core::image::rgba_len(w, h).ok_or_else(|| FormatError::Format {
+            detail: format!("SVG raster of {w}x{h} pixels is empty or too large"),
+        })?;
 
         // Create white background RGBA buffer
-        let mut pixels = vec![255u8; (w * h * 4) as usize];
+        let mut pixels = vec![255u8; len];
 
         // Simple software rasterizer — we draw filled rectangles, circles, etc.
         for elem in &self.elements {
@@ -1376,6 +1374,28 @@ impl FormatDocument for SvgDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_page_too_large_to_rasterize_is_refused() {
+        // 70000² overflows `u32`; 25000² fits `u32` but exceeds `i32::MAX` bytes.
+        for side in [70000, 25000] {
+            let svg = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="{side}" height="{side}"><rect width="10" height="10" fill="red"/></svg>"#
+            );
+            let doc = SvgDocument::from_string(&svg).unwrap();
+            assert!(doc.render_page(0, 72.0).is_err(), "{side}: render_page");
+            assert!(doc.to_pdf().is_err(), "{side}: to_pdf");
+        }
+
+        let small = r#"<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000"></svg>"#;
+        let doc = SvgDocument::from_string(small).unwrap();
+        assert!(doc.render_page(0, 7200.0).is_err(), "1000 pt at 7200 dpi");
+        let page = doc.render_page(0, 72.0).unwrap();
+        assert_eq!(
+            (page.width, page.height, page.data.len()),
+            (1000, 1000, 4_000_000)
+        );
+    }
 
     #[test]
     fn test_parse_simple_svg() {
