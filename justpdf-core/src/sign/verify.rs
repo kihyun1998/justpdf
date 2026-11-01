@@ -29,7 +29,7 @@ pub fn verify_signature(pdf_data: &[u8], sig_info: &SignatureInfo) -> Result<Ver
         byterange::detect_modification_after_signing(pdf_data, &sig_info.byte_range);
 
     // Parse the CMS SignedData
-    let content_info = match cms::content_info::ContentInfo::from_der(&sig_info.contents_raw) {
+    let content_info = match cert::decode_contents(&sig_info.contents_raw) {
         Ok(ci) => ci,
         Err(e) => {
             return Ok(VerificationResult {
