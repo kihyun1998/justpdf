@@ -31,13 +31,13 @@ From reading the source (`sign/detect.rs`, `sign/cert.rs`) and the tests named.
 
 ## Blast radius
 - [AcroForm](acroform.md) — walks the same field tree with its own code and its own field-versus-widget rule; a rule fixed there (as #204 did) is not applied here.
-- [Signing](signing.md) — makes the signatures this should find; today it writes no `/AcroForm` entry, so this finds none (below), and its zero-padded `/Contents` is read through `decode_contents` (#409).
+- [Signing](signing.md) — makes the signatures this finds: it appends the field to a direct `/AcroForm /Fields` (#37), and its zero-padded `/Contents` is read through `decode_contents` (#409).
 - [Signature verification](signature-verification.md) — takes `SignatureInfo` as given; `byte_range` and `contents_raw` are copied from the file unchecked, and `cert_chain` feeds the trust check.
 - [Object decryption](object-decryption.md) — decides whether `/Contents` reaches here intact in an encrypted file.
 - [Facade](facade.md) — `Document::signatures` returns `SignatureInfo`, so a field change is a public API change.
 
 ## Known holes / open
-- A file justpdf has just signed has no detectable signature (measured 2026-10-30, probe: `sign_pdf` on a one-page file, then `detect_signatures` returns 0). Tracked: #37.
+- An indirect `/Fields` array is not read, so no field in it is found (inferred, `detect_signatures`; `parse_acroform` does the same). `sign_pdf` writes `/Fields` direct since #37.
 - A signature field whose widgets are its kids is not found (inferred). Not tracked by an issue.
 - `/Contents` of an encrypted document is decrypted though the standard exempts it (inferred). Not tracked by an issue.
 - No depth limit: an extreme depth without a cycle can overflow the stack (inferred). Tracked: #122.
