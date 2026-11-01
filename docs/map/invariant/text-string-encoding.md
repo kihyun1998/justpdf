@@ -14,7 +14,7 @@ Writing (`&str` → UTF-8 without a BOM):
 - [Annotations](../territory/annotations.md) — `build_dict`.
 - [Actions](../territory/actions.md) — `build_action`.
 - [Embedded files](../territory/embedded-files.md) — `/F`, `/UF`.
-- [Signing](../territory/signing.md) — `/Name`, `/Reason`, `/Location` (assembles the dictionary by hand, with `string_syntax`).
+- [Signing](../territory/signing.md) — `/Name`, `/Reason`, `/Location`, `/ContactInfo` and the field's `/T` (assembles the dictionary by hand, with `string_syntax`); `/T` is ASCII (`SignatureN`).
 - [Page labels](../territory/page-labels.md) — prefix.
 - [Optional content](../territory/optional-content.md) — OCG `/Name` written as raw UTF-8, read lossy (reported 2026-10-30; inferred).
 

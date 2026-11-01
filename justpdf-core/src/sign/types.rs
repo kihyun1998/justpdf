@@ -115,6 +115,8 @@ pub struct SigningOptions {
     /// Rectangle for visible signature [llx, lly, urx, ury] in points.
     /// Defaults to [0, 0, 200, 80] if visible=true and rect is None.
     pub appearance_rect: Option<[f64; 4]>,
+    /// The 0-based index of the page that holds the signature's widget.
+    pub page: usize,
 }
 
 impl Default for SigningOptions {
@@ -128,6 +130,7 @@ impl Default for SigningOptions {
             timestamp_token: None,
             visible: false,
             appearance_rect: None,
+            page: 0,
         }
     }
 }

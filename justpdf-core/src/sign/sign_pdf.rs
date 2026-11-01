@@ -1,10 +1,13 @@
 //! PDF signing: create digital signatures on PDF documents.
 //!
-//! Uses the two-pass approach:
-//! 1. Create PDF with signature placeholder
-//! 2. Compute digest over byte ranges
-//! 3. Create CMS SignedData
-//! 4. Insert CMS blob into placeholder
+//! `sign_pdf` appends an incremental update and signs it in place:
+//! 1. Append the signature dictionary with `/ByteRange` and `/Contents`
+//!    placeholders, the signature field and widget, its appearance, and new
+//!    revisions of the catalog, `/AcroForm`, page and `/Annots` objects that
+//!    link the field into the document
+//! 2. Write the byte range over its placeholder
+//! 3. Compute the digest over the byte range
+//! 4. Create the CMS SignedData and write it into `/Contents`
 
 use std::io::Write;
 
@@ -13,7 +16,7 @@ use rsa::pkcs8::DecodePrivateKey;
 use signature::SignatureEncoding;
 
 use crate::error::{JustPdfError, Result};
-use crate::object::{real_syntax, string_syntax};
+use crate::object::{IndirectRef, PdfDict, PdfObject, real_syntax, string_syntax};
 use crate::writer::serialize::serialize_dict;
 
 use super::types::{DigestAlgorithm, SigningOptions};
@@ -57,13 +60,15 @@ pub fn sign_pdf(
         }
     })?;
 
+    let signing_time = SigningTime::now();
+
     // Build the PDF with signature placeholder
     let Placeholder {
         pdf: mut pdf_bytes,
         byte_range_offset,
         contents_offset,
         contents_length,
-    } = build_pdf_with_placeholder(pdf_data, options)?;
+    } = build_pdf_with_placeholder(pdf_data, options, &signing_time)?;
 
     // The byte range leaves out the whole `/Contents` string, delimiters
     // included, and is written into the file before the digest is taken.
@@ -96,6 +101,7 @@ pub fn sign_pdf(
         &digest,
         options.digest_algorithm,
         options.timestamp_token.as_deref(),
+        &signing_time,
     )?;
 
     if cms_blob.len() > PLACEHOLDER_SIZE {
@@ -131,14 +137,15 @@ struct Placeholder {
 }
 
 /// Build a PDF with an incremental update containing the signature placeholder.
-fn build_pdf_with_placeholder(pdf_data: &[u8], options: &SigningOptions) -> Result<Placeholder> {
-    // We append an incremental update with:
-    // 1. The signature value dictionary (with placeholder /Contents)
-    // 2. A signature field
-    // 3. New xref + trailer
-    // The field is not added to /AcroForm, the Catalog or any page /Annots.
-
+fn build_pdf_with_placeholder(
+    pdf_data: &[u8],
+    options: &SigningOptions,
+    signing_time: &SigningTime,
+) -> Result<Placeholder> {
     let mut buf = pdf_data.to_vec();
+    if !buf.ends_with(b"\n") {
+        buf.push(b'\n');
+    }
     let old_startxref = crate::xref::find_startxref(pdf_data)?;
 
     // Parse the existing document to get catalog info
@@ -152,12 +159,40 @@ fn build_pdf_with_placeholder(pdf_data: &[u8], options: &SigningOptions) -> Resu
         .catalog_ref()
         .ok_or(JustPdfError::TrailerNotFound)?
         .clone();
+    let pages = crate::page::collect_pages(&doc)?;
+    let page_ref = pages
+        .get(options.page)
+        .ok_or(JustPdfError::PageOutOfRange {
+            index: options.page,
+            count: pages.len(),
+        })?
+        .page_ref
+        .clone();
 
-    // Allocate object numbers for new objects
-    let max_existing = doc.object_count() as u32 + 10;
-    let sig_value_num = max_existing + 1;
-    let sig_field_num = max_existing + 2;
-    let ap_stream_num = max_existing + 3; // for visible signature appearance
+    // New objects are numbered above every number the source uses
+    let first_new = doc
+        .object_refs()
+        .map(|r| r.obj_num)
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .filter(|n| n.checked_add(2).is_some())
+        .ok_or_else(|| JustPdfError::SignatureError {
+            detail: "no object numbers left for the signature".into(),
+        })?;
+    let sig_value_num = first_new;
+    let sig_field_num = first_new + 1;
+    let ap_stream_num = first_new + 2; // for visible signature appearance
+    let field_ref = IndirectRef {
+        obj_num: sig_field_num,
+        gen_num: 0,
+    };
+
+    // The revised objects that link the field into the document
+    let Linked {
+        revisions,
+        field_name,
+    } = link_field(&doc, &catalog_ref, &page_ref, &field_ref)?;
 
     // Create the signature value dictionary content
     let signer_name = options.signer_name.as_deref().unwrap_or("justpdf");
@@ -191,35 +226,48 @@ fn build_pdf_with_placeholder(pdf_data: &[u8], options: &SigningOptions) -> Resu
     write!(buf, " ")?;
 
     write!(buf, "/Name {} ", string_syntax(signer_name.as_bytes()))?;
+    write!(
+        buf,
+        "/M {} ",
+        string_syntax(signing_time.pdf_date().as_bytes())
+    )?;
     if !reason.is_empty() {
         write!(buf, "/Reason {} ", string_syntax(reason.as_bytes()))?;
     }
     if !location.is_empty() {
         write!(buf, "/Location {} ", string_syntax(location.as_bytes()))?;
     }
+    if let Some(contact_info) = options.contact_info.as_deref() {
+        write!(
+            buf,
+            "/ContactInfo {} ",
+            string_syntax(contact_info.as_bytes())
+        )?;
+    }
     write!(buf, ">>\nendobj\n")?;
-    offsets.push((sig_value_num, sig_val_offset));
+    offsets.push((sig_value_num, 0, sig_val_offset));
 
     // Write signature field
     let sig_field_offset = buf.len();
     writeln!(buf, "{} 0 obj", sig_field_num)?;
     write!(buf, "<< /Type /Annot /Subtype /Widget /FT /Sig ")?;
-    write!(buf, "/T (Signature1) ")?;
+    write!(buf, "/T {} ", string_syntax(field_name.as_bytes()))?;
     write!(buf, "/V {} 0 R ", sig_value_num)?;
+    write!(buf, "/P {} {} R ", page_ref.obj_num, page_ref.gen_num)?;
 
     if options.visible {
         let rect = options.appearance_rect.unwrap_or([0.0, 0.0, 200.0, 80.0]);
         let [llx, lly, urx, ury] = rect.map(real_syntax);
         write!(buf, "/Rect [{llx} {lly} {urx} {ury}] ")?;
         write!(buf, "/AP << /N {} 0 R >> ", ap_stream_num)?;
-        write!(buf, "/F 4 ")?; // Print (visible)
+        write!(buf, "/F 4 ")?; // Print
     } else {
         write!(buf, "/Rect [0 0 0 0] ")?;
-        write!(buf, "/F 132 ")?; // Print + Hidden
+        write!(buf, "/F 132 ")?; // Print + Locked
     }
 
     write!(buf, ">>\nendobj\n")?;
-    offsets.push((sig_field_num, sig_field_offset));
+    offsets.push((sig_field_num, 0, sig_field_offset));
 
     // Write appearance stream (if visible)
     if options.visible {
@@ -246,7 +294,15 @@ fn build_pdf_with_placeholder(pdf_data: &[u8], options: &SigningOptions) -> Resu
         write!(buf, "stream\r\n")?;
         buf.extend_from_slice(&ap_data);
         write!(buf, "\r\nendstream\nendobj\n")?;
-        offsets.push((ap_stream_num, ap_offset));
+        offsets.push((ap_stream_num, 0, ap_offset));
+    }
+
+    // Write the revised catalog, AcroForm, page and Annots objects
+    for (r, obj) in &revisions {
+        offsets.push((r.obj_num, r.gen_num, buf.len()));
+        writeln!(buf, "{} {} obj", r.obj_num, r.gen_num)?;
+        crate::writer::serialize::serialize_object(&mut buf, obj)?;
+        write!(buf, "\nendobj\n")?;
     }
 
     // Write new xref
@@ -254,17 +310,14 @@ fn build_pdf_with_placeholder(pdf_data: &[u8], options: &SigningOptions) -> Resu
     writeln!(buf, "xref")?;
 
     // Write subsections
-    for (obj_num, offset) in &offsets {
+    offsets.sort_by_key(|(obj_num, _, _)| *obj_num);
+    for (obj_num, gen_num, offset) in &offsets {
         writeln!(buf, "{} 1", obj_num)?;
-        writeln!(buf, "{:010} {:05} n ", offset, 0)?;
+        writeln!(buf, "{:010} {:05} n ", offset, gen_num)?;
     }
 
     // Trailer
-    let xref_size = if options.visible {
-        ap_stream_num + 1
-    } else {
-        sig_field_num + 1
-    };
+    let xref_size = offsets.last().map_or(first_new, |(n, _, _)| *n) + 1;
     let trailer = crate::writer::modify::incremental_trailer(
         doc.trailer(),
         xref_size,
@@ -281,6 +334,131 @@ fn build_pdf_with_placeholder(pdf_data: &[u8], options: &SigningOptions) -> Resu
         byte_range_offset,
         contents_offset,
         contents_length,
+    })
+}
+
+/// A PDF text string as text: UTF-16BE after a byte order mark, else each
+/// byte as one character.
+fn text_string(bytes: &[u8]) -> String {
+    match bytes.strip_prefix(&[0xFE, 0xFF]) {
+        Some(utf16) => char::decode_utf16(
+            utf16
+                .chunks_exact(2)
+                .map(|pair| u16::from_be_bytes([pair[0], pair[1]])),
+        )
+        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect(),
+        None => bytes.iter().map(|&b| b as char).collect(),
+    }
+}
+
+/// The objects `link_field` revises, and the name it gave the field.
+struct Linked {
+    revisions: Vec<(IndirectRef, PdfObject)>,
+    field_name: String,
+}
+
+/// New revisions of the objects that put the field `field_ref` into the
+/// document: its reference appended to `/AcroForm /Fields` (an `/AcroForm`
+/// created when the catalog has none, an indirect `/Fields` written out as a
+/// direct array) with `/SigFlags` 1 and 2 set, and appended to the `/Annots`
+/// of the page `page_ref`. An indirect `/AcroForm` or `/Annots` is revised at
+/// its own number only when it resolves to a dictionary or an array
+/// respectively; otherwise (an undefined object resolves to null) it reads as
+/// absent and the catalog or page is revised instead. The field is named `SignatureN`, the first N no top-level
+/// field's `/T` uses.
+fn link_field(
+    doc: &crate::parser::PdfDocument,
+    catalog_ref: &IndirectRef,
+    page_ref: &IndirectRef,
+    field_ref: &IndirectRef,
+) -> Result<Linked> {
+    let resolve_dict = |r: &IndirectRef| -> Result<PdfDict> {
+        Ok(doc.resolve(r)?.as_dict().cloned().unwrap_or_default())
+    };
+    let resolve_array = |obj: Option<&PdfObject>| -> Result<Vec<PdfObject>> {
+        Ok(match obj {
+            Some(PdfObject::Array(items)) => items.clone(),
+            Some(PdfObject::Reference(r)) => match doc.resolve(r)? {
+                PdfObject::Array(items) => items,
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        })
+    };
+
+    // An indirect value at `key` of `parent` that resolves to an object of
+    // the kind `is_kind` accepts.
+    let defined = |parent: &PdfDict, key: &[u8], is_kind: fn(&PdfObject) -> bool| {
+        let r = parent.get_ref(key)?;
+        doc.resolve(r)
+            .ok()
+            .filter(is_kind)
+            .map(|obj| (r.clone(), obj))
+    };
+
+    let mut revisions = Vec::new();
+    let mut catalog = resolve_dict(catalog_ref)?;
+
+    let acroform_obj = defined(&catalog, b"AcroForm", |o| o.as_dict().is_some());
+    let acroform_ref = acroform_obj.as_ref().map(|(r, _)| r.clone());
+    let mut acroform = match (acroform_obj, catalog.get(b"AcroForm")) {
+        (Some((_, obj)), _) => obj.as_dict().cloned().unwrap_or_default(),
+        (None, Some(PdfObject::Dict(d))) => d.clone(),
+        _ => PdfDict::new(),
+    };
+    let mut fields = resolve_array(acroform.get(b"Fields"))?;
+
+    let mut taken = std::collections::HashSet::new();
+    for field in &fields {
+        let field = match field {
+            PdfObject::Reference(r) => resolve_dict(r)?,
+            PdfObject::Dict(d) => d.clone(),
+            _ => continue,
+        };
+        if let Some(name) = field.get(b"T").and_then(PdfObject::as_str) {
+            taken.insert(text_string(name));
+        }
+    }
+    let field_name = (1..)
+        .map(|n| format!("Signature{n}"))
+        .find(|name| !taken.contains(name))
+        .unwrap_or_default();
+
+    fields.push(PdfObject::Reference(field_ref.clone()));
+    acroform.insert(b"Fields".to_vec(), PdfObject::Array(fields));
+    let sig_flags = acroform.get_i64(b"SigFlags").unwrap_or(0) | 3;
+    acroform.insert(b"SigFlags".to_vec(), PdfObject::Integer(sig_flags));
+    match acroform_ref {
+        Some(r) => revisions.push((r, PdfObject::Dict(acroform))),
+        None => {
+            catalog.insert(b"AcroForm".to_vec(), PdfObject::Dict(acroform));
+            revisions.push((catalog_ref.clone(), PdfObject::Dict(catalog)));
+        }
+    }
+
+    let mut page = resolve_dict(page_ref)?;
+    let annots_obj = defined(&page, b"Annots", |o| matches!(o, PdfObject::Array(_)));
+    let mut annots = match &annots_obj {
+        Some((_, PdfObject::Array(items))) => items.clone(),
+        Some(_) => Vec::new(),
+        None => match page.get(b"Annots") {
+            Some(PdfObject::Array(items)) => items.clone(),
+            _ => Vec::new(),
+        },
+    };
+    annots.push(PdfObject::Reference(field_ref.clone()));
+    match annots_obj.map(|(r, _)| r) {
+        Some(r) => revisions.push((r, PdfObject::Array(annots))),
+        None => {
+            page.insert(b"Annots".to_vec(), PdfObject::Array(annots));
+            revisions.push((page_ref.clone(), PdfObject::Dict(page)));
+        }
+    }
+
+    Ok(Linked {
+        revisions,
+        field_name,
     })
 }
 
@@ -301,6 +479,7 @@ fn create_cms_signed_data(
     digest: &[u8],
     algorithm: DigestAlgorithm,
     timestamp_token: Option<&[u8]>,
+    signing_time: &SigningTime,
 ) -> Result<Vec<u8>> {
     use rsa::pkcs1v15::SigningKey;
     use signature::Signer;
@@ -353,7 +532,7 @@ fn create_cms_signed_data(
         &content_type_attr_value,
     )?;
     // signingTime attribute (UTCTime)
-    let signing_time_der = build_utctime_now();
+    let signing_time_der = signing_time.utc_time_der();
     append_attribute(
         &mut signed_attrs_content,
         &signing_time_oid,
@@ -531,74 +710,97 @@ fn build_signer_info(
 
 // --- DER helpers ---
 
-/// Build a DER-encoded UTCTime for the current time.
-/// Format: YYMMDDHHMMSSZ (13 bytes), tag 0x17.
-fn build_utctime_now() -> Vec<u8> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+/// A moment in UTC, to the second.
+struct SigningTime {
+    year: u64,
+    month: u64,
+    day: u64,
+    hour: u64,
+    minute: u64,
+    second: u64,
+}
 
-    // Convert epoch seconds to date/time components
-    // Simple conversion without external crate
-    let days = secs / 86400;
-    let time_of_day = secs % 86400;
-    let hours = time_of_day / 3600;
-    let minutes = (time_of_day % 3600) / 60;
-    let seconds = time_of_day % 60;
-
-    // Days since 1970-01-01 to (year, month, day)
-    let mut y = 1970u64;
-    let mut remaining_days = days;
-    loop {
-        let days_in_year =
-            if y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400)) {
-                366
-            } else {
-                365
-            };
-        if remaining_days < days_in_year {
-            break;
-        }
-        remaining_days -= days_in_year;
-        y += 1;
+impl SigningTime {
+    /// The system clock's current time.
+    fn now() -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Self::from_unix(secs)
     }
-    let is_leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
-    let month_days = [
-        31,
-        if is_leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut m = 0u64;
-    for md in &month_days {
-        if remaining_days < *md as u64 {
-            break;
-        }
-        remaining_days -= *md as u64;
-        m += 1;
-    }
-    let month = m + 1;
-    let day = remaining_days + 1;
 
-    // UTCTime uses 2-digit year (YY)
-    let yy = y % 100;
-    let utc_str = format!(
-        "{:02}{:02}{:02}{:02}{:02}{:02}Z",
-        yy, month, day, hours, minutes, seconds
-    );
-    let mut result = vec![0x17, utc_str.len() as u8];
-    result.extend_from_slice(utc_str.as_bytes());
-    result
+    /// The time `secs` seconds after 1970-01-01T00:00:00Z.
+    fn from_unix(secs: u64) -> Self {
+        let mut days = secs / 86400;
+        let time_of_day = secs % 86400;
+        let leap =
+            |y: u64| y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
+        let mut year = 1970u64;
+        loop {
+            let days_in_year = if leap(year) { 366 } else { 365 };
+            if days < days_in_year {
+                break;
+            }
+            days -= days_in_year;
+            year += 1;
+        }
+        let month_days = [
+            31,
+            if leap(year) { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
+        let mut month = 1;
+        for md in month_days {
+            if days < md {
+                break;
+            }
+            days -= md;
+            month += 1;
+        }
+        Self {
+            year,
+            month,
+            day: days + 1,
+            hour: time_of_day / 3600,
+            minute: time_of_day % 3600 / 60,
+            second: time_of_day % 60,
+        }
+    }
+
+    /// A DER UTCTime (two-digit year).
+    fn utc_time_der(&self) -> Vec<u8> {
+        let text = format!(
+            "{:02}{:02}{:02}{:02}{:02}{:02}Z",
+            self.year % 100,
+            self.month,
+            self.day,
+            self.hour,
+            self.minute,
+            self.second
+        );
+        let mut result = vec![0x17, text.len() as u8];
+        result.extend_from_slice(text.as_bytes());
+        result
+    }
+
+    /// A PDF date string, `D:YYYYMMDDHHmmSSZ`.
+    fn pdf_date(&self) -> String {
+        format!(
+            "D:{:04}{:02}{:02}{:02}{:02}{:02}Z",
+            self.year, self.month, self.day, self.hour, self.minute, self.second
+        )
+    }
 }
 
 fn build_algorithm_identifier(oid: &const_oid::ObjectIdentifier) -> Result<Vec<u8>> {
@@ -706,7 +908,12 @@ mod tests {
     #[test]
     fn test_placeholder_rejects_encrypted_input() {
         let pdf = create_pdf(true);
-        let err = build_pdf_with_placeholder(&pdf, &SigningOptions::default()).unwrap_err();
+        let err = build_pdf_with_placeholder(
+            &pdf,
+            &SigningOptions::default(),
+            &SigningTime::from_unix(0),
+        )
+        .unwrap_err();
         assert!(
             matches!(err, JustPdfError::UnsupportedEncryption { .. }),
             "got {err:?}"
@@ -719,9 +926,13 @@ mod tests {
         let original = crate::parser::PdfDocument::from_bytes(pdf.clone()).unwrap();
         assert!(original.trailer().get(b"Info").is_some());
 
-        let signed = build_pdf_with_placeholder(&pdf, &SigningOptions::default())
-            .unwrap()
-            .pdf;
+        let signed = build_pdf_with_placeholder(
+            &pdf,
+            &SigningOptions::default(),
+            &SigningTime::from_unix(0),
+        )
+        .unwrap()
+        .pdf;
         let reopened = crate::parser::PdfDocument::from_bytes(signed).unwrap();
         assert_eq!(
             reopened.trailer().get(b"Info"),
@@ -737,9 +948,13 @@ mod tests {
     #[test]
     fn test_placeholder_xref_entries_are_20_bytes() {
         let pdf = create_pdf(false);
-        let signed = build_pdf_with_placeholder(&pdf, &SigningOptions::default())
-            .unwrap()
-            .pdf;
+        let signed = build_pdf_with_placeholder(
+            &pdf,
+            &SigningOptions::default(),
+            &SigningTime::from_unix(0),
+        )
+        .unwrap()
+        .pdf;
         let start = signed.windows(6).rposition(|w| w == b"\nxref\n").unwrap() + 6;
         let end = start
             + signed[start..]
@@ -770,8 +985,11 @@ mod tests {
         let pdf = create_pdf(false);
         let first_new = crate::parser::PdfDocument::from_bytes(pdf.clone())
             .unwrap()
-            .object_count() as u32
-            + 11;
+            .object_refs()
+            .map(|r| r.obj_num)
+            .max()
+            .unwrap()
+            + 1;
         let options = SigningOptions {
             signer_name: Some("A) B\r".into()),
             reason: Some("R(\u{e9}".into()),
@@ -781,7 +999,9 @@ mod tests {
             ..SigningOptions::default()
         };
 
-        let signed = build_pdf_with_placeholder(&pdf, &options).unwrap().pdf;
+        let signed = build_pdf_with_placeholder(&pdf, &options, &SigningTime::from_unix(0))
+            .unwrap()
+            .pdf;
         let reopened = crate::parser::PdfDocument::from_bytes(signed).unwrap();
         let object = |n: u32| {
             reopened
