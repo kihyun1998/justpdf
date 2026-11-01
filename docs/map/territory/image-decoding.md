@@ -44,4 +44,5 @@ Rules read from the code (*inferred* unless marked).
 - JPX and masks have no tests in `tests/image_decode.rs` or `tests/image_rgb.rs`; CCITT has only the size check's.
 - JPX and JBIG2 codecs allocate from the codestream's declared size before `decode_image` can check it, in `u32` arithmetic (above, inferred). Tracked: #447
 - A CCITT image's stream is decoded to `/Columns × /Rows` whatever its `/Width` and `/Height` (above). Tracked: #160
+- `/BitsPerComponent` is not checked against 1, 2, 4, 8, 16: `to_rgb8` clamps it to 1..=16, and `read_sample` underflows for 9–15 (a debug panic, *measured* 2026-11-01 calling `to_rgb8` directly) and misreads samples that cross a byte for 3, 5, 6, 7 (inferred). Tracked: #459
 - Callers of `decode_stream` get the codec's input bytes for DCT/JPX/JBIG2, not pixels; only `decode_image` produces pixels.

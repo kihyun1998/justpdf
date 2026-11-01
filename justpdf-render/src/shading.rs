@@ -453,10 +453,10 @@ fn render_gouraud_mesh(
         color_space_components(cs)
     };
 
-    let bits_per_coordinate = dict.get_i64(b"BitsPerCoordinate").unwrap_or(8) as u32;
-    let bits_per_component = dict.get_i64(b"BitsPerComponent").unwrap_or(8) as u32;
+    let bits_per_coordinate = mesh_bits(dict, b"BitsPerCoordinate", COORDINATE_BITS);
+    let bits_per_component = mesh_bits(dict, b"BitsPerComponent", COMPONENT_BITS);
     let bits_per_flag = if shading_type == 4 {
-        dict.get_i64(b"BitsPerFlag").unwrap_or(8) as u32
+        mesh_bits(dict, b"BitsPerFlag", FLAG_BITS)
     } else {
         0
     };
@@ -594,9 +594,9 @@ fn render_patch_mesh(
         color_space_components(cs)
     };
 
-    let bits_per_coordinate = dict.get_i64(b"BitsPerCoordinate").unwrap_or(8) as u32;
-    let bits_per_component = dict.get_i64(b"BitsPerComponent").unwrap_or(8) as u32;
-    let bits_per_flag = dict.get_i64(b"BitsPerFlag").unwrap_or(8) as u32;
+    let bits_per_coordinate = mesh_bits(dict, b"BitsPerCoordinate", COORDINATE_BITS);
+    let bits_per_component = mesh_bits(dict, b"BitsPerComponent", COMPONENT_BITS);
+    let bits_per_flag = mesh_bits(dict, b"BitsPerFlag", FLAG_BITS);
 
     let decode = dict
         .get_array(b"Decode")
@@ -1219,6 +1219,21 @@ fn color_to_rgba8(color: Color) -> [u8; 4] {
         (color.blue() * 255.0) as u8,
         (color.alpha() * 255.0) as u8,
     ]
+}
+
+/// The `/BitsPerCoordinate` values ISO 32000 allows for mesh shadings.
+const COORDINATE_BITS: &[i64] = &[1, 2, 4, 8, 12, 16, 24, 32];
+/// The `/BitsPerComponent` values ISO 32000 allows for mesh shadings.
+const COMPONENT_BITS: &[i64] = &[1, 2, 4, 8, 12, 16];
+/// The `/BitsPerFlag` values ISO 32000 allows for mesh shadings.
+const FLAG_BITS: &[i64] = &[2, 4, 8];
+
+/// The integer at `key` in a mesh shading's dictionary if it is one of
+/// `allowed`, else 8.
+fn mesh_bits(dict: &PdfDict, key: &[u8], allowed: &[i64]) -> u32 {
+    dict.get_i64(key)
+        .filter(|bits| allowed.contains(bits))
+        .unwrap_or(8) as u32
 }
 
 /// Simple bit reader for parsing mesh stream data.
