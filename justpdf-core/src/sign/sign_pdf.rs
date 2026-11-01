@@ -21,6 +21,9 @@ use super::types::{DigestAlgorithm, SigningOptions};
 /// Size of the /Contents placeholder in bytes (hex string = 2x this).
 const PLACEHOLDER_SIZE: usize = 16384;
 
+/// The `/ByteRange` array as reserved, ten digits per value.
+const BYTE_RANGE_PLACEHOLDER: &str = "[0 0000000000 0000000000 0000000000]";
+
 /// Sign a PDF document.
 ///
 /// `pdf_data`: the original PDF bytes.
@@ -55,16 +58,32 @@ pub fn sign_pdf(
     })?;
 
     // Build the PDF with signature placeholder
-    let (pdf_bytes, contents_offset, contents_length) =
-        build_pdf_with_placeholder(pdf_data, options)?;
+    let Placeholder {
+        pdf: mut pdf_bytes,
+        byte_range_offset,
+        contents_offset,
+        contents_length,
+    } = build_pdf_with_placeholder(pdf_data, options)?;
 
-    // Compute byte range
+    // The byte range leaves out the whole `/Contents` string, delimiters
+    // included, and is written into the file before the digest is taken.
     let byte_range = [
         0i64,
         contents_offset as i64,
         (contents_offset + contents_length) as i64,
         (pdf_bytes.len() - contents_offset - contents_length) as i64,
     ];
+    let byte_range_text = format!(
+        "[0 {:010} {:010} {:010}]",
+        byte_range[1], byte_range[2], byte_range[3]
+    );
+    if byte_range_text.len() != BYTE_RANGE_PLACEHOLDER.len() {
+        return Err(JustPdfError::SignatureError {
+            detail: format!("/ByteRange {byte_range_text} does not fit its placeholder"),
+        });
+    }
+    pdf_bytes[byte_range_offset..byte_range_offset + byte_range_text.len()]
+        .copy_from_slice(byte_range_text.as_bytes());
 
     // Compute digest over byte ranges
     let digest = compute_digest(&pdf_bytes, &byte_range, options.digest_algorithm)?;
@@ -89,23 +108,30 @@ pub fn sign_pdf(
         });
     }
 
-    // Insert CMS blob into placeholder
+    // Insert CMS blob into placeholder, between the delimiters
     let mut result = pdf_bytes;
     let hex_string = hex_encode(&cms_blob, PLACEHOLDER_SIZE);
-    result[contents_offset..contents_offset + contents_length]
+    result[contents_offset + 1..contents_offset + contents_length - 1]
         .copy_from_slice(hex_string.as_bytes());
-
-    // Fix ByteRange values
-    fix_byte_range(&mut result, &byte_range)?;
 
     Ok(result)
 }
 
+/// A PDF with an appended signature dictionary whose `/ByteRange` and
+/// `/Contents` are placeholders.
+#[derive(Debug)]
+struct Placeholder {
+    pdf: Vec<u8>,
+    /// Where the `/ByteRange` array's `[` is.
+    byte_range_offset: usize,
+    /// Where the `/Contents` hex string's `<` is.
+    contents_offset: usize,
+    /// The length of the `/Contents` hex string, `<` and `>` included.
+    contents_length: usize,
+}
+
 /// Build a PDF with an incremental update containing the signature placeholder.
-fn build_pdf_with_placeholder(
-    pdf_data: &[u8],
-    options: &SigningOptions,
-) -> Result<(Vec<u8>, usize, usize)> {
+fn build_pdf_with_placeholder(pdf_data: &[u8], options: &SigningOptions) -> Result<Placeholder> {
     // We append an incremental update with:
     // 1. The signature value dictionary (with placeholder /Contents)
     // 2. A signature field
@@ -150,15 +176,19 @@ fn build_pdf_with_placeholder(
         "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached "
     )?;
 
-    // ByteRange placeholder (will be fixed up later)
-    write!(buf, "/ByteRange [0 0000000000 0000000000 0000000000] ")?;
+    // ByteRange placeholder, as wide as the values `sign_pdf` writes over it
+    write!(buf, "/ByteRange ")?;
+    let byte_range_offset = buf.len();
+    write!(buf, "{BYTE_RANGE_PLACEHOLDER} ")?;
 
     // /Contents placeholder — this is the critical part
-    write!(buf, "/Contents <")?;
+    write!(buf, "/Contents ")?;
     let contents_offset = buf.len();
-    let contents_length = PLACEHOLDER_SIZE * 2; // hex characters
-    buf.extend(std::iter::repeat_n(b'0', contents_length));
-    write!(buf, "> ")?;
+    buf.push(b'<');
+    buf.extend(std::iter::repeat_n(b'0', PLACEHOLDER_SIZE * 2));
+    buf.push(b'>');
+    let contents_length = buf.len() - contents_offset;
+    write!(buf, " ")?;
 
     write!(buf, "/Name {} ", string_syntax(signer_name.as_bytes()))?;
     if !reason.is_empty() {
@@ -246,7 +276,12 @@ fn build_pdf_with_placeholder(
     crate::writer::serialize::serialize_dict(&mut buf, &trailer)?;
     write!(buf, "\nstartxref\n{}\n%%EOF\n", xref_offset)?;
 
-    Ok((buf, contents_offset, contents_length))
+    Ok(Placeholder {
+        pdf: buf,
+        byte_range_offset,
+        contents_offset,
+        contents_length,
+    })
 }
 
 /// Compute the digest over byte ranges.
@@ -639,29 +674,6 @@ fn hex_encode(data: &[u8], total_bytes: usize) -> String {
     hex
 }
 
-/// Fix the /ByteRange values in the PDF.
-fn fix_byte_range(pdf: &mut [u8], byte_range: &[i64; 4]) -> Result<()> {
-    // Find the /ByteRange pattern and replace placeholder values
-    let needle = b"/ByteRange [0 0000000000 0000000000 0000000000]";
-    let replacement = format!(
-        "/ByteRange [0 {:010} {:010} {:010}]",
-        byte_range[1], byte_range[2], byte_range[3]
-    );
-
-    if let Some(pos) = find_bytes(pdf, needle) {
-        pdf[pos..pos + replacement.len()].copy_from_slice(replacement.as_bytes());
-        Ok(())
-    } else {
-        Err(JustPdfError::SignatureError {
-            detail: "could not find ByteRange placeholder".into(),
-        })
-    }
-}
-
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,7 +719,9 @@ mod tests {
         let original = crate::parser::PdfDocument::from_bytes(pdf.clone()).unwrap();
         assert!(original.trailer().get(b"Info").is_some());
 
-        let (signed, _, _) = build_pdf_with_placeholder(&pdf, &SigningOptions::default()).unwrap();
+        let signed = build_pdf_with_placeholder(&pdf, &SigningOptions::default())
+            .unwrap()
+            .pdf;
         let reopened = crate::parser::PdfDocument::from_bytes(signed).unwrap();
         assert_eq!(
             reopened.trailer().get(b"Info"),
@@ -723,7 +737,9 @@ mod tests {
     #[test]
     fn test_placeholder_xref_entries_are_20_bytes() {
         let pdf = create_pdf(false);
-        let (signed, _, _) = build_pdf_with_placeholder(&pdf, &SigningOptions::default()).unwrap();
+        let signed = build_pdf_with_placeholder(&pdf, &SigningOptions::default())
+            .unwrap()
+            .pdf;
         let start = signed.windows(6).rposition(|w| w == b"\nxref\n").unwrap() + 6;
         let end = start
             + signed[start..]
@@ -765,7 +781,7 @@ mod tests {
             ..SigningOptions::default()
         };
 
-        let (signed, _, _) = build_pdf_with_placeholder(&pdf, &options).unwrap();
+        let signed = build_pdf_with_placeholder(&pdf, &options).unwrap().pdf;
         let reopened = crate::parser::PdfDocument::from_bytes(signed).unwrap();
         let object = |n: u32| {
             reopened
@@ -815,13 +831,6 @@ mod tests {
         let data = vec![0xFF, 0x00];
         let hex = hex_encode(&data, 2);
         assert_eq!(hex, "FF00");
-    }
-
-    #[test]
-    fn test_find_bytes() {
-        let data = b"Hello ByteRange World";
-        assert_eq!(find_bytes(data, b"ByteRange"), Some(6));
-        assert_eq!(find_bytes(data, b"Missing"), None);
     }
 
     #[test]

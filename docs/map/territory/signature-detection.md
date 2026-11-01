@@ -11,7 +11,7 @@ From reading the source (`sign/detect.rs`, `sign/cert.rs`) and the tests named.
 - **Walk** (`collect_sig_fields`): only reference entries of a direct `/Fields` array and of `/Kids` are followed. A field with `/Kids` is recursed into and never checked itself, so a `/FT /Sig` field whose only kids are its widgets is not found, and `/FT` is not inherited by kids (inferred). The field name is the parent's name, `.`, and `/T`.
 - **Cycles and budget**: a field listing its own ancestor as a kid is `CircularReference`; going over the visit budget through shared fields is `LimitExceeded` — [Tree traversal cycles](../invariant/tree-traversal-cycles.md). Pinned by `tests/tree_cycles.rs` (`detect_signatures_rejects_field_tree_cycle`, `detect_signatures_stops_at_visit_limit`).
 - **Text**: `/T`, `/Name`, `/M`, `/Reason`, `/Location` and `/ContactInfo` are decoded with `from_utf8_lossy`, so PDFDocEncoding and UTF-16BE (with BOM) text is garbled — [Text string encoding](../invariant/text-string-encoding.md). `/M` is kept as the raw date string.
-- **Certificates**: `cert::extract_certificates` parses `/Contents` as a CMS `ContentInfo` with a strict DER decoder and returns no certificates on any error. A `/Contents` value is normally zero-padded to its placeholder size, and that decoder rejects trailing bytes, so a padded signature — every one justpdf writes — yields an empty `cert_chain` (measured 2026-10-30 on the [Signing](signing.md) output through `verify_signature`, which uses the same decoder: "trailing data at end of DER message: decoded 1304 bytes, 15080 bytes remaining"; `extract_certificates` itself not run).
+- **Certificates**: `cert::extract_certificates` reads `/Contents` through `cert::decode_contents`, which decodes only the first DER element, so the zero padding after the CMS `ContentInfo` is ignored ([Signature contents](../invariant/signature-contents.md), #409); it returns no certificates on any error. Before #409 a strict whole-buffer decode rejected the padding and every padded signature, justpdf's included, gave an empty `cert_chain`; `certificates_are_read_from_a_zero_padded_contents` failed with the strict decoder restored (*measured* 2026-11-01).
 - **Encryption**: in an encrypted document `/Contents` goes through `resolve` and so is decrypted like any string; `crypto::decrypt_object` has no exemption for a signature dictionary's `/Contents` (inferred from `crypto/decrypt.rs`). ISO 32000-2 §7.6 exempts a signature dictionary's `/Contents` from encryption (from memory; not read raw in this run).
 - **Bounds on input**: the number of fields visited is bounded by the visit budget; depth is not bounded (#122). `/V` of each signature field is cloned whole and `/Contents` copied, outside the budget, so fields sharing one large `/V` cost its size each (#135).
 
@@ -31,14 +31,13 @@ From reading the source (`sign/detect.rs`, `sign/cert.rs`) and the tests named.
 
 ## Blast radius
 - [AcroForm](acroform.md) — walks the same field tree with its own code and its own field-versus-widget rule; a rule fixed there (as #204 did) is not applied here.
-- [Signing](signing.md) — makes the signatures this should find; today it writes no `/AcroForm` entry, so this finds none (below), and its zero-padded `/Contents` is what the certificate parse fails on.
+- [Signing](signing.md) — makes the signatures this should find; today it writes no `/AcroForm` entry, so this finds none (below), and its zero-padded `/Contents` is read through `decode_contents` (#409).
 - [Signature verification](signature-verification.md) — takes `SignatureInfo` as given; `byte_range` and `contents_raw` are copied from the file unchecked, and `cert_chain` feeds the trust check.
 - [Object decryption](object-decryption.md) — decides whether `/Contents` reaches here intact in an encrypted file.
 - [Facade](facade.md) — `Document::signatures` returns `SignatureInfo`, so a field change is a public API change.
 
 ## Known holes / open
 - A file justpdf has just signed has no detectable signature (measured 2026-10-30, probe: `sign_pdf` on a one-page file, then `detect_signatures` returns 0). Tracked: #37.
-- `cert_chain` is empty for any zero-padded `/Contents` (measured through the shared decoder, above). Tracked: #409.
 - A signature field whose widgets are its kids is not found (inferred). Not tracked by an issue.
 - `/Contents` of an encrypted document is decrypted though the standard exempts it (inferred). Not tracked by an issue.
 - No depth limit: an extreme depth without a cycle can overflow the stack (inferred). Tracked: #122.

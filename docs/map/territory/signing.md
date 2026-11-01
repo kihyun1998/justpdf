@@ -1,7 +1,7 @@
 # Digital signing (CMS, ByteRange)
 
 ## What it is
-`sign_pdf` leaves the original bytes untouched and appends an incremental section holding a signature dictionary with a `/Contents` placeholder, a signature widget and, for a visible signature, its appearance stream. It then takes the digest of the bytes outside the placeholder, builds a CMS SignedData (`/SubFilter /adbe.pkcs7.detached`, RSA PKCS#1 v1.5) over it by hand-written DER, writes it into the placeholder as hex, and fills in `/ByteRange`. Nothing in the product calls it: CLI `sign` is a stub and the facade has no signing call.
+`sign_pdf` leaves the original bytes untouched and appends an incremental section holding a signature dictionary with a `/Contents` placeholder, a signature widget and, for a visible signature, its appearance stream. It then fills in `/ByteRange`, takes the digest of the bytes outside the `/Contents` string, builds a CMS SignedData (`/SubFilter /adbe.pkcs7.detached`, RSA PKCS#1 v1.5) over it by hand-written DER, and writes it into the placeholder as hex. Nothing in the product calls it: CLI `sign` is a stub and the facade has no signing call.
 
 ## Governing decisions
 **None.** Refusing encrypted input is a maintainer decision (#26): `sign_pdf` takes no password, so there is no key to encrypt the appended objects with.
@@ -9,8 +9,8 @@
 ## Design model
 From reading the source (`sign/sign_pdf.rs`), the tests named, and a probe run on 2026-10-30 (a one-page file signed with a fresh 2048-bit RSA key and a self-signed certificate, checked with `openssl cms -verify -binary -noverify`, OpenSSL 3.6.4).
 - **Inputs**: a PKCS#8 DER RSA key (other key types are refused at parse), DER certificates with the signer first, `SigningOptions`. Encrypted input is refused with `UnsupportedEncryption` (`test_placeholder_rejects_encrypted_input`).
-- **Placeholder**: `/Contents` is `PLACEHOLDER_SIZE` (16,384) bytes, written as 32,768 hex zeros; a CMS blob larger than that is an error. `contents_offset` is taken right after `<`, so the `<` and `>` delimiters are inside the signed ranges (measured: the bytes on either side of the ByteRange hole are `<` and `>`). ISO 32000 practice excludes the delimiters too (#37, inferred there).
-- **Order of the steps** (`sign_pdf`): the digest is taken over the file while `/ByteRange` still reads `[0 0000000000 0000000000 0000000000]`; `fix_byte_range` writes the real values afterwards, inside the signed ranges. The signed digest therefore never matches the file (measured: `openssl cms -verify` fails over the final file's ranges and succeeds over the same ranges with the placeholder text put back; `verify_signature` with the `/Contents` trimmed to its DER gives `DigestMismatch` with `signature_valid = true`). `fix_byte_range` patches the first match of the placeholder text anywhere in the file.
+- **Placeholder** (`Placeholder`): `/Contents` is `PLACEHOLDER_SIZE` (16,384) bytes, written as 32,768 hex zeros between `<` and `>`; a CMS blob larger than that is an error. `contents_offset` is the `<` and `contents_length` counts both delimiters, so the `/ByteRange` hole is exactly the hex string, delimiters included, as ISO 32000-1 §12.8.3.3.1 requires ("It shall fit precisely in the space between the ranges", read raw in Adobe's `PDF32000_2008.pdf` on 2026-11-01). Before #408 the hole started after `<`, so both delimiters were signed (measured 2026-11-01).
+- **Order of the steps** (`sign_pdf`, #408): `build_pdf_with_placeholder` records where the `/ByteRange` array starts (`byte_range_offset`). `sign_pdf` writes the real values there in the placeholder's width (`{:010}`), then takes the digest, then writes the CMS hex between the delimiters. The digest therefore covers the file as written. A value of more than ten digits, from an output of 10^10 bytes or more, is a `SignatureError` rather than a write over `/Contents` (`BYTE_RANGE_PLACEHOLDER`; inferred, since a test would need a 10 GB input). The appended xref entries have the same ten-digit limit and no such check (inferred). Before #408 the digest was taken while `/ByteRange` still read zeros, and `fix_byte_range` then wrote the real values inside the signed ranges, at the first match of the placeholder text anywhere in the file. `openssl cms -verify` failed over the final file's ranges and succeeded with the placeholder text put back; it now succeeds over the file (OpenSSL 4.1.0, a throwaway RSA-2048 key, *measured* 2026-11-01). Pinned by `tests/sign_roundtrip.rs`, which signs `minimal.pdf` with `tests/fixtures/sign_test_key.der` and `sign_test_cert.der` (made with OpenSSL for the tests) and verifies the padded `/Contents` with `verify_signature`. Taking the digest before writing the values, or putting the delimiters back inside the ranges, each failed a named test (*measured* 2026-11-01).
 - **Not wired into the document**: the field is not added to `/AcroForm /Fields`, the catalog is not updated, the widget is not added to any page's `/Annots` and has no `/P` (`build_pdf_with_placeholder`; the module comment no longer claims otherwise). [Signature detection](signature-detection.md) finds nothing in the output (measured). `/M` is not written and `SigningOptions::contact_info` is dropped.
 - **Widget**: `/T (Signature1)` always. A visible one gets `/Rect` (default `[0 0 200 80]`), `/AP /N` and `/F 4`; an invisible one gets `/Rect [0 0 0 0]` and `/F 132`, which is Print + Locked, not Print + Hidden as the code comment says (annotation flag bits, ISO 32000-2 §12.5.3, from memory; not read raw in this run).
 - **Object numbers**: the new objects are numbered from `object_count() + 11`, where `object_count` is the number of xref entries, not the highest object number; in a file with gaps in its numbering they can reuse an existing number, and the trailer `/Size` can come out smaller than the original's (inferred; `DocumentModifier::from_document` uses the highest number + 1 instead).
@@ -20,12 +20,13 @@ From reading the source (`sign/sign_pdf.rs`), the tests named, and a probe run o
 - **Bounds on input**: the whole input file is parsed and copied; the CMS size is bounded by the placeholder; signer name and reason lengths are not bounded.
 
 ## Code
-- `justpdf-core/src/sign/sign_pdf.rs` — `sign_pdf`, `build_pdf_with_placeholder`, `compute_digest`, `create_cms_signed_data`, `build_signer_info`, `build_utctime_now`, `build_algorithm_identifier`, `append_attribute`, `encode_der_length`, `hex_encode`, `fix_byte_range`, `PLACEHOLDER_SIZE`
+- `justpdf-core/src/sign/sign_pdf.rs` — `sign_pdf`, `Placeholder`, `build_pdf_with_placeholder`, `compute_digest`, `create_cms_signed_data`, `build_signer_info`, `build_utctime_now`, `build_algorithm_identifier`, `append_attribute`, `encode_der_length`, `hex_encode`, `PLACEHOLDER_SIZE`
+- `justpdf-core/tests/sign_roundtrip.rs` — sign, then verify over the file as written (#408, #409)
 - `justpdf-core/src/sign/byterange.rs` — `compute_byterange_digest`
 - `justpdf-core/src/sign/types.rs` — `SigningOptions`, `DigestAlgorithm`
 
 ## Reference behaviour
-- OpenSSL 3.6.4 `cms -verify` on the probe's output (measured 2026-10-30, above): the CMS structure parses and the signature verifies over the placeholder bytes, not over the file.
+- OpenSSL `cms -verify -binary -noverify` over the `/ByteRange` bytes: 3.6.4 verified only with the placeholder text put back (2026-10-30); 4.1.0 verifies over the file as written (2026-11-01, above).
 - No comparison with Acrobat, pyHanko or MuPDF's signer is recorded. Clauses to compare against: ISO 32000-2 §12.8.1 (`/ByteRange`, `/Contents`), §12.8.3.
 
 ## Cross-cutting invariants
@@ -44,11 +45,9 @@ From reading the source (`sign/sign_pdf.rs`), the tests named, and a probe run o
 - [CLI](cli.md) — `sign` refuses with "not implemented yet (#181)" and exit code 1; wiring it would ship the defects above.
 
 ## Known holes / open
-- Every signature is invalid: the digest is taken before `/ByteRange` is filled in (measured, above). Tracked: #408.; #37 tracks the related wiring and delimiter defects.
 - The signature is not reachable from the catalog, so no reader finds it (measured). Tracked: #37.
-- The `<`/`>` delimiters are inside the signed ranges (measured). Tracked: #37.
 - New object numbers come from the entry count, not the highest number (inferred). Not tracked by an issue.
-- There is no sign → detect → verify round-trip test.
+- There is no sign → detect → verify round-trip test: detection does not find the signature (#37), so `tests/sign_roundtrip.rs` builds the `SignatureInfo` itself.
 - CLI `sign` does not sign. Tracked: #181 (keys and certificates), #308 (PKCS#12), #309 (`--timestamp-url`).
 - Encrypted documents cannot be signed (above).
 - Text strings are written as BOM-less UTF-8. Tracked: #33.

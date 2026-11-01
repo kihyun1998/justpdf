@@ -5,10 +5,18 @@ use der::{Decode, Encode};
 use super::types::CertificateInfo;
 use crate::error::Result;
 
+/// The CMS `ContentInfo` at the start of a signature's `/Contents`. Only its
+/// first DER element is read; the bytes after it, normally zero padding, are
+/// not looked at.
+pub(crate) fn decode_contents(contents: &[u8]) -> der::Result<cms::content_info::ContentInfo> {
+    let mut reader = der::SliceReader::new(contents)?;
+    cms::content_info::ContentInfo::decode(&mut reader)
+}
+
 /// Extract certificate information from a CMS/PKCS#7 SignedData blob.
 pub fn extract_certificates(cms_data: &[u8]) -> Result<Vec<CertificateInfo>> {
     // Parse ContentInfo → SignedData
-    let content_info = match cms::content_info::ContentInfo::from_der(cms_data) {
+    let content_info = match decode_contents(cms_data) {
         Ok(ci) => ci,
         Err(_) => return Ok(Vec::new()), // Not valid CMS, return empty
     };
@@ -201,5 +209,30 @@ mod tests {
     fn test_extract_certs_invalid_data() {
         let result = extract_certificates(b"not valid CMS data").unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn certificates_are_read_from_a_zero_padded_contents() {
+        let pdf = include_bytes!("../../tests/fixtures/minimal.pdf");
+        let key = include_bytes!("../../tests/fixtures/sign_test_key.der");
+        let cert = include_bytes!("../../tests/fixtures/sign_test_cert.der");
+        let signed =
+            super::super::sign_pdf(pdf, key, &[cert], &super::super::SigningOptions::default())
+                .unwrap();
+        let open = b"/Contents <";
+        let start = signed.windows(open.len()).rposition(|w| w == open).unwrap() + open.len();
+        let end = start + signed[start..].iter().position(|&b| b == b'>').unwrap();
+        let contents: Vec<u8> = signed[start..end]
+            .chunks(2)
+            .map(|p| u8::from_str_radix(std::str::from_utf8(p).unwrap(), 16).unwrap())
+            .collect();
+        assert_eq!(contents.last(), Some(&0), "the contents are padded");
+        let certs = extract_certificates(&contents).unwrap();
+        assert_eq!(certs.len(), 1);
+        assert!(
+            certs[0].subject.contains("justpdf test signer"),
+            "{}",
+            certs[0].subject
+        );
     }
 }
