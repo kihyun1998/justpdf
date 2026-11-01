@@ -36,7 +36,7 @@ Rules read from the code (*inferred* unless marked).
 - The code cites ITU-T T.4/T.6 tables for CCITT; not compared. ISO 32000-2 §7.4 not compared.
 
 ## Cross-cutting invariants
-**None.**
+- [Bit widths](../invariant/bit-widths.md) — the predictor's `/BitsPerComponent` below 1 reads as 8, and another value outside 1, 2, 4, 8, 16 is `StreamDecode` (#413).
 
 ## Blast radius
 - [Image decoding](image-decoding.md) — the other half of the pass-through rule: it expects DCT/JPX/JBIG2 bytes untouched and every earlier filter applied. Making a codec decode here would make the image side decode twice (the renderer's mask path already decodes twice — [Render images](render-images.md)).

@@ -12,7 +12,9 @@ pub struct ImageInfo {
     pub width: u32,
     /// Image height in pixels.
     pub height: u32,
-    /// Bits per component (1, 2, 4, 8, 16).
+    /// Bits per component: 1 for an image mask, 8 when `/BitsPerComponent`
+    /// is absent or 0, else its value (`u32::MAX` for a negative one).
+    /// `decode_image` refuses a value outside 1..=16, except for JPX.
     pub bits_per_component: u32,
     /// Color space name.
     pub color_space: Vec<u8>,
@@ -39,7 +41,10 @@ pub fn image_info(dict: &PdfDict) -> Option<ImageInfo> {
     let bits_per_component = if is_mask {
         1
     } else {
-        dict.get_i64(b"BitsPerComponent").unwrap_or(8) as u32
+        match dict.get_i64(b"BitsPerComponent") {
+            None | Some(0) => 8,
+            Some(bits) => u32::try_from(bits).unwrap_or(u32::MAX),
+        }
     };
 
     let color_space = dict
@@ -253,11 +258,15 @@ fn read_sample(data: &[u8], bit: usize, bpc: u32) -> u32 {
             let lo = data.get(byte + 1).copied().unwrap_or(0) as u32;
             (hi << 8) | lo
         }
-        _ => {
+        _ if bit % 8 + bpc as usize <= 8 => {
             let shift = 8 - bpc as usize - bit % 8;
             let mask = (1u32 << bpc) - 1;
             (data.get(byte).copied().unwrap_or(0) as u32 >> shift) & mask
         }
+        _ => (bit..bit + bpc as usize).fold(0, |value, b| {
+            let byte = data.get(b / 8).copied().unwrap_or(0);
+            (value << 1) | ((byte >> (7 - b % 8)) & 1) as u32
+        }),
     }
 }
 
@@ -304,7 +313,8 @@ fn check_size(width: u32, height: u32) -> Result<()> {
 /// in order, the image codec last; `doc` resolves `/JBIG2Globals`. An image
 /// whose size `rgba_len` refuses is `StreamDecode`: the dictionary's size,
 /// checked before decoding, or for DCT the JPEG header's and for JPX and
-/// JBIG2 the codec's.
+/// JBIG2 the codec's. So is an image other than JPX whose
+/// `/BitsPerComponent` is outside 1..=16.
 pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Result<DecodedImage> {
     let info = image_info(dict).ok_or_else(|| JustPdfError::StreamDecode {
         filter: "image".into(),
@@ -312,6 +322,15 @@ pub fn decode_image(raw_data: &[u8], dict: &PdfDict, doc: &PdfDocument) -> Resul
     })?;
 
     let filter = info.filter.as_deref();
+    if filter != Some(b"JPXDecode") && !(1..=16).contains(&info.bits_per_component) {
+        return Err(JustPdfError::StreamDecode {
+            filter: "image".into(),
+            detail: format!(
+                "/BitsPerComponent {} outside 1..=16",
+                info.bits_per_component
+            ),
+        });
+    }
     let color_space = match dict.get(b"ColorSpace") {
         Some(cs) => ColorSpace::resolve(cs, doc),
         None if info.is_mask => ColorSpace::DeviceGray,
