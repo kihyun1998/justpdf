@@ -13,7 +13,7 @@ Status: read from the source only.
 - Text: each non-empty trimmed `UnicodeString`, one per line in document order. `OriginX`/`OriginY` are ignored, so the PDF does not keep positions.
 - `to_pdf` starts at the top margin (72 pt) and stops at the bottom margin (`break`): text past one page is dropped, there is no wrapping, and each line goes through `move_to` ([Format document](format-document.md)).
 - `render_page` returns a white page of the right size ("v1: return white page… Full rendering of XPS paths/glyphs would go here").
-- Input bound: none. Each part is read whole from the ZIP, every page's XML is kept in memory (`XpsPage::xml`, unused), and `render_page` allocates `w * h * 4` in `u32` from the page's declared size and the DPI, which overflows on a large page (inferred; the same expression panics in a debug build for SVG — [SVG input](svg-input.md)).
+- Input bound: none. Each part is read whole from the ZIP, every page's XML is kept in memory (`XpsPage::xml`, unused), and `render_page` allocates `w * h * 4` in `u32` from the page's declared size and the DPI, which overflows on a large page (inferred; the same expression panics in a debug build for SVG — [SVG input](svg-input.md)). Nesting: `extract_glyphs_text` reads at most 256 levels below the page root (`MAX_XML_DEPTH`), and roxmltree 0.21.2 parses without recursing (#449; [XML nesting depth](../invariant/xml-nesting-depth.md)).
 
 ## Code
 - `justpdf-formats/src/xps/mod.rs` — `XpsDocument`, `XpsDocument::open`, `XpsDocument::from_bytes`, `find_fixed_doc_sequence`, `parse_fixed_doc_sequence`, `parse_fixed_document`, `parse_fixed_page`, `extract_glyphs_text`, `extract_metadata`, `resolve_xps_path`, `impl FormatDocument for XpsDocument` (`render_page`, `to_pdf`)
@@ -22,6 +22,7 @@ Status: read from the source only.
 **None.**
 
 ## Cross-cutting invariants
+- [XML nesting depth](../invariant/xml-nesting-depth.md)
 - [Content text encoding](../invariant/content-text-encoding.md)
 
 ## Blast radius

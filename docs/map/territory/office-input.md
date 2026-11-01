@@ -15,7 +15,7 @@ Status: read from the source; the preview rule comes from #35.
 - PPTX: one page per `ppt/slides/slide*.xml`, sorted by slide number; `a:t` text joined per `a:p`.
 - `to_pdf`: one PDF page per `FormatDocument` page, US Letter, 72 pt margins, 12 pt lines; it stops at the bottom margin ("Would need pagination here for real use"), so a DOCX longer than one page loses the rest. No wrapping. Each line goes through `move_to` ([Format document](format-document.md)).
 - Preview: as EPUB — `PlainTextDocument` page 0 under `cfg(feature = "plaintext")`, else `FormatError::preview_needs_plaintext()` after the index check. `office` compiles alone (measured 2026-10-30), with the `wrap_fixed_pitch` dead-code warning.
-- Input bound: none. Parts are read whole from the ZIP; `column_index_from_ref` multiplies by 26 per letter in `u32`, so a cell reference of seven or more letters overflows (a panic in a debug build), and the row is then allocated as `max_col + 1` strings, up to about 4 billion (inferred).
+- Input bound: none. Parts are read whole from the ZIP; `column_index_from_ref` multiplies by 26 per letter in `u32`, so a cell reference of seven or more letters overflows (a panic in a debug build), and the row is then allocated as `max_col + 1` strings, up to about 4 billion (inferred). Nesting: `extract_docx_paragraph_text` follows nested `w:hyperlink` at most 256 deep (`MAX_XML_DEPTH`), and roxmltree 0.21.2 parses without recursing (#449; [XML nesting depth](../invariant/xml-nesting-depth.md)).
 
 ## Code
 - `justpdf-formats/src/office/mod.rs` — `OfficeType`, `OfficeDocument`, `OfficeDocument::open`, `OfficeDocument::from_bytes`, `extract_office_metadata`, `extract_docx_text`, `extract_docx_paragraph_text`, `extract_xlsx_text`, `parse_shared_strings`, `parse_xlsx_sheet`, `column_index_from_ref`, `extract_pptx_text`, `extract_slide_number`, `impl FormatDocument for OfficeDocument` (`render_page`, `render_page_png`, `to_pdf`)
@@ -24,6 +24,7 @@ Status: read from the source; the preview rule comes from #35.
 **None.**
 
 ## Cross-cutting invariants
+- [XML nesting depth](../invariant/xml-nesting-depth.md)
 - [Content text encoding](../invariant/content-text-encoding.md)
 
 ## Blast radius

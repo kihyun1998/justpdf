@@ -3,6 +3,7 @@
 //! Extracts plain text from Microsoft Office Open XML formats.
 //! These are ZIP archives containing XML files with the document content.
 
+use crate::common::MAX_XML_DEPTH;
 use std::io::{Cursor, Read};
 use std::path::Path;
 
@@ -132,7 +133,7 @@ fn extract_docx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<Vec
         // Match paragraph elements (w:p)
         if node.tag_name().name() == "p" && is_word_namespace(node.tag_name().namespace()) {
             let mut para_text = String::new();
-            extract_docx_paragraph_text(&node, &mut para_text);
+            extract_docx_paragraph_text(&node, &mut para_text, 0);
             paragraphs.push(para_text);
         }
     }
@@ -141,8 +142,9 @@ fn extract_docx_text(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<Vec
     Ok(vec![paragraphs.join("\n")])
 }
 
-/// Extract text from a paragraph element.
-fn extract_docx_paragraph_text(node: &roxmltree::Node<'_, '_>, result: &mut String) {
+/// Extract text from a paragraph element: appends the text of the runs in `node`, `depth` hyperlinks deep, following
+/// nested hyperlinks up to `MAX_XML_DEPTH`.
+fn extract_docx_paragraph_text(node: &roxmltree::Node<'_, '_>, result: &mut String, depth: usize) {
     for child in node.children() {
         if !child.is_element() {
             continue;
@@ -175,8 +177,8 @@ fn extract_docx_paragraph_text(node: &roxmltree::Node<'_, '_>, result: &mut Stri
                 }
             }
             // Hyperlink
-            "hyperlink" => {
-                extract_docx_paragraph_text(&child, result);
+            "hyperlink" if depth + 1 < MAX_XML_DEPTH => {
+                extract_docx_paragraph_text(&child, result, depth + 1);
             }
             _ => {}
         }
@@ -871,5 +873,19 @@ mod tests {
         // First row should have Name and Age separated by tab
         let first_line = text.lines().next().unwrap();
         assert!(first_line.contains('\t'));
+    }
+
+    #[test]
+    fn deeply_nested_hyperlinks_are_read_without_overflowing_the_stack() {
+        let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        let xml = format!(
+            r#"<w:p xmlns:w="{w}"><w:r><w:t>a</w:t></w:r>{}<w:r><w:t>b</w:t></w:r>{}</w:p>"#,
+            "<w:hyperlink>".repeat(100_000),
+            "</w:hyperlink>".repeat(100_000)
+        );
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        let mut text = String::new();
+        extract_docx_paragraph_text(&doc.root_element(), &mut text, 0);
+        assert_eq!(text, "a");
     }
 }

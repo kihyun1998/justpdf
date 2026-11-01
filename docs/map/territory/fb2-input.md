@@ -13,7 +13,7 @@ Status: read from the source only.
 - Sections: each `section` directly under each `body` is one `FormatDocument` page. Inside it, `title`, `p`, `epigraph`, `poem` and `cite` become paragraphs; a nested `section` is flattened into its parent (its title becomes a paragraph). Images (`binary`, `image`) are ignored.
 - `to_pdf`: one PDF page per section. The title is cut to one line; paragraphs wrap with `wrap_fixed_pitch` at `usable_width / (10 × 0.6)` characters. Lines below the bottom margin are dropped, so a section longer than a page loses the rest. Each line goes through `move_to` ([Format document](format-document.md)).
 - Preview: `build_section_pdf` repeats the `to_pdf` loop for one section and renders it.
-- Input bound: none beyond roxmltree's own limits; the file is read whole (inferred).
+- Input bound: none beyond roxmltree's own limits; the file is read whole (inferred). Nesting: `collect_text` reads at most 256 levels below the node it starts at and `parse_section` flattens nested `<section>` at most 256 deep (`MAX_XML_DEPTH`), and roxmltree 0.21.2 parses without recursing (#449; [XML nesting depth](../invariant/xml-nesting-depth.md)).
 
 ## Code
 - `justpdf-formats/src/fb2/mod.rs` — `Fb2Document`, `Fb2Document::from_bytes`, `Fb2Document::from_str`, `Fb2Document::open`, `Fb2Document::extract_metadata`, `Fb2Document::extract_body`, `Fb2Document::parse_section`, `Fb2Document::build_section_pdf`, `collect_text`, `wrap_text`, `impl FormatDocument for Fb2Document` (`render_page`, `render_page_png`, `to_pdf`)
@@ -22,6 +22,7 @@ Status: read from the source only.
 **None.**
 
 ## Cross-cutting invariants
+- [XML nesting depth](../invariant/xml-nesting-depth.md)
 - [Content text encoding](../invariant/content-text-encoding.md)
 
 ## Blast radius
