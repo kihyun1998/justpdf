@@ -902,17 +902,7 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
                 let (tx, ty) = style.transform.apply(*x * scale, *y * scale);
                 let tw = *width * scale * style.transform.a.abs();
                 let th = *height * scale * style.transform.d.abs();
-                fill_rect_pixels(
-                    pixels,
-                    w,
-                    h,
-                    tx as i32,
-                    ty as i32,
-                    tw as i32,
-                    th as i32,
-                    fill,
-                    style.opacity,
-                );
+                fill_rect_pixels(pixels, w, h, tx, ty, tw, th, fill, style.opacity);
             }
         }
         SvgElement::Circle { cx, cy, r, style } => {
@@ -946,17 +936,7 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
             let color = style.stroke.unwrap_or((0, 0, 0, 255));
             let (tx1, ty1) = style.transform.apply(*x1 * scale, *y1 * scale);
             let (tx2, ty2) = style.transform.apply(*x2 * scale, *y2 * scale);
-            draw_line_pixels(
-                pixels,
-                w,
-                h,
-                tx1 as i32,
-                ty1 as i32,
-                tx2 as i32,
-                ty2 as i32,
-                color,
-                style.opacity,
-            );
+            draw_line_pixels(pixels, w, h, tx1, ty1, tx2, ty2, color, style.opacity);
         }
         SvgElement::Polygon { points, style } => {
             if let Some(fill) = style.fill {
@@ -972,17 +952,7 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
             for pair in points.windows(2) {
                 let (tx1, ty1) = style.transform.apply(pair[0].0 * scale, pair[0].1 * scale);
                 let (tx2, ty2) = style.transform.apply(pair[1].0 * scale, pair[1].1 * scale);
-                draw_line_pixels(
-                    pixels,
-                    w,
-                    h,
-                    tx1 as i32,
-                    ty1 as i32,
-                    tx2 as i32,
-                    ty2 as i32,
-                    color,
-                    style.opacity,
-                );
+                draw_line_pixels(pixels, w, h, tx1, ty1, tx2, ty2, color, style.opacity);
             }
         }
         SvgElement::Path {
@@ -1003,84 +973,34 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
                     PathCommand::LineTo(x, y) => {
                         let (tx1, ty1) = style.transform.apply(cx * scale, cy * scale);
                         let (tx2, ty2) = style.transform.apply(*x * scale, *y * scale);
-                        draw_line_pixels(
-                            pixels,
-                            w,
-                            h,
-                            tx1 as i32,
-                            ty1 as i32,
-                            tx2 as i32,
-                            ty2 as i32,
-                            color,
-                            style.opacity,
-                        );
+                        draw_line_pixels(pixels, w, h, tx1, ty1, tx2, ty2, color, style.opacity);
                         cx = *x;
                         cy = *y;
                     }
                     PathCommand::HorizTo(x) => {
                         let (tx1, ty1) = style.transform.apply(cx * scale, cy * scale);
                         let (tx2, ty2) = style.transform.apply(*x * scale, cy * scale);
-                        draw_line_pixels(
-                            pixels,
-                            w,
-                            h,
-                            tx1 as i32,
-                            ty1 as i32,
-                            tx2 as i32,
-                            ty2 as i32,
-                            color,
-                            style.opacity,
-                        );
+                        draw_line_pixels(pixels, w, h, tx1, ty1, tx2, ty2, color, style.opacity);
                         cx = *x;
                     }
                     PathCommand::VertTo(y) => {
                         let (tx1, ty1) = style.transform.apply(cx * scale, cy * scale);
                         let (tx2, ty2) = style.transform.apply(cx * scale, *y * scale);
-                        draw_line_pixels(
-                            pixels,
-                            w,
-                            h,
-                            tx1 as i32,
-                            ty1 as i32,
-                            tx2 as i32,
-                            ty2 as i32,
-                            color,
-                            style.opacity,
-                        );
+                        draw_line_pixels(pixels, w, h, tx1, ty1, tx2, ty2, color, style.opacity);
                         cy = *y;
                     }
                     PathCommand::CurveTo(_x1, _y1, _x2, _y2, x, y) => {
                         // Simplified: draw straight line to endpoint
                         let (tx1, ty1) = style.transform.apply(cx * scale, cy * scale);
                         let (tx2, ty2) = style.transform.apply(*x * scale, *y * scale);
-                        draw_line_pixels(
-                            pixels,
-                            w,
-                            h,
-                            tx1 as i32,
-                            ty1 as i32,
-                            tx2 as i32,
-                            ty2 as i32,
-                            color,
-                            style.opacity,
-                        );
+                        draw_line_pixels(pixels, w, h, tx1, ty1, tx2, ty2, color, style.opacity);
                         cx = *x;
                         cy = *y;
                     }
                     PathCommand::QuadTo(_x1, _y1, x, y) => {
                         let (tx1, ty1) = style.transform.apply(cx * scale, cy * scale);
                         let (tx2, ty2) = style.transform.apply(*x * scale, *y * scale);
-                        draw_line_pixels(
-                            pixels,
-                            w,
-                            h,
-                            tx1 as i32,
-                            ty1 as i32,
-                            tx2 as i32,
-                            ty2 as i32,
-                            color,
-                            style.opacity,
-                        );
+                        draw_line_pixels(pixels, w, h, tx1, ty1, tx2, ty2, color, style.opacity);
                         cx = *x;
                         cy = *y;
                     }
@@ -1092,39 +1012,44 @@ fn render_element(elem: &SvgElement, pixels: &mut [u8], w: u32, h: u32, scale: f
             // Text rendering is complex; we just place a small marker
             if let Some(fill) = style.fill {
                 let (tx, ty) = style.transform.apply(*x * scale, *y * scale);
-                fill_rect_pixels(
-                    pixels,
-                    w,
-                    h,
-                    tx as i32,
-                    (ty - 8.0) as i32,
-                    4,
-                    8,
-                    fill,
-                    style.opacity,
-                );
+                fill_rect_pixels(pixels, w, h, tx, ty - 8.0, 4.0, 8.0, fill, style.opacity);
             }
         }
     }
 }
 
-/// Fill a rectangle in the pixel buffer.
+/// Fill the pixels from `trunc(x)` to `trunc(x) + trunc(w)` and from
+/// `trunc(y)` to `trunc(y) + trunc(h)` (end excluded) that lie in the buffer.
+/// A non-finite bound fills nothing.
 #[allow(clippy::too_many_arguments)]
 fn fill_rect_pixels(
     pixels: &mut [u8],
     buf_w: u32,
     buf_h: u32,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
     color: (u8, u8, u8, u8),
     opacity: f64,
 ) {
+    let (x0, y0) = (x.trunc(), y.trunc());
+    let (x1, y1) = (x0 + w.trunc(), y0 + h.trunc());
+    if ![x0, y0, x1, y1].iter().all(|v| v.is_finite()) {
+        return;
+    }
+    let span = |a: f64, b: f64, max: u32| {
+        (
+            a.clamp(0.0, max as f64) as u32,
+            b.clamp(0.0, max as f64) as u32,
+        )
+    };
+    let (x0, x1) = span(x0, x1, buf_w);
+    let (y0, y1) = span(y0, y1, buf_h);
     let alpha = (color.3 as f64 * opacity) as u8;
-    for py in y.max(0)..(y + h).min(buf_h as i32) {
-        for px in x.max(0)..(x + w).min(buf_w as i32) {
-            let idx = ((py as u32 * buf_w + px as u32) * 4) as usize;
+    for py in y0..y1 {
+        for px in x0..x1 {
+            let idx = ((py * buf_w + px) * 4) as usize;
             if idx + 3 < pixels.len() {
                 blend_pixel(pixels, idx, color.0, color.1, color.2, alpha);
             }
@@ -1165,19 +1090,26 @@ fn fill_ellipse_pixels(
     }
 }
 
-/// Draw a line using Bresenham's algorithm.
+/// Draw a line using Bresenham's algorithm, from `(x0, y0)` to `(x1, y1)`
+/// clipped to the buffer with a one-pixel margin. A line with a non-finite
+/// end draws nothing.
 #[allow(clippy::too_many_arguments)]
 fn draw_line_pixels(
     pixels: &mut [u8],
     buf_w: u32,
     buf_h: u32,
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
     color: (u8, u8, u8, u8),
     opacity: f64,
 ) {
+    let window = (-1.0, -1.0, buf_w as f64, buf_h as f64);
+    let Some((x0, y0, x1, y1)) = clip_segment((x0, y0, x1, y1), window) else {
+        return;
+    };
+    let (x0, y0, x1, y1) = (x0 as i32, y0 as i32, x1 as i32, y1 as i32);
     let alpha = (color.3 as f64 * opacity) as u8;
     let mut x0 = x0;
     let mut y0 = y0;
@@ -1207,6 +1139,89 @@ fn draw_line_pixels(
             y0 += sy;
         }
     }
+}
+
+/// The part of the segment `(x0, y0, x1, y1)` inside the rectangle
+/// `(min_x, min_y, max_x, max_y)`, or `None` when no part of it is inside or a
+/// coordinate is not finite. A horizontal or vertical segment is clipped
+/// exactly. Any other is clipped with Liang–Barsky: an end inside the
+/// rectangle is returned unchanged, an end cut by an edge lies on that edge,
+/// and the segment is `None` when a computed coordinate falls more than one
+/// unit outside the rectangle. Every returned coordinate is clamped to the
+/// rectangle.
+fn clip_segment(
+    (x0, y0, x1, y1): (f64, f64, f64, f64),
+    (min_x, min_y, max_x, max_y): (f64, f64, f64, f64),
+) -> Option<(f64, f64, f64, f64)> {
+    if ![x0, y0, x1, y1].iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    if y0 == y1 {
+        let (x0, x1) = clip_span(x0, x1, min_x, max_x)?;
+        return (min_y..=max_y).contains(&y0).then_some((x0, y0, x1, y1));
+    }
+    if x0 == x1 {
+        let (y0, y1) = clip_span(y0, y1, min_y, max_y)?;
+        return (min_x..=max_x).contains(&x0).then_some((x0, y0, x1, y1));
+    }
+    let (hx, hy) = (0.5 * x1 - 0.5 * x0, 0.5 * y1 - 0.5 * y0);
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    let (mut start_edge, mut end_edge) = (None, None);
+    for (p, q, edge) in [
+        (-hx, 0.5 * x0 - 0.5 * min_x, Edge::X(min_x)),
+        (hx, 0.5 * max_x - 0.5 * x0, Edge::X(max_x)),
+        (-hy, 0.5 * y0 - 0.5 * min_y, Edge::Y(min_y)),
+        (hy, 0.5 * max_y - 0.5 * y0, Edge::Y(max_y)),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+            continue;
+        }
+        let r = q / p;
+        if p < 0.0 {
+            if r > t1 {
+                return None;
+            }
+            if r > t0 {
+                t0 = r;
+                start_edge = Some(edge);
+            }
+        } else {
+            if r < t0 {
+                return None;
+            }
+            if r < t1 {
+                t1 = r;
+                end_edge = Some(edge);
+            }
+        }
+    }
+    let near =
+        |v: f64, lo: f64, hi: f64| (lo - 1.0..=hi + 1.0).contains(&v).then(|| v.clamp(lo, hi));
+    let at = |t: f64, edge: Option<Edge>, (x, y): (f64, f64)| match edge {
+        None => Some((near(x, min_x, max_x)?, near(y, min_y, max_y)?)),
+        Some(Edge::X(x)) => Some((x, near(y0 + t * hy + t * hy, min_y, max_y)?)),
+        Some(Edge::Y(y)) => Some((near(x0 + t * hx + t * hx, min_x, max_x)?, y)),
+    };
+    let (sx, sy) = at(t0, start_edge, (x0, y0))?;
+    let (ex, ey) = at(t1, end_edge, (x1, y1))?;
+    Some((sx, sy, ex, ey))
+}
+
+/// A vertical (`X`) or horizontal (`Y`) edge of a clip rectangle, at the
+/// given coordinate.
+#[derive(Clone, Copy)]
+enum Edge {
+    X(f64),
+    Y(f64),
+}
+
+/// `a` and `b` clamped to `lo..=hi`, or `None` when the span between them
+/// misses it.
+fn clip_span(a: f64, b: f64, lo: f64, hi: f64) -> Option<(f64, f64)> {
+    (a.max(b) >= lo && a.min(b) <= hi).then(|| (a.clamp(lo, hi), b.clamp(lo, hi)))
 }
 
 /// Simple scanline polygon fill.
@@ -1374,6 +1389,173 @@ impl FormatDocument for SvgDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Renders `svg` at 72 dpi and writes one character per pixel: `.` white,
+    /// `r` red, `g` green, `b` blue, `m` magenta, `k` black, `?` anything else.
+    fn pixel_grid(svg: &str) -> String {
+        let doc = SvgDocument::from_string(svg).unwrap();
+        let page = doc.render_page(0, 72.0).unwrap();
+        let mut out = String::new();
+        for px in page.data.chunks(4) {
+            out.push(match px[..3] {
+                [255, 255, 255] => '.',
+                [255, 0, 0] => 'r',
+                [0, 255, 0] => 'g',
+                [0, 0, 255] => 'b',
+                [255, 0, 255] => 'm',
+                [0, 0, 0] => 'k',
+                _ => '?',
+            });
+            if out.len() % (page.width as usize + 1) == page.width as usize {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn shapes_inside_the_raster_keep_their_pixels() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8">
+            <rect x="1.7" y="5.2" width="3.9" height="2.5" fill="#0000ff"/>
+            <line x1="1" y1="1" x2="10" y2="6" stroke="#ff0000"/>
+            <polyline points="0.5,7.5 11.9,0.2" stroke="#00ff00"/>
+            <path d="M -0.5 3 L 11.5 3" stroke="#ff00ff"/>
+            <text x="10.5" y="2.5" fill="#000000">t</text>
+        </svg>"##;
+        let expected = "\
+..........kk
+.r.......gkk
+..rr....g.kk
+mmmmmmmmmmmm
+....ggrr....
+.bbg....rr..
+.ggb......r.
+g...........
+";
+        assert_eq!(pixel_grid(svg), expected);
+    }
+
+    #[test]
+    fn shapes_reaching_far_outside_the_raster_draw_their_part_inside() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="6" height="4">
+            <rect x="3e9" y="0" width="3e9" height="4" fill="#0000ff"/>
+            <rect x="-3e9" y="0" width="6e9" height="1" fill="#00ff00"/>
+            <line x1="-3e9" y1="1" x2="3e9" y2="1" stroke="#ff0000"/>
+            <polyline points="0,2 1e9,2" stroke="#ff00ff"/>
+            <path d="M 0 3 L 1e9 3" stroke="#000000"/>
+            <line x1="5" y1="-1e9" x2="5" y2="1e9" stroke="#0000ff"/>
+        </svg>"##;
+        let start = std::time::Instant::now();
+        let grid = pixel_grid(svg);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "{:?}",
+            start.elapsed()
+        );
+        assert_eq!(grid, "gggggb\nrrrrrb\nmmmmmb\nkkkkkb\n");
+    }
+
+    #[test]
+    fn lines_with_huge_finite_ends_are_clipped_to_the_raster() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="6" height="4">
+            <line x1="1e30" y1="0" x2="-1e13" y2="0" stroke="#ff0000"/>
+            <line x1="-1e30" y1="1" x2="1e30" y2="1" stroke="#00ff00"/>
+            <line x1="-1.7e308" y1="2" x2="1.7e308" y2="2" stroke="#0000ff"/>
+            <polyline points="5,1e30 5,-1e13" stroke="#ff00ff"/>
+        </svg>"##;
+        let start = std::time::Instant::now();
+        let grid = pixel_grid(svg);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "{:?}",
+            start.elapsed()
+        );
+        assert_eq!(grid, "rrrrrm\ngggggm\nbbbbbm\n.....m\n");
+    }
+
+    #[test]
+    fn a_huge_line_that_misses_the_raster_draws_nothing() {
+        // The exact line passes y ≈ 20..32 across the raster.
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8">
+            <line x1="1e18" y1="1e18" x2="0" y2="20" stroke="#ff0000"/>
+        </svg>"##;
+        assert_eq!(pixel_grid(svg), "............\n".repeat(8));
+    }
+
+    #[test]
+    fn a_slanted_line_keeps_its_slope_when_clipped() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="6" height="4">
+            <line x1="-10" y1="-10" x2="20" y2="20" stroke="#ff0000"/>
+            <line x1="-10" y1="13" x2="13" y2="-10" stroke="#00ff00"/>
+        </svg>"##;
+        assert_eq!(pixel_grid(svg), "r..g..\n.rg...\n.gr...\ng..r..\n");
+    }
+
+    #[test]
+    fn a_line_cut_at_an_edge_starts_on_that_edge() {
+        let window = (-1.0, -1.0, 12.0, 8.0);
+        let (x0, y0, x1, y1) = clip_segment((0.3, -1.3, 50.0, 5.0), window).unwrap();
+        assert_eq!((y0, x1), (-1.0, 12.0));
+        assert!(
+            (x0 - 8.0 / 3.0).abs() < 1e-9 && (y1 - 13.0 / 71.0).abs() < 1e-9,
+            "{x0} {y1}"
+        );
+        let (x0, ..) = clip_segment((-1.3, 0.3, 5.0, 50.0), window).unwrap();
+        assert_eq!(x0, -1.0);
+    }
+
+    #[test]
+    fn a_clipped_segment_lies_inside_the_window() {
+        // Coordinates of either sign with exponents from 0 to 308.
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut coord = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let mantissa = (state >> 11) as f64 / (1u64 << 53) as f64;
+            let sign = if state & 1 == 0 { 1.0 } else { -1.0 };
+            sign * mantissa * 10f64.powi((state >> 3) as i32 % 309)
+        };
+        let window = (-1.0, -1.0, 10.0, 6.0);
+        // Both differences exceed `f64::MAX`.
+        let diagonal = (-1.7e308, -1.7e308, 1.7e308, 1.7e308);
+        assert!(clip_segment(diagonal, window).is_some());
+        assert_eq!(clip_segment((0.0, 1.0, f64::INFINITY, 1.0), window), None);
+        assert_eq!(clip_segment((0.0, f64::NAN, 5.0, f64::NAN), window), None);
+        assert_eq!(clip_segment((0.0, 100.0, 5.0, 100.0), window), None);
+        assert_eq!(clip_segment((100.0, 0.0, 100.0, 5.0), window), None);
+        assert_eq!(clip_segment((-50.0, 1.0, -20.0, 1.0), window), None);
+        assert_eq!(clip_segment((3.0, 20.0, 3.0, 50.0), window), None);
+        // Half of the smallest subnormal rounds to 0, so `hx` is 0.
+        assert!(clip_segment((5e-324, 0.0, 0.0, 5.0), window).is_some());
+        for i in 0..200_000 {
+            let seg = if i == 0 {
+                diagonal
+            } else {
+                (coord(), coord(), coord(), coord())
+            };
+            if let Some((x0, y0, x1, y1)) = clip_segment(seg, window) {
+                for (x, y) in [(x0, y0), (x1, y1)] {
+                    assert!(
+                        (-1.0..=10.0).contains(&x) && (-1.0..=6.0).contains(&y),
+                        "{seg:?} -> ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn non_finite_coordinates_draw_nothing() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2">
+            <rect x="NaN" y="0" width="4" height="2" fill="#0000ff"/>
+            <rect x="0" y="0" width="inf" height="2" fill="#0000ff"/>
+            <line x1="0" y1="1" x2="inf" y2="1" stroke="#ff0000"/>
+            <line x1="NaN" y1="0" x2="3" y2="0" stroke="#ff0000"/>
+            <path d="M 0 1 L 3 1" stroke="#000000" transform="scale(1e400)"/>
+        </svg>"##;
+        assert_eq!(pixel_grid(svg), "....\n....\n");
+    }
 
     #[test]
     fn a_page_too_large_to_rasterize_is_refused() {
