@@ -21,13 +21,11 @@ pub struct SkewResult {
 ///
 /// `image_data` should be grayscale pixel data (1 byte per pixel).
 pub fn detect_skew(image_data: &[u8], width: u32, height: u32) -> Result<SkewResult> {
-    if image_data.len() != (width * height) as usize {
+    let len = (width as usize).checked_mul(height as usize);
+    if width == 0 || height == 0 || len != Some(image_data.len()) {
         return Err(SpecialError::Feature {
             detail: format!(
-                "expected {} bytes for {}x{} grayscale image, got {}",
-                width * height,
-                width,
-                height,
+                "expected a non-empty {width}x{height} grayscale image, got {} bytes",
                 image_data.len()
             ),
         });
@@ -57,7 +55,7 @@ pub fn detect_skew(image_data: &[u8], width: u32, height: u32) -> Result<SkewRes
                 let dy = y as f64 - cy;
                 let ry = (-dx * sin_a + dy * cos_a + cy) as i32;
                 if ry >= 0 && ry < height as i32 {
-                    let pixel = image_data[(y * width + x) as usize] as u64;
+                    let pixel = image_data[y as usize * width as usize + x as usize] as u64;
                     // Invert so text (dark) has high values
                     row_sums[ry as usize] += 255 - pixel;
                 }
@@ -179,6 +177,21 @@ mod tests {
         let data = vec![255u8; 50]; // wrong size for 100x100
         let result = detect_skew(&data, 100, 100);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_size_whose_pixel_count_overflows_u32_is_refused() {
+        // 65536 × 65536 and 65537 × 65537 are more pixels than `u32` holds.
+        assert!(detect_skew(&[], 65536, 65536).is_err());
+        assert!(deskew_image(&[], 65536, 65536).is_err());
+        assert!(detect_skew(&[255; 4], 65537, 65537).is_err());
+    }
+
+    #[test]
+    fn an_image_with_a_side_of_zero_is_refused() {
+        assert!(detect_skew(&[], 0, 1000).is_err());
+        assert!(detect_skew(&[], 1000, 0).is_err());
+        assert!(deskew_image(&[], 0, 1000).is_err());
     }
 
     #[test]

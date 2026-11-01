@@ -30,4 +30,5 @@ Read from the source; no record states it.
 
 ## Known holes / open
 - Tile rendering (`DisplayList::render_tile`, `render_tiled`) is not connected to the product path.
+- `render_tiled` divides by its `tile_size`, so 0 panics (inferred). Tracked: #454
 - Whether the display list is meant to be connected or removed is not recorded; the out-of-scope record defers narrowing to before 1.0 (open question for the maintainer).

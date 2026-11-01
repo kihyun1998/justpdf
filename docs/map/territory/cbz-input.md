@@ -32,3 +32,4 @@ Status: read from the source only.
 ## Known holes / open
 - GIF, BMP and WebP entries are accepted by name and then dropped without a message (inferred).
 - No bound on entry count or size (Design model).
+- `render_page` resizes to the requested DPI with no size cap, unlike SVG and XPS since #426 (inferred). Tracked: #453

@@ -7,13 +7,13 @@ Reads the `UnicodeString` text of `Glyphs` elements from the FixedDocumentSequen
 - [ADR-0001](../../adr/0001-crates-split-by-dependency-layer.md) — the `xps` feature (`zip`, `roxmltree`) builds without render; the isolation script checks it (#2).
 
 ## Design model
-Status: read from the source only.
+Status: read from the source; the page-size cap measured on #426.
 - Finding the pages: `_rels/.rels` relationship whose type contains `fixeddocumentsequence`, else three known paths, else the first `.fdseq` in the archive; then `DocumentReference@Source` → `PageContent@Source`. A package with no pages is an error.
 - Page size: `FixedPage@Width`/`Height` in 1/96 inch, converted to points; 816 × 1056 (US Letter) when absent.
 - Text: each non-empty trimmed `UnicodeString`, one per line in document order. `OriginX`/`OriginY` are ignored, so the PDF does not keep positions.
 - `to_pdf` starts at the top margin (72 pt) and stops at the bottom margin (`break`): text past one page is dropped, there is no wrapping, and each line goes through `move_to` ([Format document](format-document.md)).
 - `render_page` returns a white page of the right size ("v1: return white page… Full rendering of XPS paths/glyphs would go here").
-- Input bound: none. Each part is read whole from the ZIP, every page's XML is kept in memory (`XpsPage::xml`, unused), and `render_page` allocates `w * h * 4` in `u32` from the page's declared size and the DPI, which overflows on a large page (inferred; the same expression panics in a debug build for SVG — [SVG input](svg-input.md)). Nesting: `extract_glyphs_text` reads at most 256 levels below the page root (`MAX_XML_DEPTH`), and roxmltree 0.21.2 parses without recursing (#449; [XML nesting depth](../invariant/xml-nesting-depth.md)).
+- Input bound: parts are not bounded. Each part is read whole from the ZIP, every page's XML is kept in memory (`XpsPage::xml`, unused), and `render_page` sizes its white raster with core `image::rgba_len`, so a page whose raster at the requested DPI has a side of 0 or more than `i32::MAX` bytes of RGBA is a `FormatError::Format` (#426, the rule [SVG input](svg-input.md) follows; pinned by `a_page_too_large_to_rasterize_is_refused`, which a cap loosened to `u32::MAX` failed, *measured* 2026-11-01). Before #426 it was `w * h * 4` in `u32` (inferred to overflow as SVG's did). Nesting: `extract_glyphs_text` reads at most 256 levels below the page root (`MAX_XML_DEPTH`), and roxmltree 0.21.2 parses without recursing (#449; [XML nesting depth](../invariant/xml-nesting-depth.md)).
 
 ## Code
 - `justpdf-formats/src/xps/mod.rs` — `XpsDocument`, `XpsDocument::open`, `XpsDocument::from_bytes`, `find_fixed_doc_sequence`, `parse_fixed_doc_sequence`, `parse_fixed_document`, `parse_fixed_page`, `extract_glyphs_text`, `extract_metadata`, `resolve_xps_path`, `impl FormatDocument for XpsDocument` (`render_page`, `to_pdf`)
@@ -27,10 +27,11 @@ Status: read from the source only.
 
 ## Blast radius
 - [Format document](format-document.md) — the contract this implements.
+- [Image decoding](image-decoding.md) — assumes `rgba_len` is the RGBA byte length with its `i32::MAX` cap; `render_page` allocates what it returns.
 - [Document builder](document-builder.md) — assumes `show_text` writes WinAnsi for Courier and that `move_to` is absolute.
 
 ## Known holes / open
 - The preview is a blank page.
 - Text past one page is dropped (Design model).
-- No bound on part size or page size (Design model).
+- No bound on part size (Design model).
 - Wrapping and caller-supplied fonts. Tracked: #174
