@@ -130,16 +130,29 @@ impl FormatDocument for CbzDocument {
             index,
             count: self.images.len(),
         })?;
+
+        // Scale if DPI != 72
+        let scale = dpi / 72.0;
+        let resize = (scale - 1.0).abs() > f64::EPSILON;
+        let out_w = (img.width as f64 * scale).ceil() as u32;
+        let out_h = (img.height as f64 * scale).ceil() as u32;
+        // Bytes of the image `resize_exact` samples into first: RGBA `f32`,
+        // the source width by the output height.
+        let resize_pass = (img.width as usize)
+            .checked_mul(out_h as usize)
+            .and_then(|n| n.checked_mul(16));
+        let pass_fits = !resize || resize_pass.is_some_and(|n| n <= i32::MAX as usize);
+        if justpdf_core::image::rgba_len(out_w, out_h).is_none() || !pass_fits {
+            return Err(FormatError::Format {
+                detail: format!("CBZ preview of {out_w}x{out_h} pixels is empty or too large"),
+            });
+        }
+
         let decoded = image::load_from_memory(&img.data).map_err(|e| FormatError::Format {
             detail: format!("image decode: {e}"),
         })?;
 
-        // Scale if DPI != 72
-        let scale = dpi / 72.0;
-        let out_w = (img.width as f64 * scale).ceil() as u32;
-        let out_h = (img.height as f64 * scale).ceil() as u32;
-
-        let resized = if (scale - 1.0).abs() > f64::EPSILON {
+        let resized = if resize {
             decoded.resize_exact(out_w, out_h, image::imageops::FilterType::Lanczos3)
         } else {
             decoded
@@ -406,6 +419,61 @@ mod tests {
         use justpdf_core::content::Operand::Integer;
         assert_eq!(ops[1].operands, [2, 0, 0, 1, 0, 0].map(Integer).to_vec());
         assert_eq!(image, pixels);
+    }
+
+    #[test]
+    fn a_preview_of_no_or_too_large_size_is_refused() {
+        let mut buf = Vec::new();
+        {
+            use std::io::Write;
+            let mut zip = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("img.png", options).unwrap();
+            zip.write_all(&create_minimal_png()).unwrap();
+            zip.finish().unwrap();
+        }
+        let doc = CbzDocument::from_bytes(&buf).unwrap();
+        // 23171² × 4 bytes exceeds `i32::MAX`; the others give a side of 0.
+        for dpi in [72.0 * 23171.0, 0.0, -72.0, f64::NAN] {
+            assert!(doc.render_page(0, dpi).is_err(), "{dpi}");
+            assert!(doc.render_page_png(0, dpi).is_err(), "{dpi}");
+        }
+        let page = doc.render_page(0, 144.0).unwrap();
+        assert_eq!((page.width, page.height, page.data.len()), (2, 2, 16));
+    }
+
+    #[test]
+    fn a_preview_whose_resize_pass_is_too_large_is_refused() {
+        // A 50,000,000 × 1 gray image at 216 dpi: the 150,000,000 × 3 output
+        // fits the cap, but resizing samples vertically first into
+        // 50,000,000 × 3 pixels of 16 bytes each, which exceeds `i32::MAX`.
+        let mut png = Vec::new();
+        let encoder = image::codecs::png::PngEncoder::new_with_quality(
+            &mut png,
+            image::codecs::png::CompressionType::Fast,
+            image::codecs::png::FilterType::NoFilter,
+        );
+        let row = vec![0u8; 50_000_000];
+        image::ImageEncoder::write_image(
+            encoder,
+            &row,
+            50_000_000,
+            1,
+            image::ExtendedColorType::L8,
+        )
+        .unwrap();
+        let mut buf = Vec::new();
+        {
+            use std::io::Write;
+            let mut zip = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("wide.png", options).unwrap();
+            zip.write_all(&png).unwrap();
+            zip.finish().unwrap();
+        }
+        let doc = CbzDocument::from_bytes(&buf).unwrap();
+        assert!(justpdf_core::image::rgba_len(150_000_000, 3).is_some());
+        assert!(doc.render_page(0, 216.0).is_err());
     }
 
     /// Create a minimal valid 1x1 white PNG.
