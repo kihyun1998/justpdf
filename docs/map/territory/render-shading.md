@@ -54,6 +54,7 @@ Read from the source and the issues cited; no decision record states it.
 
 ## Cross-cutting invariants
 - [Image pixel layout](../invariant/image-pixel-layout.md) — `components_to_color` converts through `Color::to_rgb` and truncates.
+- [Bit widths](../invariant/bit-widths.md) — `mesh_bits` (#433).
 
 ## Blast radius
 - [PDF functions](pdf-functions.md) — every type samples `PdfFunction::evaluate` (64 stops, 256-entry tables, a 64 × 64 grid); a change in how a function clamps or how many outputs it returns changes every colour.

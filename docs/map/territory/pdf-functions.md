@@ -28,6 +28,7 @@ Rules read from the code (*inferred* unless marked).
 
 ## Cross-cutting invariants
 - [Tree traversal cycles](../invariant/tree-traversal-cycles.md) — `Resolver` keeps the ancestor chain; shared sub-functions are reused, not budgeted (#437).
+- [Bit widths](../invariant/bit-widths.md) — `/BitsPerSample` outside its set fails the function.
 
 ## Blast radius
 - [Render shading](render-shading.md) — every shading type evaluates its `/Function` through `PdfFunction` (#233); a change to output count or clamping changes every shaded colour.
